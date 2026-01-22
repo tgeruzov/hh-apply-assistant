@@ -2,7 +2,7 @@
 // @name         HH Apply Assistant
 // @namespace    http://tampermonkey.net/
 // @version      0.0.2
-// @description  Авто-отклики на hh.ru — надежнее работает с редиректами и динамическим DOM
+// @description  Авто-отклики на hh.ru
 // @author       Timur Geruzov (modified)
 // @match        *://*.hh.ru/search/vacancy*
 // @match        *://*.hh.ru/vacancy/*
@@ -26,7 +26,8 @@
         trapLock: STORAGE_PREFIX + 'ar_trap_lock',
         instanceLock: STORAGE_PREFIX + 'instance_lock',
         lastAttempt: STORAGE_PREFIX + 'last_attempt_id',
-        state: STORAGE_PREFIX + 'state'
+        state: STORAGE_PREFIX + 'state',
+        manualList: STORAGE_PREFIX + 'manual_list'
     };
 
     // Важные селекторы, используемые в скрипте
@@ -56,7 +57,7 @@
         actionDelayMin: 150,
         actionDelayMax: 700,
         waitForModalMs: 8000,
-        instanceLockTtl: 30000 // время жизни локального lock (ms) для кросс-вкладочной блокировки
+        instanceLockTtl: 30000
     };
 
     // Небольшой менеджер состояния — работа с local/session storage
@@ -133,7 +134,32 @@
                 const obj = JSON.parse(raw);
                 if (obj.tabId === tabId) localStorage.setItem(KEYS.instanceLock, JSON.stringify({ tabId, ts: Date.now() }));
             } catch (e) { /* ignore */ }
-        }
+        },
+
+        // --- manual list (vacancies that require manual answering) ---
+        getManualList: () => {
+            try { return JSON.parse(localStorage.getItem(KEYS.manualList) || '[]'); }
+            catch { return []; }
+        },
+        addManualEntry: (entry) => {
+            try {
+                const list = StateManager.getManualList();
+                const exists = list.find(e => e.vid === entry.vid || e.url === entry.url);
+                if (!exists) {
+                    list.unshift(entry);
+                    // ограничим длину списка, чтобы не раздувался
+                    if (list.length > 500) list.length = 500;
+                    localStorage.setItem(KEYS.manualList, JSON.stringify(list));
+                }
+            } catch (e) { console.warn('addManualEntry error', e); }
+        },
+        removeManualEntry: (vid) => {
+            try {
+                const list = StateManager.getManualList().filter(e => e.vid !== vid);
+                localStorage.setItem(KEYS.manualList, JSON.stringify(list));
+            } catch (e) { console.warn('removeManualEntry error', e); }
+        },
+        clearManualList: () => localStorage.removeItem(KEYS.manualList)
     };
 
     let config = StateManager.loadConfig();
@@ -204,7 +230,7 @@
         });
     }
 
-    // Человеческий скролл: вниз к секции компании (или 60% страницы), пауза, и возврат вверх
+    // Человеческий скролл: вниз до 60% страницы, пауза, и возврат вверх
     async function humanScrollToCompanySectionAndReturn(viewTime) {
         try {
             await actionPause();
@@ -304,6 +330,16 @@
                         if (cur) vid = 'v_' + cur;
                     }
 
+                    const savedBack = StateManager.getReturnUrl();
+
+                    // Сохраняем текущую страницу с вопросами для ручного отклика
+                    try {
+                        const manualUrl = location.href;
+                        const entry = { vid: vid || ('u_' + fnv1a32(manualUrl).toString(36)), url: manualUrl, returnUrl: savedBack || '', ts: Date.now() };
+                        StateManager.addManualEntry(entry);
+                        log(`Сохранена вакансия для ручного отклика: ${entry.vid}`);
+                    } catch (e) { console.warn('save manual entry error', e); }
+
                     if (vid) {
                         StateManager.addProcessedID(vid);
                         log(`Пометил вакансию ${vid} как обработанную (чтобы избежать зацикливания).`);
@@ -361,7 +397,7 @@
         return null;
     }
 
-    // Простой стабильный хеш (FNV-1a 32) — запасной вариант для уникальности
+    // Простой стабильный хеш (FNV-1a 32) — запасной вариант
     function fnv1a32(str) {
         let h = 0x811c9dc5;
         for (let i = 0; i < str.length; i++) {
@@ -723,6 +759,16 @@
                 </div>
 
             </div>
+            <div style="padding: 12px; border-top: 1px solid #eee;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <b>Сохранённые для ручного отклика</b>
+                    <div style="display:flex; gap:6px;">
+                        <button id="ar-export-manual" style="padding:6px; border-radius:6px; border:1px solid #ddd; cursor:pointer;">Export</button>
+                        <button id="ar-clear-manual" style="padding:6px; border-radius:6px; border:1px solid #ddd; cursor:pointer;">Clear</button>
+                    </div>
+                </div>
+                <div id="ar-manual-list" style="max-height:120px; overflow:auto; font-size:12px; border:1px solid #f0f0f0; padding:6px; border-radius:6px; background:#fafafa"></div>
+            </div>
             <div id="ar-log-box" style="height: 140px; overflow-y: auto; background: #1e1e1e; color: #00ff00; font-family: monospace; font-size: 11px; padding: 8px; border-top: 1px solid #333;"></div>
         `;
 
@@ -778,12 +824,146 @@
             runHealthCheck();
         };
 
+        el('ar-clear-manual').onclick = () => {
+            if (confirm('Очистить сохранённый список вакансий для ручного отклика?')) {
+                StateManager.clearManualList();
+                renderManualList();
+                log('Список для ручного отклика очищен.');
+            }
+        };
+
+        // Export: HTML, humanized dates, single URL column, dedupe by URL
+        el('ar-export-manual').onclick = () => {
+            const list = StateManager.getManualList();
+            if (!list || !list.length) { alert('Список пуст'); return; }
+
+            // dedupe by url (avoid duplicate identical links)
+            const seen = new Set();
+            const uniq = [];
+            for (const it of list) {
+                const key = String(it.url || it.vid || '').trim();
+                if (!key) continue;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                uniq.push(it);
+            }
+
+            const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+            const humanAgo = (ts) => {
+                const d = Date.now() - ts;
+                const sec = Math.floor(d/1000);
+                if (sec < 60) return sec + 's';
+                const min = Math.floor(sec/60);
+                if (min < 60) return min + 'm';
+                const hr = Math.floor(min/60);
+                if (hr < 24) return hr + 'h';
+                const day = Math.floor(hr/24);
+                return day + 'd';
+            };
+
+            const rows = uniq.map(i => {
+                const ts = new Date(i.ts || Date.now());
+                const timestr = ts.toLocaleString();
+                const ago = humanAgo(i.ts || Date.now());
+                const vid = esc(i.vid || '');
+                const title = esc(i.title || '');
+                const url = esc(i.url || '');
+                return `<tr>
+                    <td style="padding:8px;border:1px solid #eee;white-space:nowrap;">${timestr}<div style="color:#7b8794;font-size:11px">${ago} ago</div></td>
+                    <td style="padding:8px;border:1px solid #eee">${vid}</td>
+                    <td style="padding:8px;border:1px solid #eee"><a href="${url}" target="_blank" rel="noopener noreferrer" style="color:#0b6ef6;text-decoration:none">${title || url}</a></td>
+                </tr>`;
+            }).join('');
+
+            const content = `<!doctype html><html><head><meta charset="utf-8"><title>HH Manual List</title><meta name="viewport" content="width=device-width,initial-scale=1">
+                <style>
+                    body{font-family:Arial,Helvetica,sans-serif;padding:18px;color:#111;background:#fff}
+                    h2{margin:0 0 8px;font-size:18px}
+                    table{border-collapse:collapse;width:100%;margin-top:12px}
+                    th{background:#f7fafc;color:#334155;padding:10px;border:1px solid #eef2f7;text-align:left}
+                    td{padding:8px;border:1px solid #eef2f7}
+                    a{word-break:break-all}
+                    .meta{color:#6b7280;font-size:13px;margin-top:6px}
+                </style>
+                </head><body>
+                <h2>Saved vacancies for manual responses</h2>
+                <div class="meta">Export date: ${new Date().toLocaleString()} — ${uniq.length} item(s)</div>
+                <table><thead><tr><th>saved</th><th>vid</th><th>link</th></tr></thead><tbody>${rows}</tbody></table>
+                </body></html>`;
+
+            const blob = new Blob([content], { type: 'text/html;charset=utf-8' });
+            const urlBlob = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = urlBlob; a.download = 'hh_manual_list.html';
+            document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(urlBlob);
+            log('HTML экспорт выполнен.');
+        };
+
         const toggleVisibility = (isOpen) => {
             panel.style.display = isOpen ? 'block' : 'none';
             toggleBtn.style.display = isOpen ? 'none' : 'flex';
         };
         el('ar-minimize-btn').onclick = () => toggleVisibility(false);
         toggleBtn.onclick = () => toggleVisibility(true);
+
+        // render manual list in UI
+        function renderManualList() {
+            const container = document.getElementById('ar-manual-list');
+            if (!container) return;
+            container.innerHTML = '';
+            const list = StateManager.getManualList();
+            if (!list || !list.length) {
+                container.innerHTML = '<div style="color:#666;">Пусто</div>';
+                return;
+            }
+            list.forEach(item => {
+                const row = document.createElement('div');
+                row.style.display = 'flex';
+                row.style.justifyContent = 'space-between';
+                row.style.alignItems = 'center';
+                row.style.padding = '6px 4px';
+                row.style.borderBottom = '1px solid #eee';
+
+                const left = document.createElement('div');
+                left.style.flex = '1';
+                left.style.marginRight = '8px';
+                const time = new Date(item.ts).toLocaleString();
+                left.innerHTML = `<div style="font-size:11px;color:#333;margin-bottom:2px;">${item.vid} • ${time}</div><div style="font-size:11px;color:#0077cc;word-break:break-all"><a href="${item.url}" target="_blank">Открыть страницу с вопросами</a></div>`;
+
+                const actions = document.createElement('div');
+                actions.style.display = 'flex';
+                actions.style.gap = '6px';
+
+                const openBtn = document.createElement('button');
+                openBtn.textContent = 'Open';
+                openBtn.style.padding = '4px 6px';
+                openBtn.style.borderRadius = '6px';
+                openBtn.style.border = '1px solid #ddd';
+                openBtn.style.cursor = 'pointer';
+                openBtn.onclick = () => window.open(item.url, '_blank');
+
+                const removeBtn = document.createElement('button');
+                removeBtn.textContent = 'Remove';
+                removeBtn.style.padding = '4px 6px';
+                removeBtn.style.borderRadius = '6px';
+                removeBtn.style.border = '1px solid #ddd';
+                removeBtn.style.cursor = 'pointer';
+                removeBtn.onclick = () => { StateManager.removeManualEntry(item.vid); renderManualList(); };
+
+                actions.appendChild(openBtn);
+                actions.appendChild(removeBtn);
+
+                row.appendChild(left);
+                row.appendChild(actions);
+                container.appendChild(row);
+            });
+        }
+
+        // initial render
+        renderManualList();
+
+        // expose render function for other parts of script
+        window._hh_ar_renderManualList = renderManualList;
     }
 
     // Пробегает по ключевым селекторам и пишет результат в лог
