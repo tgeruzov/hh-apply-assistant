@@ -463,10 +463,8 @@
     // Лог в панели + консоль + постоянное хранилище.
     // Порядок обновления:
     // 1. Сохранить запись в DiagLog
-    // 2. Обновить inline UI
-    // 3. Обновить full diagnostic UI
-    // 4. Обновить diagnostic badge
-    const MAX_INLINE_LOG_ENTRIES = 8;
+    // 2. Обновить full diagnostic UI (если открыт/отрендерен)
+    // 3. Обновить diagnostic badge
     const log = (msg, isError = false) => {
         // 1. Сохраняем запись в диагностический лог (не блокируя UI при ошибках storage)
         try {
@@ -477,27 +475,7 @@
             const timeStr = new Date().toLocaleTimeString('ru-RU');
             const fullText = `[${timeStr}] ${msg}`;
 
-            // 2. Inline box preview (последние 6-8 строк без вложенного скролла)
-            const logBox = document.getElementById('ar-log-box');
-            if (logBox) {
-                const entry = document.createElement('div');
-                entry.className = 'ar-log-line' + (isError ? ' ar-log-err' : '');
-                entry.textContent = fullText;
-                entry.dataset.error = isError ? '1' : '0';
-                const errorsOnly = document.getElementById('ar-log-errors-only');
-                if (errorsOnly && errorsOnly.checked && !isError) {
-                    entry.style.display = 'none';
-                }
-                logBox.appendChild(entry);
-
-                // Ограничиваем inline-превью последними записями, чтобы не раздувать DOM
-                const children = Array.from(logBox.children);
-                if (children.length > MAX_INLINE_LOG_ENTRIES) {
-                    children.slice(0, children.length - MAX_INLINE_LOG_ENTRIES).forEach(c => c.remove());
-                }
-            }
-
-            // 3. Выделенный полноразмерный экран диагностики
+            // 2. Выделенный полноразмерный экран диагностики
             const fullBox = document.getElementById('ar-diag-full-box');
             if (fullBox) {
                 const fullEntry = document.createElement('div');
@@ -512,9 +490,9 @@
                 fullBox.scrollTop = fullBox.scrollHeight;
             }
 
-            // 4. Обновляем счетчик / бейдж
+            // 3. Обновляем счетчик / бейдж
             try {
-                window._hh_ar_updateDiagBadge?.();
+                (window._applomat_updateDiagBadge || window._hh_ar_updateDiagBadge)?.();
             } catch (e) { /* ignore */ }
         } catch (e) { /* UI-лог не критичен */ }
 
@@ -1462,7 +1440,8 @@
     const Page = {
         isVacancy: () => location.pathname.startsWith('/vacancy/'),
         isResponseForm: () => location.href.includes('/applicant/vacancy_response'),
-        isSearchList: () => location.href.includes('/search/vacancy')
+        isSearchList: () => location.href.includes('/search/vacancy'),
+        isSearch: () => location.href.includes('/search/vacancy') || location.pathname.startsWith('/search')
     };
 
     // Попытки извлечь ID вакансии из URL в разных форматах
@@ -3025,10 +3004,11 @@
         .ar-diag-body{
             flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:8px; padding:10px; background:var(--bg);
         }
+        .ar-diag-stat-row{ display:flex; align-items:center; padding:0 2px; }
+        .ar-diag-stat{ font-size:11.5px; color:var(--ink-2); font-weight:600; font-variant-numeric:tabular-nums; }
         .ar-diag-toolbar{
-            display:flex; align-items:center; justify-content:space-between; gap:8px; padding:2px 0;
+            display:flex; align-items:center; justify-content:space-between; gap:8px; padding:0;
         }
-        .ar-diag-stat{ font-size:11px; color:var(--ink-3); font-weight:500; font-variant-numeric:tabular-nums; }
         .ar-diag-full-box{
             flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
             background:#0f172a; color:#94a3b8; border-radius:var(--r-md);
@@ -3038,6 +3018,8 @@
         }
         .ar-diag-full-box::-webkit-scrollbar{ width:6px; }
         .ar-diag-full-box::-webkit-scrollbar-thumb{ background:#334155; border-radius:6px; }
+        .ar-diag-footer{ display:flex; align-items:center; justify-content:flex-start; padding:0; }
+        .ar-diag-footer .ar-dropdown-menu{ top:auto; bottom:calc(100% + 4px); right:auto; left:0; }
 
         /* Phase 4: Мягкий transient 1px inset pulse всей панели при активации Турбо */
         #ar-main-panel.is-turbo-activating{
@@ -3120,6 +3102,7 @@
             background:var(--card); border-radius:var(--r-lg); padding:12px 14px;
             border:1px solid var(--line); box-shadow:0 1px 2px rgba(15,23,42,.04);
             display:flex; flex-direction:column; gap:9px; position:relative; overflow:hidden;
+            flex-shrink:0;
         }
         .ar-card-title{ font-size:12px; font-weight:700; color:var(--ink); text-transform:uppercase; letter-spacing:.03em; }
 
@@ -3339,6 +3322,13 @@
         .ar-badge--neutral{ background:var(--bg-2); color:var(--ink-2); border:1px solid var(--line); }
         .ar-badge--error{ background:var(--hh-red-soft); color:var(--hh-red); border:1px solid #fecaca; }
         .ar-badge--info{ background:var(--hh-blue-soft); color:var(--hh-blue); }
+        .ar-badge-count{
+            display:inline-flex; align-items:center; justify-content:center;
+            min-width:16px; height:16px; padding:0 4px;
+            font-size:10px; font-weight:700; border-radius:999px; line-height:1;
+            background:var(--hh-red-soft); color:var(--hh-red); border:1px solid #fecaca;
+            flex:none; margin-left:2px;
+        }
         .ar-card-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
         .ar-title-with-count{ display:inline-flex; align-items:center; gap:6px; }
 
@@ -3374,26 +3364,9 @@
             line-height:1.4;
         }
 
-        /* Диагностика */
-        .ar-summary{ display:flex; align-items:center; justify-content:space-between; cursor:pointer; list-style:none; user-select:none; padding:2px 0; }
-        .ar-summary::-webkit-details-marker{ display:none; }
-        .ar-summary-title{ display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:var(--ink); text-transform:uppercase; letter-spacing:.03em; }
-        .ar-summary-title::before{ content:'▸'; color:var(--ink-3); font-size:11px; transition:transform .15s; }
-        .ar-details[open] .ar-summary-title::before{ transform:rotate(90deg); }
-        .ar-details-body{ margin-top:8px; display:flex; flex-direction:column; gap:8px; }
-        .ar-details:not([open]) .ar-details-body{ display:none; }
-        .ar-log-tools{ display:flex; gap:6px; }
-        .ar-log-tools .ar-btn{ flex:1 1 0; min-width:0; }
-        .ar-log-tools--sub{ align-items:center; justify-content:space-between; }
         .ar-inline-check{ display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--ink-2); cursor:pointer; user-select:none; }
         .ar-inline-check input{ cursor:pointer; }
-        #ar-log-box{
-            min-height:40px; overflow:hidden; background:#0f172a; color:#94a3b8; border-radius:var(--r-md);
-            font-family:'SFMono-Regular',ui-monospace,Menlo,Consolas,monospace; font-size:10.5px;
-            padding:8px 10px; line-height:1.5; border:1px solid #1e293b;
-            display:flex; flex-direction:column; gap:2px;
-        }
-        #ar-log-box .ar-log-err, .ar-diag-full-box .ar-log-err{ color:#f87171; }
+        .ar-diag-full-box .ar-log-err{ color:#f87171; }
         .ar-log-line{ word-break:break-word; white-space:pre-wrap; }
 
         /* Выпадающее меню действий */
@@ -3496,9 +3469,10 @@
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
                                 <span>Сбросить историю</span>
                             </button>
-                            <button id="ar-health-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-util-btn" title="Проверить селекторы и открыть диагностику">
+                            <button id="ar-health-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-util-btn" title="Открыть диагностику и лог">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
                                 <span>Диагностика</span>
+                                <span id="ar-health-badge" class="ar-badge-count" style="display:none;"></span>
                             </button>
                         </div>
                     </section>
@@ -3542,41 +3516,6 @@
                         </div>
                         <div id="ar-manual-list" class="ar-manual"></div>
                     </section>
-
-                    <section class="ar-card">
-                        <details class="ar-details" id="ar-diag-details">
-                            <summary class="ar-summary">
-                                <div class="ar-summary-title">Диагностика</div>
-                                <span id="ar-diag-count" class="ar-badge ar-badge--neutral" title="Записей в логе">0</span>
-                            </summary>
-                            <div class="ar-details-body">
-                                <div class="ar-log-tools">
-                                    <button id="ar-diag-check-btn" class="ar-btn ar-btn-soft ar-btn-sm" style="flex:1;">Проверить селекторы</button>
-                                    <button id="ar-save-logs" class="ar-btn ar-btn-soft ar-btn-sm" style="flex:1;">Скачать лог</button>
-                                </div>
-                                <div class="ar-log-tools ar-log-tools--sub">
-                                    <label class="ar-inline-check" for="ar-log-errors-only">
-                                        <input type="checkbox" id="ar-log-errors-only">
-                                        <span>Только ошибки</span>
-                                    </label>
-                                    <div class="ar-dropdown" id="ar-diag-more-dropdown">
-                                        <button id="ar-diag-more-btn" class="ar-btn ar-btn-ghost ar-btn-sm" type="button" title="Дополнительные действия">
-                                            <span>Дополнительно</span>
-                                            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
-                                        </button>
-                                        <div class="ar-dropdown-menu" id="ar-diag-more-menu">
-                                            <button id="ar-clear-log" class="ar-dropdown-item" type="button">Очистить вид</button>
-                                            <button id="ar-clear-diag" class="ar-dropdown-item ar-dropdown-item--danger" type="button">Очистить сохр. лог и метрики</button>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div id="ar-log-box"></div>
-                                <button id="ar-open-full-diag-btn" class="ar-btn ar-btn-tertiary ar-btn-sm ar-btn-full" type="button">
-                                    <span>Показать весь лог →</span>
-                                </button>
-                            </div>
-                        </details>
-                    </section>
                 </div>
             </div>
 
@@ -3597,24 +3536,29 @@
                     </div>
                 </div>
                 <div class="ar-diag-body">
+                    <div class="ar-diag-stat-row">
+                        <span id="ar-diag-full-stat" class="ar-diag-stat">0 ошибок · 0 записей</span>
+                    </div>
                     <div class="ar-diag-toolbar">
+                        <button id="ar-diag-full-check" class="ar-btn ar-btn-soft ar-btn-sm" type="button" title="Проверить селекторы">Проверить селекторы</button>
                         <label class="ar-inline-check" for="ar-diag-full-errors-only">
                             <input type="checkbox" id="ar-diag-full-errors-only">
                             <span>Только ошибки</span>
                         </label>
-                        <div style="display:flex; align-items:center; gap:6px;">
-                            <span id="ar-diag-full-stat" class="ar-diag-stat">Всего: 0</span>
-                            <button id="ar-diag-full-check" class="ar-btn ar-btn-soft ar-btn-sm" type="button" title="Проверить селекторы">Селекторы</button>
-                            <div class="ar-dropdown" id="ar-diag-full-dropdown">
-                                <button id="ar-diag-full-more-btn" class="ar-btn ar-btn-ghost ar-btn-sm" type="button" title="Действия">⋯</button>
-                                <div class="ar-dropdown-menu" id="ar-diag-full-menu">
-                                    <button id="ar-diag-full-clear-box" class="ar-dropdown-item" type="button">Очистить вид</button>
-                                    <button id="ar-diag-full-clear-all" class="ar-dropdown-item ar-dropdown-item--danger" type="button">Очистить сохр. лог и метрики</button>
-                                </div>
+                    </div>
+                    <div id="ar-diag-full-box" class="ar-diag-full-box"></div>
+                    <div class="ar-diag-footer">
+                        <div class="ar-dropdown" id="ar-diag-full-dropdown">
+                            <button id="ar-diag-full-more-btn" class="ar-btn ar-btn-ghost ar-btn-sm" type="button" title="Дополнительные действия">
+                                <span>Дополнительно</span>
+                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+                            </button>
+                            <div class="ar-dropdown-menu" id="ar-diag-full-menu">
+                                <button id="ar-diag-full-clear-box" class="ar-dropdown-item" type="button">Очистить вид</button>
+                                <button id="ar-diag-full-clear-all" class="ar-dropdown-item ar-dropdown-item--danger" type="button">Очистить сохр. лог и метрики</button>
                             </div>
                         </div>
                     </div>
-                    <div id="ar-diag-full-box" class="ar-diag-full-box"></div>
                 </div>
             </div>
         `;
@@ -3858,50 +3802,7 @@
         ['ar-cover-text', 'ar-use-cover-check', 'ar-apply-reject-check', 'ar-limit-input']
             .forEach(id => { const node = el(id); if (node) node.addEventListener('change', saveSettings); });
 
-        // ---------- Лог и диагностика ----------
-        const initInlineLogs = () => {
-            const box = el('ar-log-box');
-            if (!box) return;
-            box.innerHTML = '';
-            const all = DiagLog.getAll();
-            const latest = all.slice(-MAX_INLINE_LOG_ENTRIES);
-            const filterErr = el('ar-log-errors-only')?.checked;
-            latest.forEach(item => {
-                const isErr = item.lvl === 'ERR';
-                if (filterErr && !isErr) return;
-                const line = document.createElement('div');
-                line.className = 'ar-log-line' + (isErr ? ' ar-log-err' : '');
-                const time = new Date(item.t || Date.now()).toLocaleTimeString('ru-RU');
-                line.textContent = `[${time}] ${item.msg}`;
-                line.dataset.error = isErr ? '1' : '0';
-                box.appendChild(line);
-            });
-        };
-
-        const applyLogFilter = () => {
-            const box = el('ar-log-box');
-            const chk = el('ar-log-errors-only');
-            if (!box || !chk) return;
-            Array.from(box.children).forEach(child => {
-                child.style.display = (chk.checked && child.dataset.error !== '1') ? 'none' : 'block';
-            });
-        };
-        const errChk = el('ar-log-errors-only');
-        if (errChk) errChk.onchange = () => {
-            applyLogFilter();
-            initInlineLogs();
-        };
-
-        initInlineLogs();
-
-        const clearLogBtn = el('ar-clear-log');
-        if (clearLogBtn) clearLogBtn.onclick = () => {
-            const box = el('ar-log-box');
-            if (box) box.innerHTML = '';
-            el('ar-diag-more-dropdown')?.classList.remove('is-open');
-        };
-
-        // Переключение между основным видом и экраном диагностики
+        // ---------- Экран диагностики ----------
         const openFullDiag = () => {
             const viewMain = el('ar-view-main');
             const viewDiag = el('ar-view-diag');
@@ -3940,9 +3841,6 @@
             updateDiagCount();
         }
 
-        const openFullBtn = el('ar-open-full-diag-btn');
-        if (openFullBtn) openFullBtn.onclick = openFullDiag;
-
         const backBtn = el('ar-diag-back-btn');
         if (backBtn) backBtn.onclick = closeFullDiag;
 
@@ -3956,7 +3854,7 @@
             el('ar-diag-full-dropdown')?.classList.remove('is-open');
         };
 
-        // Dropdowns setup
+        // Dropdown setup
         const setupDropdown = (btnId, dropdownId) => {
             const btn = el(btnId);
             const dropdown = el(dropdownId);
@@ -3966,11 +3864,9 @@
                 dropdown.classList.toggle('is-open');
             };
         };
-        setupDropdown('ar-diag-more-btn', 'ar-diag-more-dropdown');
         setupDropdown('ar-diag-full-more-btn', 'ar-diag-full-dropdown');
 
         document.addEventListener('click', () => {
-            el('ar-diag-more-dropdown')?.classList.remove('is-open');
             el('ar-diag-full-dropdown')?.classList.remove('is-open');
         }, { signal: uiSignal });
 
@@ -3980,28 +3876,45 @@
             const total = all.length;
             const errors = all.filter(e => e.lvl === 'ERR').length;
 
-            const c = el('ar-diag-count');
-            if (c) {
+            const formatPlural = (n, one, few, many) => {
+                const mod10 = n % 10;
+                const mod100 = n % 100;
+                if (mod100 >= 11 && mod100 <= 19) return `${n} ${many}`;
+                if (mod10 === 1) return `${n} ${one}`;
+                if (mod10 >= 2 && mod10 <= 4) return `${n} ${few}`;
+                return `${n} ${many}`;
+            };
+
+            const badge = el('ar-health-badge');
+            const healthBtn = el('ar-health-btn');
+            if (badge) {
                 if (errors > 0) {
-                    c.textContent = `${errors} ${errors === 1 ? 'ошибка' : (errors < 5 ? 'ошибки' : 'ошибок')}`;
-                    c.className = 'ar-badge ar-badge--error';
-                    c.title = `Всего записей: ${total}, из них ошибок: ${errors}`;
+                    badge.textContent = errors;
+                    badge.style.display = 'inline-flex';
+                    if (healthBtn) {
+                        const errText = formatPlural(errors, 'ошибка', 'ошибки', 'ошибок');
+                        healthBtn.title = `${errText} в диагностическом логе · Открыть диагностику`;
+                    }
                 } else {
-                    c.textContent = total;
-                    c.className = 'ar-badge ar-badge--neutral';
-                    c.title = `Записей в логе: ${total}`;
+                    badge.textContent = '';
+                    badge.style.display = 'none';
+                    if (healthBtn) {
+                        healthBtn.title = 'Открыть диагностику и лог';
+                    }
                 }
             }
 
             const fullStat = el('ar-diag-full-stat');
             if (fullStat) {
-                fullStat.textContent = `Всего: ${total} · Ошибок: ${errors}`;
+                const errText = formatPlural(errors, 'ошибка', 'ошибки', 'ошибок');
+                const recText = formatPlural(total, 'запись', 'записи', 'записей');
+                fullStat.textContent = `${errText} · ${recText}`;
             }
         };
         window._applomat_updateDiagBadge = window._hh_ar_updateDiagBadge = updateDiagCount;
         updateDiagCount();
         uiDiagTimer = setInterval(() => {
-            if (!document.getElementById('ar-diag-count')) {
+            if (!document.getElementById('ar-main-panel')) {
                 clearInterval(uiDiagTimer);
                 uiDiagTimer = null;
                 return;
@@ -4014,8 +3927,6 @@
             exportDiagnosticReport();
             updateDiagCount();
         };
-        const saveLogsBtn = el('ar-save-logs');
-        if (saveLogsBtn) saveLogsBtn.onclick = exportLogs;
         const diagFullSaveBtn = el('ar-diag-full-save');
         if (diagFullSaveBtn) diagFullSaveBtn.onclick = exportLogs;
 
@@ -4024,18 +3935,13 @@
             if (confirm('Очистить сохранённый диагностический лог и метрики? (выгрузите файл перед очисткой, если нужен для анализа)')) {
                 DiagLog.clear();
                 Metrics.clear();
-                const box = el('ar-log-box');
-                if (box) box.innerHTML = '';
                 const fullBox = el('ar-diag-full-box');
                 if (fullBox) fullBox.innerHTML = '';
                 updateDiagCount();
                 log('Сохранённый диагностический лог и метрики очищены.');
-                el('ar-diag-more-dropdown')?.classList.remove('is-open');
                 el('ar-diag-full-dropdown')?.classList.remove('is-open');
             }
         };
-        const clearDiagBtn = el('ar-clear-diag');
-        if (clearDiagBtn) clearDiagBtn.onclick = handleClearAllDiag;
         const diagFullClearAll = el('ar-diag-full-clear-all');
         if (diagFullClearAll) diagFullClearAll.onclick = handleClearAllDiag;
 
@@ -4053,13 +3959,7 @@
             }
         };
 
-        const triggerDiag = () => {
-            openFullDiag();
-            runHealthCheck();
-        };
-        el('ar-health-btn').onclick = triggerDiag;
-        const diagCheckBtn = el('ar-diag-check-btn');
-        if (diagCheckBtn) diagCheckBtn.onclick = runHealthCheck;
+        el('ar-health-btn').onclick = openFullDiag;
         const diagFullCheckBtn = el('ar-diag-full-check');
         if (diagFullCheckBtn) diagFullCheckBtn.onclick = runHealthCheck;
 
@@ -4221,34 +4121,144 @@
         setTimeout(() => rootEl.classList.add('hh-ar-anim'), 60);
 
         // initial render
-        applyLogFilter();
         renderManualList();
 
         window._applomat_renderManualList = window._hh_ar_renderManualList = renderManualList;
     }
 
-    // Пробегает по ключевым селекторам и пишет результат в лог
+    // Пробегает по ключевым селекторам с учетом контекста страницы
     function runHealthCheck() {
+        // Независимый fallback: ссылки /vacancy/ на странице — не зависят от data-qa/class SELECTORS
+        const hasSearchCards = () => !!(q(SELECTORS.vacancyCard) || q(SELECTORS.vacancyLink) || q(SELECTORS.applyBtn) || q('a[href*="/vacancy/"]'));
+        const isResponseModalOpen = () => {
+            const m = q('[data-qa*="modal" i], [class*="modal" i], [role="dialog"]');
+            return !!(m && isVisible(m));
+        };
+
         const checks = [
-            { name: 'Кнопка отклика (list)', sel: SELECTORS.applyBtn, key: 'applyBtn' },
-            { name: 'Кнопка отклика (vacancy page)', sel: SELECTORS.vacancyApply, key: 'vacancyApply' },
-            { name: 'Ссылка вакансии (card)', sel: SELECTORS.vacancyLink, key: 'vacancyLink' },
-            { name: 'Прикрепить письмо (сценарий А)', sel: SELECTORS.attachCoverBtn, key: 'attachCoverBtn' },
-            { name: 'Кнопка отправки письма', sel: SELECTORS.letterSubmit, key: 'letterSubmit' },
-            { name: 'Поле письма (textarea)', sel: SELECTORS.letterTextarea, key: 'letterTextarea' }
+            {
+                name: 'Кнопка отклика (list)',
+                sel: SELECTORS.applyBtn,
+                key: 'applyBtn',
+                evaluate: () => {
+                    if (Page.isSearch()) {
+                        return hasSearchCards()
+                            ? { required: true }
+                            : { required: false, reason: 'не применимо — список вакансий пуст' };
+                    }
+                    if (Page.isVacancy()) return { required: false, reason: 'не применимо на странице вакансии' };
+                    if (Page.isResponseForm()) return { required: false, reason: 'не применимо на странице формы отклика' };
+                    return { required: false, reason: 'не применимо на текущей странице' };
+                }
+            },
+            {
+                name: 'Кнопка отклика (vacancy page)',
+                sel: SELECTORS.vacancyApply,
+                key: 'vacancyApply',
+                evaluate: () => {
+                    if (Page.isVacancy()) {
+                        return detectAlreadyApplied()
+                            ? { required: false, reason: 'не требуется — уже откликались' }
+                            : { required: true };
+                    }
+                    if (Page.isSearch()) return { required: false, reason: 'не применимо на странице поиска' };
+                    if (Page.isResponseForm()) return { required: false, reason: 'не применимо на странице формы отклика' };
+                    return { required: false, reason: 'не применимо на текущей странице' };
+                }
+            },
+            {
+                name: 'Ссылка вакансии (card)',
+                sel: SELECTORS.vacancyLink,
+                key: 'vacancyLink',
+                evaluate: () => {
+                    if (Page.isSearch()) {
+                        return hasSearchCards()
+                            ? { required: true }
+                            : { required: false, reason: 'не применимо — список вакансий пуст' };
+                    }
+                    if (Page.isVacancy()) return { required: false, reason: 'не применимо на странице вакансии' };
+                    if (Page.isResponseForm()) return { required: false, reason: 'не применимо на странице формы отклика' };
+                    return { required: false, reason: 'не применимо на текущей странице' };
+                }
+            },
+            {
+                name: 'Прикрепить письмо (сценарий А)',
+                sel: SELECTORS.attachCoverBtn,
+                key: 'attachCoverBtn',
+                evaluate: () => {
+                    return { required: false, reason: 'не требуется в текущем сценарии' };
+                }
+            },
+            {
+                name: 'Кнопка отправки письма',
+                sel: SELECTORS.letterSubmit,
+                key: 'letterSubmit',
+                evaluate: () => {
+                    if (Page.isResponseForm()) {
+                        return pageLooksLikeTest()
+                            ? { required: false, reason: 'не применимо — анкета с вопросами работодателя' }
+                            : { required: true };
+                    }
+                    if (isResponseModalOpen()) {
+                        return { required: true };
+                    }
+                    return { required: false, reason: 'не применимо — форма отклика не открыта' };
+                }
+            },
+            {
+                name: 'Поле письма (textarea)',
+                sel: SELECTORS.letterTextarea,
+                key: 'letterTextarea',
+                evaluate: () => {
+                    if (Page.isResponseForm()) {
+                        if (pageLooksLikeTest()) return { required: false, reason: 'не применимо — анкета с вопросами работодателя' };
+                        return { required: false, reason: 'не применимо — форма письма не раскрыта' };
+                    }
+                    if (isResponseModalOpen()) {
+                        return { required: false, reason: 'не применимо — форма письма не раскрыта' };
+                    }
+                    return { required: false, reason: 'не применимо — форма письма не открыта' };
+                }
+            }
         ];
+
         log('Запускаю диагностику селекторов...');
+        let okCount = 0;
+        let skipCount = 0;
+        let errCount = 0;
+
         checks.forEach(c => {
             const found = q(c.sel);
             const fallbackFound = found ? null : query(c.key);
             if (found) {
+                okCount++;
                 log(`${c.name}: OK (${c.sel})`);
             } else if (fallbackFound) {
+                okCount++;
                 log(`${c.name}: ЭВРИСТИЧЕСКИ НАЙДЕНО (селектор ${c.sel} не сработал)`, false);
             } else {
-                log(`${c.name}: НЕ НАЙДЕНО (${c.sel})`, true);
+                const ctx = c.evaluate ? c.evaluate() : { required: true };
+                if (ctx.required) {
+                    errCount++;
+                    log(`${c.name}: НЕ НАЙДЕНО (${c.sel})`, true);
+                } else {
+                    skipCount++;
+                    log(`${c.name}: ${ctx.reason || 'не применимо в текущем контексте'}`, false);
+                }
             }
         });
+
+        const formatPlural = (n, one, few, many) => {
+            const mod10 = n % 10;
+            const mod100 = n % 100;
+            if (mod100 >= 11 && mod100 <= 19) return `${n} ${many}`;
+            if (mod10 === 1) return `${n} ${one}`;
+            if (mod10 >= 2 && mod10 <= 4) return `${n} ${few}`;
+            return `${n} ${many}`;
+        };
+
+        log(`Healthcheck завершён: ${okCount} OK · ${skipCount} не применимо · ${formatPlural(errCount, 'ошибка', 'ошибки', 'ошибок')}.`);
+
         const obj = parseJson(storage.localGet(KEYS.instanceLock), null);
         if (obj) {
             log(`Instance lock: tabId=${obj.tabId} ts=${new Date(obj.ts).toLocaleTimeString('ru-RU')}`);
