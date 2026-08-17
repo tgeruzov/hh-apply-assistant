@@ -286,22 +286,6 @@
   .grid-cell.l4 { --cell-alpha: .55; }
   .grid-cell.l5 { --cell-alpha: .75; }
 
-  .shock-front {
-    position: absolute;
-    z-index: 2;
-    top: 3px;
-    bottom: 3px;
-    left: 0;
-    width: 1px;
-    border-radius: 1px;
-    pointer-events: none;
-    opacity: 0;
-    background: rgba(255,255,255,.72);
-    box-shadow: 0 0 4px rgba(255,255,255,.12);
-    transform: translate3d(0,0,0);
-    will-change: transform, opacity;
-  }
-
   .mode-slider.is-shock-ignition .slider-thumb {
     scale: .975;
   }
@@ -440,7 +424,6 @@
     .snap-marker { transition-duration: 1ms !important; }
 
     .grid-strip { animation: none !important; }
-    .shock-front { display: none !important; }
     .grid-cell {
       transform: none !important;
       opacity: var(--cell-alpha, .15) !important;
@@ -480,7 +463,6 @@
         <div class="grid-mask" aria-hidden="true">
           <div class="grid-strip" id="gridStrip"></div>
         </div>
-        <div class="shock-front" id="shockFront" aria-hidden="true"></div>
 
         <div class="snap-markers" aria-hidden="true">
           <span class="snap-marker"></span>
@@ -508,7 +490,6 @@
   const thumb = document.getElementById("sliderThumb");
   const currentMode = document.getElementById("currentMode");
   const gridStrip = document.getElementById("gridStrip");
-  const shockFront = document.getElementById("shockFront");
   const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   let value = 3;
@@ -586,11 +567,6 @@
       style.setProperty("--wave-x", "0px");
       style.setProperty("--wave-y", "0px");
       style.setProperty("--wave-scale", "1");
-    }
-
-    if (shockFront) {
-      shockFront.style.opacity = "0";
-      shockFront.style.transform = "translate3d(0,0,0)";
     }
 
     slider.classList.remove("is-shock-ignition");
@@ -846,17 +822,6 @@
       style.setProperty("--wave-x", `${waveX.toFixed(3)}px`);
       style.setProperty("--wave-y", `${waveY.toFixed(3)}px`);
       style.setProperty("--wave-scale", scale.toFixed(3));
-    }
-
-    if (shockFront) {
-      const frontPx = frontX * gridMetrics.width;
-      const frontOpacity =
-        travelProgress < 1
-          ? Math.min(.34, .34 * globalDecay)
-          : .34 * globalDecay;
-
-      shockFront.style.transform = `translate3d(${frontPx.toFixed(2)}px,0,0)`;
-      shockFront.style.opacity = Math.max(0, frontOpacity).toFixed(3);
     }
 
     if (elapsed < shockTravelMs + settleMs) {

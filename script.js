@@ -4132,22 +4132,6 @@
         .ar-work-mode-grid-cell.l4 { --cell-alpha: .55; }
         .ar-work-mode-grid-cell.l5 { --cell-alpha: .75; }
 
-        .ar-work-mode-shock-front {
-            position: absolute;
-            z-index: 2;
-            top: 3px;
-            bottom: 3px;
-            left: 0;
-            width: 1px;
-            border-radius: 1px;
-            pointer-events: none;
-            opacity: 0;
-            background: rgba(255,255,255,.72);
-            box-shadow: 0 0 4px rgba(255,255,255,.12);
-            transform: translate3d(0,0,0);
-            will-change: transform, opacity;
-        }
-
         .ar-work-mode-snap-markers {
             position: absolute;
             z-index: 3;
@@ -4434,7 +4418,6 @@
             .ar-work-mode-snap-marker { transition-duration: 1ms !important; }
 
             .ar-work-mode-grid-strip { animation: none !important; }
-            .ar-work-mode-shock-front { display: none !important; }
             .ar-work-mode-grid-cell {
                 transform: none !important;
                 opacity: var(--cell-alpha, .15) !important;
@@ -4514,8 +4497,6 @@
                             <div class="ar-work-mode-grid-mask" aria-hidden="true">
                                 <div class="ar-work-mode-grid-strip" id="ar-work-mode-grid-strip"></div>
                             </div>
-
-                            <div class="ar-work-mode-shock-front" id="ar-work-mode-shock-front" aria-hidden="true"></div>
 
                             <div class="ar-work-mode-snap-markers" id="ar-work-mode-snap-markers" aria-hidden="true">
                                 <span class="ar-work-mode-snap-marker"></span>
@@ -4747,7 +4728,6 @@
         const thumb = el('ar-work-mode-thumb');
         const currentModeState = el('ar-work-mode-state');
         const gridStrip = el('ar-work-mode-grid-strip');
-        const shockFront = el('ar-work-mode-shock-front');
         const reducedMotionQuery = typeof window.matchMedia === 'function'
             ? window.matchMedia('(prefers-reduced-motion: reduce)')
             : { matches: false };
@@ -4824,11 +4804,6 @@
                 style.setProperty('--wave-x', '0px');
                 style.setProperty('--wave-y', '0px');
                 style.setProperty('--wave-scale', '1');
-            }
-
-            if (shockFront) {
-                shockFront.style.opacity = '0';
-                shockFront.style.transform = 'translate3d(0,0,0)';
             }
         }
 
@@ -5080,17 +5055,6 @@
                 style.setProperty('--wave-x', `${waveX.toFixed(3)}px`);
                 style.setProperty('--wave-y', `${waveY.toFixed(3)}px`);
                 style.setProperty('--wave-scale', scale.toFixed(3));
-            }
-
-            if (shockFront) {
-                const frontPx = frontX * gridMetrics.width;
-                const frontOpacity =
-                    travelProgress < 1
-                        ? Math.min(.34, .34 * globalDecay)
-                        : .34 * globalDecay;
-
-                shockFront.style.transform = `translate3d(${frontPx.toFixed(2)}px,0,0)`;
-                shockFront.style.opacity = Math.max(0, frontOpacity).toFixed(3);
             }
 
             if (elapsed < shockTravelMs + settleMs) {
