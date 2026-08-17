@@ -100,20 +100,16 @@
         ru: {
             presets: {
                 safe: {
-                    label: 'Безопасный',
-                    hint: '≈ 1 отклик в минуту. Паузы 4-8 с, чтение вакансии 15-35 с. Медленно и максимально похоже на человека.'
+                    label: 'Безопасный'
                 },
                 balanced: {
-                    label: 'Оптимальный',
-                    hint: '≈ 2 отклика в минуту. Паузы 2-5 с, чтение вакансии 8-20 с. Рекомендуемый баланс скорости и естественности.'
+                    label: 'Оптимальный'
                 },
                 fast: {
-                    label: 'Быстрый',
-                    hint: '≈ 3-4 отклика в минуту. Паузы 1,5-3 с, чтение вакансии 4-9 с. Повышенный темп — заметнее для hh.ru.'
+                    label: 'Быстрый'
                 },
                 turbo: {
-                    label: 'Турбо',
-                    hint: '↯ Максимальная скорость. Только необходимые технические паузы. При блокировке applomat автоматически остановится.'
+                    label: 'Турбо'
                 }
             },
             cover: {
@@ -130,7 +126,6 @@
                 stopped: 'Остановлено',
                 error: 'Внимание',
                 done: 'Завершено',
-                turboActive: '↯ Турбо включён',
                 busyTab: 'Занято другой вкладкой',
                 returningToList: 'Возврат к списку...',
                 waitingToReturn: 'Ожидание возврата...',
@@ -143,7 +138,8 @@
                 expandTitle: 'Развернуть applomat',
                 langSwitchLabel: 'Язык интерфейса',
                 modeTitle: 'Режим работы',
-                modePaceGroup: 'Темп откликов',
+                modeHelpAria: 'О режимах работы',
+                modeHelpTitle: 'Безопасный, Оптимальный, Быстрый и Турбо режимы',
                 limitLabel: 'Лимит откликов за запуск',
                 startBtn: 'Запустить отклики',
                 stopBtn: 'Остановить (Стоп)',
@@ -410,20 +406,16 @@
         en: {
             presets: {
                 safe: {
-                    label: 'Safe',
-                    hint: '≈ 1 application/min. Pauses 4–8s, vacancy view 15–35s. Slow and most human-like.'
+                    label: 'Safe'
                 },
                 balanced: {
-                    label: 'Balanced',
-                    hint: '≈ 2 applications/min. Pauses 2–5s, vacancy view 8–20s. Recommended balance of speed and natural behavior.'
+                    label: 'Balanced'
                 },
                 fast: {
-                    label: 'Fast',
-                    hint: '≈ 3–4 applications/min. Pauses 1.5–3s, vacancy view 4–9s. Elevated pace — more noticeable to hh.ru.'
+                    label: 'Fast'
                 },
                 turbo: {
-                    label: 'Turbo',
-                    hint: '↯ Maximum speed. Only essential technical pauses. If throttled or blocked, applomat halts automatically.'
+                    label: 'Turbo'
                 }
             },
             cover: {
@@ -440,7 +432,6 @@
                 stopped: 'Stopped',
                 error: 'Warning',
                 done: 'Completed',
-                turboActive: '↯ Turbo active',
                 busyTab: 'Active in another tab',
                 returningToList: 'Returning to list...',
                 waitingToReturn: 'Waiting to return...',
@@ -452,8 +443,9 @@
                 minimizeTitle: 'Collapse panel',
                 expandTitle: 'Expand applomat',
                 langSwitchLabel: 'Interface language',
-                modeTitle: 'Application mode',
-                modePaceGroup: 'Application pace',
+                modeTitle: 'Work mode',
+                modeHelpAria: 'About work modes',
+                modeHelpTitle: 'Safe, Balanced, Fast and Turbo work modes',
                 limitLabel: 'Application limit per run',
                 startBtn: 'Start applying',
                 stopBtn: 'Stop',
@@ -879,9 +871,16 @@
             action: [25, 80]
         }
     };
+    const WORK_MODE_KEYS = ['safe', 'balanced', 'fast', 'turbo'];
     const DEFAULT_PRESET = 'balanced';
     const presetLabel = (key) => I18n.t(`presets.${key || DEFAULT_PRESET}.label`);
-    const presetHint = (key) => I18n.t(`presets.${key || DEFAULT_PRESET}.hint`);
+    const modeKeyToIndex = (key) => {
+        const idx = WORK_MODE_KEYS.indexOf(key);
+        return idx >= 0 ? idx : 1;
+    };
+    const modeIndexToKey = (idx) => {
+        return WORK_MODE_KEYS[Math.max(0, Math.min(WORK_MODE_KEYS.length - 1, idx))] || DEFAULT_PRESET;
+    };
 
     // Пользовательские настройки по умолчанию
     const DEFAULTS = {
@@ -2515,7 +2514,7 @@
 
         el.textContent = text;
         el.title = text;
-        el.className = 'ar-status ar-status--' + key + (isTurbo ? ' is-turbo' : '');
+        el.className = 'ar-status ar-status--' + key;
 
         const running = key === 'running';
         const startBtn = document.getElementById('ar-start-btn');
@@ -2528,9 +2527,6 @@
             stopBtn.style.display = running ? 'inline-flex' : 'none';
             stopBtn.disabled = !running;
         }
-
-        const progBar = document.querySelector('.ar-progress');
-        if (progBar) progBar.classList.toggle('is-turbo', running && isTurbo);
 
         const toggle = document.getElementById('ar-toggle-btn');
         if (toggle) {
@@ -3796,35 +3792,6 @@
         .ar-diag-footer{ display:flex; align-items:center; justify-content:flex-start; padding:0; }
         .ar-diag-footer .ar-dropdown-menu{ top:auto; bottom:calc(100% + 4px); right:auto; left:0; }
 
-        /* Phase 4: Мягкий transient 1px inset pulse всей панели при активации Турбо */
-        #ar-main-panel.is-turbo-activating{
-            animation:ar-panel-edge-pulse .6s cubic-bezier(.22, 1, .36, 1) forwards;
-        }
-        @keyframes ar-panel-edge-pulse{
-            0%{ box-shadow:-4px 0 20px rgba(15,23,42,.06), inset 0 0 0 0 rgba(214,0,28,0); }
-            35%{ box-shadow:-4px 0 20px rgba(15,23,42,.08), inset 0 0 0 1px rgba(214,0,28,.28); }
-            100%{ box-shadow:-4px 0 20px rgba(15,23,42,.06), inset 0 0 0 0 rgba(214,0,28,0); }
-        }
-
-        /* Phase 3b: Фирменная линия applomat - в обычном состоянии скрыта, пробегает 1 раз при активации Турбо */
-        .ar-flow-line{
-            position:absolute; top:0; left:0; right:0; height:2px;
-            background:linear-gradient(90deg, #ff334b, #d6001c, #e11d48);
-            transform:scaleX(0); transform-origin:left center;
-            opacity:0; pointer-events:none; z-index:10;
-        }
-        .ar-flow-line.is-turbo-activating{
-            animation:ar-flow-line-burst .6s cubic-bezier(.22, 1, .36, 1) forwards;
-        }
-        @keyframes ar-flow-line-burst{
-            0%{ transform:scaleX(0); transform-origin:left center; opacity:0; }
-            20%{ opacity:1; }
-            50%{ transform:scaleX(1); transform-origin:left center; opacity:1; }
-            51%{ transform:scaleX(1); transform-origin:right center; opacity:1; }
-            80%{ opacity:1; }
-            100%{ transform:scaleX(0); transform-origin:right center; opacity:0; }
-        }
-
         /* Шапка: чистый lowercase текст, оптическое выравнивание */
         .ar-header{
             flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:8px;
@@ -3871,8 +3838,6 @@
         .ar-status--stopped{ background:var(--hh-red-soft); color:#c01126; border-color:#fecaca; }
         .ar-status--error{ background:var(--hh-amber-soft); color:var(--hh-amber); border-color:#fde68a; }
         .ar-status--done{ background:var(--hh-blue-soft); color:var(--hh-blue); border-color:#bfdbfe; }
-        .ar-status--turbo-confirm{ background:#1e293b !important; color:#ffffff !important; border-color:#334155 !important; }
-        .ar-status--turbo-confirm::before{ background:#ff334b !important; }
         @keyframes ar-pulse{ 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.4; transform:scale(1.25); } }
 
         .ar-icon-btn{
@@ -3899,99 +3864,374 @@
         }
         .ar-card-title{ font-size:12px; font-weight:700; color:var(--ink); text-transform:uppercase; letter-spacing:.03em; }
 
-        /* Phase 2: Однократный легкий energy sweep через карточку "Режим работы" */
-        .ar-card::before{
-            content:''; position:absolute; top:0; left:0; right:0; bottom:0;
-            background:linear-gradient(105deg, transparent 15%, rgba(214,0,28,.10) 45%, rgba(255,51,75,.16) 50%, rgba(214,0,28,.10) 55%, transparent 85%);
-            transform:translateX(-100%); pointer-events:none; opacity:0; z-index:1;
-        }
-        .ar-card.is-turbo-activating::before{
-            opacity:1; animation:ar-card-sweep .55s cubic-bezier(.22, 1, .36, 1) forwards;
-        }
-        @keyframes ar-card-sweep{
-            0%{ transform:translateX(-100%); opacity:0; }
-            25%{ opacity:1; }
-            75%{ opacity:1; }
-            100%{ transform:translateX(100%); opacity:0; }
+        /* ─── Work Mode Card & Slider ─── */
+        #ar-mode-card {
+            --ar-work-track-h: 36px;
+            --ar-work-track-radius: 11px;
+            --ar-work-track-pad: 3px;
+            --ar-work-thumb-w: 44px;
+            --ar-work-thumb-h: 30px;
+            --ar-work-thumb-radius: 10px;
+            --ar-work-thumb-duration: 255ms;
+            --ar-work-turbo-reveal-duration: 380ms;
+            --ar-work-turbo-exit-duration: 220ms;
+            --ar-work-shock-cycle-duration: 5s;
+            --ar-work-turbo-grid-duration: 60s;
+            --ar-work-grid-shift: -320px;
+            --ar-work-move-ease: cubic-bezier(.22, .8, .3, 1);
+            --ar-work-reveal-ease: cubic-bezier(.18, .82, .22, 1);
+
+            /* Static Turbo matrix geometry. Shockwave runs per-cell. */
+            --ar-work-grid-cell: 5px;
+            --ar-work-grid-col-gap: 2px;
+            --ar-work-grid-row-gap: 2px;
         }
 
-        /* Сегмент-контрол пресетов темпа: 4 колонки строго одинаковой ширины */
-        .ar-seg{
-            display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:2px;
-            background:var(--bg-2); border-radius:var(--r-md); padding:3px;
-            position:relative; overflow:hidden;
-        }
-        /* Phase 3a: Тонкая красная линия селектора, пробегающая от Turbo влево */
-        .ar-seg-line{
-            position:absolute; bottom:0; left:0; height:2px; width:100%;
-            background:linear-gradient(90deg, #ff334b, #d6001c, #991b1b);
-            transform:scaleX(0); transform-origin:right center; pointer-events:none; z-index:3; opacity:0;
-        }
-        .ar-seg-line.is-active{
-            opacity:1; animation:ar-seg-line-sweep .55s cubic-bezier(.22, 1, .36, 1) forwards;
-        }
-        @keyframes ar-seg-line-sweep{
-            0%{ transform:scaleX(0); transform-origin:right center; opacity:1; }
-            45%{ transform:scaleX(1); transform-origin:right center; opacity:1; }
-            50%{ transform:scaleX(1); transform-origin:left center; opacity:1; }
-            100%{ transform:scaleX(0); transform-origin:left center; opacity:0; }
+        .ar-work-mode-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
         }
 
-        .ar-seg-btn{
-            min-width:0; border:none; background:transparent; border-radius:6px;
-            padding:6px 2px; font-family:inherit; font-size:11px; font-weight:600;
-            color:var(--ink-2); cursor:pointer; white-space:nowrap; text-align:center;
-            transition:background .15s, color .15s, box-shadow .15s;
-            position:relative; overflow:hidden; text-overflow:ellipsis;
-        }
-        .ar-seg-btn:hover{ color:var(--ink); }
-        .ar-seg-btn.is-active{ background:var(--card); color:var(--ink); box-shadow:0 1px 3px rgba(15,23,42,.1); }
-
-        /* Phase 1: Постоянный активный Turbo state: dark graphite surface + white label + red ↯ */
-        .ar-seg-btn--turbo{ font-weight:700; }
-        .ar-seg-btn--turbo .ar-turbo-icon{
-            display:inline-block; margin-right:1px; color:var(--hh-red); font-size:11px;
-            vertical-align:baseline; font-weight:800;
-        }
-        .ar-seg-btn--turbo.is-active{
-            background:#1e293b; color:#ffffff; box-shadow:0 1px 3px rgba(15,23,42,.22), inset 0 0 0 1px rgba(255,255,255,.08);
-        }
-        .ar-seg-btn--turbo.is-active .ar-turbo-icon{
-            color:#ff334b;
-        }
-        .ar-seg-btn--turbo::after{
-            content:''; position:absolute; top:0; left:0; width:100%; height:100%;
-            background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.28) 50%, transparent 100%);
-            transform:translateX(-100%); pointer-events:none; opacity:0;
-        }
-        .ar-seg-btn--turbo.is-activating::after{
-            opacity:1; animation:ar-turbo-shimmer .45s cubic-bezier(.22, 1, .36, 1) forwards;
-        }
-        @keyframes ar-turbo-shimmer{
-            0%{ transform:translateX(-100%); opacity:0; }
-            30%{ opacity:1; }
-            100%{ transform:translateX(100%); opacity:0; }
+        .ar-work-mode-title {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            min-width: 0;
+            margin: 0;
+            font-size: 13.5px;
+            line-height: 1.2;
+            white-space: nowrap;
         }
 
-        /* Subtle Progress highlight in Turbo */
-        .ar-progress.is-turbo i::after{
-            content:''; position:absolute; top:0; left:0; width:100%; height:100%;
-            background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.2) 50%, transparent 100%);
-            transform:translateX(-100%); animation:ar-turbo-prog 2.6s infinite ease-in-out;
-            pointer-events:none; will-change:transform;
-        }
-        @keyframes ar-turbo-prog{
-            0%{ transform:translateX(-100%); }
-            100%{ transform:translateX(100%); }
+        .ar-work-mode-title__label {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--ink);
+            text-transform: uppercase;
+            letter-spacing: .03em;
         }
 
-        @media (prefers-reduced-motion: reduce){
-            .ar-seg-line, .ar-seg-btn--turbo::after, .ar-progress.is-turbo i::after, .ar-card::before, .ar-flow-line, #ar-main-panel{ animation:none !important; }
+        .ar-work-mode-title__state {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--ink);
+            transition: color 170ms ease;
         }
 
-        .ar-preset-hint{
-            font-size:11.5px; line-height:1.45; color:var(--ink-2);
-            background:var(--bg); border:1px solid var(--line); border-radius:var(--r-md); padding:8px 10px;
+        .ar-work-mode-card[data-mode="turbo"] .ar-work-mode-title__state {
+            color: #ff232d;
+        }
+
+        .ar-work-mode-help {
+            position: relative;
+            flex: 0 0 auto;
+            width: 20px;
+            height: 20px;
+            display: grid;
+            place-items: center;
+            padding: 0;
+            border: 1.5px solid #c2c3c6;
+            border-radius: 999px;
+            background: transparent;
+            color: #8e8f93;
+            cursor: pointer;
+            font-size: 11.5px;
+            font-weight: 700;
+            line-height: 1;
+            transition: border-color 150ms ease, color 150ms ease, background-color 150ms ease;
+        }
+
+        .ar-work-mode-help:hover {
+            color: var(--ink);
+            border-color: #94a3b8;
+            background: rgba(0, 0, 0, 0.04);
+        }
+
+        .ar-work-mode-help:focus-visible {
+            outline: 2px solid var(--hh-blue);
+            outline-offset: 2px;
+        }
+
+        .ar-work-mode-labels {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 1px;
+            margin-bottom: -3px;
+            color: var(--ink-3);
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1;
+            letter-spacing: -0.01em;
+            user-select: none;
+        }
+
+        .ar-work-mode-slider {
+            position: relative;
+            height: var(--ar-work-track-h);
+            border-radius: var(--ar-work-track-radius);
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+            cursor: pointer;
+            isolation: isolate;
+            background: linear-gradient(90deg, #e7e9ed 0%, #e9ebee 55%, #eceef0 100%);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.68),
+                inset 0 0 0 1px rgba(27,35,48,.025);
+        }
+
+        .ar-work-mode-slider::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+            border-radius: inherit;
+            pointer-events: none;
+            background: linear-gradient(90deg, rgba(255,255,255,.12), rgba(255,255,255,.025) 62%, transparent 100%);
+        }
+
+        .ar-work-mode-turbo-surface {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            border-radius: inherit;
+            pointer-events: none;
+            opacity: 0;
+            background: linear-gradient(
+                90deg,
+                rgba(255, 83, 91, .12) 0%,
+                rgba(255, 75, 83, .23) 27%,
+                rgba(255, 65, 74, .43) 55%,
+                rgba(255, 52, 62, .69) 79%,
+                rgba(255, 42, 52, .89) 100%
+            );
+            transition: opacity var(--ar-work-turbo-exit-duration) ease;
+            will-change: opacity;
+        }
+
+        .ar-work-mode-slider.is-turbo .ar-work-mode-turbo-surface {
+            opacity: 1;
+            transition: opacity var(--ar-work-turbo-reveal-duration) cubic-bezier(.22, .72, .22, 1);
+        }
+
+        .ar-work-mode-grid-mask {
+            position: absolute;
+            inset: 0;
+            z-index: 2;
+            overflow: hidden;
+            border-radius: inherit;
+            pointer-events: none;
+            opacity: 0;
+            visibility: hidden;
+            color: #fff;
+            filter: blur(0);
+            will-change: opacity, filter;
+            -webkit-mask-image: linear-gradient(
+                to right,
+                transparent 12%,
+                rgba(0,0,0,.20) 32%,
+                rgba(0,0,0,.70) 56%,
+                #000 72%
+            );
+            mask-image: linear-gradient(
+                to right,
+                transparent 12%,
+                rgba(0,0,0,.20) 32%,
+                rgba(0,0,0,.70) 56%,
+                #000 72%
+            );
+            transition:
+                opacity var(--ar-work-turbo-exit-duration) ease,
+                filter var(--ar-work-turbo-exit-duration) ease,
+                visibility 0s linear var(--ar-work-turbo-exit-duration);
+        }
+
+        .ar-work-mode-slider.is-turbo .ar-work-mode-grid-mask {
+            opacity: .62;
+            visibility: visible;
+            animation:
+                ar-turbo-grid-fade-in calc(var(--ar-work-turbo-reveal-duration) + 80ms)
+                cubic-bezier(.22, .72, .22, 1)
+                1 both;
+            transition:
+                opacity var(--ar-work-turbo-reveal-duration) ease,
+                filter var(--ar-work-turbo-reveal-duration) ease,
+                visibility 0s linear 0s;
+        }
+
+        @keyframes ar-turbo-grid-fade-in {
+            0% {
+                opacity: 0;
+                filter: blur(1.2px);
+            }
+            55% {
+                opacity: .48;
+                filter: blur(.45px);
+            }
+            100% {
+                opacity: .62;
+                filter: blur(0);
+            }
+        }
+
+        .ar-work-mode-grid-strip {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            display: grid;
+            grid-template-rows: repeat(5, var(--ar-work-grid-cell));
+            grid-auto-flow: column;
+            grid-auto-columns: var(--ar-work-grid-cell);
+            align-content: center;
+            column-gap: var(--ar-work-grid-col-gap);
+            row-gap: var(--ar-work-grid-row-gap);
+            width: max-content;
+            transform: translate3d(0,0,0);
+            will-change: transform;
+        }
+
+        .ar-work-mode-slider.is-turbo .ar-work-mode-grid-strip {
+            animation: ar-turbo-grid-drift var(--ar-work-turbo-grid-duration) linear infinite;
+        }
+
+        @keyframes ar-turbo-grid-drift {
+            from { transform: translate3d(0, 0, 0); }
+            to   { transform: translate3d(var(--ar-work-grid-shift), 0, 0); }
+        }
+
+        .ar-work-mode-grid-cell {
+            --wave-boost: 0;
+            --wave-x: 0px;
+            --wave-y: 0px;
+            --wave-scale: 1;
+
+            width: var(--ar-work-grid-cell);
+            height: var(--ar-work-grid-cell);
+            border-radius: 1px;
+            background: currentColor;
+            opacity: calc(var(--cell-alpha, .15) + var(--wave-boost));
+            transform:
+                translate3d(
+                    var(--wave-x),
+                    var(--wave-y),
+                    0
+                )
+                scale(var(--wave-scale));
+            transform-origin: center;
+            will-change: transform, opacity;
+        }
+
+        .ar-work-mode-grid-cell.l0 { --cell-alpha: 0; }
+        .ar-work-mode-grid-cell.l1 { --cell-alpha: .10; }
+        .ar-work-mode-grid-cell.l2 { --cell-alpha: .20; }
+        .ar-work-mode-grid-cell.l3 { --cell-alpha: .35; }
+        .ar-work-mode-grid-cell.l4 { --cell-alpha: .55; }
+        .ar-work-mode-grid-cell.l5 { --cell-alpha: .75; }
+
+        .ar-work-mode-shock-front {
+            position: absolute;
+            z-index: 2;
+            top: 3px;
+            bottom: 3px;
+            left: 0;
+            width: 1px;
+            border-radius: 1px;
+            pointer-events: none;
+            opacity: 0;
+            background: rgba(255,255,255,.72);
+            box-shadow: 0 0 4px rgba(255,255,255,.12);
+            transform: translate3d(0,0,0);
+            will-change: transform, opacity;
+        }
+
+        .ar-work-mode-snap-markers {
+            position: absolute;
+            z-index: 3;
+            top: 50%;
+            left: calc(var(--ar-work-track-pad) + var(--ar-work-thumb-w) / 2);
+            right: calc(var(--ar-work-track-pad) + var(--ar-work-thumb-w) / 2);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transform: translateY(-50%);
+            pointer-events: none;
+        }
+
+        .ar-work-mode-snap-marker {
+            width: 3px;
+            height: 3px;
+            flex: 0 0 3px;
+            border-radius: 1px;
+            background: #7f8b9c;
+            opacity: .16;
+            transition: opacity 100ms ease;
+        }
+
+        .ar-work-mode-slider:hover:not(.is-turbo) .ar-work-mode-snap-marker,
+        .ar-work-mode-slider:focus-visible:not(.is-turbo) .ar-work-mode-snap-marker {
+            opacity: .23;
+        }
+
+        .ar-work-mode-slider.is-turbo .ar-work-mode-snap-marker {
+            opacity: 0;
+        }
+
+        .ar-work-mode-thumb {
+            position: absolute;
+            z-index: 5;
+            top: var(--ar-work-track-pad);
+            left: var(--ar-work-track-pad);
+            width: var(--ar-work-thumb-w);
+            height: var(--ar-work-thumb-h);
+            border: 1px solid rgba(92,105,122,.11);
+            border-radius: var(--ar-work-thumb-radius);
+            background: linear-gradient(180deg, #ffffff 0%, #fbfcfd 100%);
+            box-shadow:
+                0 3px 7px rgba(27,35,48,.085),
+                0 1px 2px rgba(27,35,48,.065),
+                inset 0 0 0 1px rgba(255,255,255,.55);
+            transform: translate3d(0, 0, 0);
+            transition:
+                transform var(--ar-work-thumb-duration) var(--ar-work-move-ease),
+                box-shadow 150ms ease,
+                border-color 170ms ease,
+                scale 100ms ease;
+            will-change: transform;
+            pointer-events: none;
+        }
+
+        .ar-work-mode-slider.is-turbo .ar-work-mode-thumb {
+            border-color: rgba(255,35,45,.34);
+        }
+
+        .ar-work-mode-slider:hover .ar-work-mode-thumb {
+            box-shadow:
+                0 4px 9px rgba(27,35,48,.095),
+                0 1px 2px rgba(27,35,48,.065),
+                inset 0 0 0 1px rgba(255,255,255,.6);
+        }
+
+        .ar-work-mode-slider.is-pressed .ar-work-mode-thumb {
+            scale: .985;
+        }
+
+        .ar-work-mode-slider.is-dragging .ar-work-mode-thumb {
+            transition: box-shadow 150ms ease, border-color 170ms ease, scale 100ms ease;
+        }
+
+        .ar-work-mode-slider:focus {
+            outline: none;
+        }
+
+        .ar-work-mode-slider:focus-visible {
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.68),
+                inset 0 0 0 1px rgba(27,35,48,.04),
+                0 0 0 2px rgba(255,52,60,.13);
         }
 
         /* Строка подпись + контрол */
@@ -4187,6 +4427,18 @@
         }
 
         @media (prefers-reduced-motion: reduce){
+            .ar-work-mode-thumb,
+            .ar-work-mode-turbo-surface,
+            .ar-work-mode-grid-mask,
+            .ar-work-mode-title__state,
+            .ar-work-mode-snap-marker { transition-duration: 1ms !important; }
+
+            .ar-work-mode-grid-strip { animation: none !important; }
+            .ar-work-mode-shock-front { display: none !important; }
+            .ar-work-mode-grid-cell {
+                transform: none !important;
+                opacity: var(--cell-alpha, .15) !important;
+            }
             #ar-main-panel *, #ar-toggle-btn, #ar-toggle-btn *{ animation:none !important; transition:none !important; }
             html.hh-ar-anim{ transition:none !important; }
         }
@@ -4200,13 +4452,12 @@
 
     function buildPanelHtml() {
         const lang = I18n.getLanguage();
-        const presetButtons = Object.entries(PRESETS).map(([key, p]) =>
-            `<button type="button" class="ar-seg-btn${key === 'turbo' ? ' ar-seg-btn--turbo' : ''}" data-preset="${key}" role="radio" aria-checked="false">${key === 'turbo' ? '<span class="ar-turbo-icon">↯</span> ' : ''}<span class="ar-seg-btn-label">${presetLabel(key)}</span></button>`
-        ).join('');
+        const curPreset = PRESETS[config.preset] ? config.preset : DEFAULT_PRESET;
+        const curIndex = modeKeyToIndex(curPreset);
+        const curLabel = presetLabel(curPreset);
 
         return `
             <div id="ar-view-main" class="ar-view ar-view--main">
-                <div class="ar-flow-line" id="ar-flow-line"></div>
                 <div class="ar-header">
                     <div class="ar-brand">
                         <span class="ar-title">applomat</span>
@@ -4226,13 +4477,56 @@
                 </div>
 
                 <div class="ar-scroll">
-                    <section class="ar-card" id="ar-mode-card">
-                        <div class="ar-card-title" id="ar-mode-card-title">${I18n.t('panel.modeTitle')}</div>
-                        <div class="ar-seg" id="ar-preset-seg" role="radiogroup" aria-label="${I18n.t('panel.modePaceGroup')}">
-                            ${presetButtons}
-                            <span class="ar-seg-line" id="ar-seg-line" aria-hidden="true"></span>
+                    <section class="ar-card ar-work-mode-card" id="ar-mode-card" data-mode="${curPreset}">
+                        <div class="ar-work-mode-header">
+                            <div class="ar-work-mode-title" id="ar-work-mode-heading">
+                                <span class="ar-work-mode-title__label" id="ar-work-mode-label">${I18n.t('panel.modeTitle')}</span>
+                                <span class="ar-work-mode-title__state" id="ar-work-mode-state">${curLabel}</span>
+                            </div>
+                            <button
+                                class="ar-work-mode-help"
+                                id="ar-work-mode-help-btn"
+                                type="button"
+                                aria-label="${I18n.t('panel.modeHelpAria')}"
+                                title="${I18n.t('panel.modeHelpTitle')}"
+                            >?</button>
                         </div>
-                        <div class="ar-preset-hint" id="ar-preset-hint"></div>
+
+                        <div class="ar-work-mode-labels" aria-hidden="true">
+                            <span id="ar-work-mode-lbl-safe">${presetLabel('safe')}</span>
+                            <span id="ar-work-mode-lbl-turbo">${presetLabel('turbo')}</span>
+                        </div>
+
+                        <div
+                            class="ar-work-mode-slider${curPreset === 'turbo' ? ' is-turbo' : ''}"
+                            id="ar-work-mode-slider"
+                            role="slider"
+                            tabindex="0"
+                            aria-label="${I18n.t('panel.modeTitle')}"
+                            aria-valuemin="0"
+                            aria-valuemax="3"
+                            aria-valuenow="${curIndex}"
+                            aria-valuetext="${curLabel}"
+                            data-value="${curIndex}"
+                        >
+                            <div class="ar-work-mode-turbo-surface" aria-hidden="true"></div>
+
+                            <div class="ar-work-mode-grid-mask" aria-hidden="true">
+                                <div class="ar-work-mode-grid-strip" id="ar-work-mode-grid-strip"></div>
+                            </div>
+
+                            <div class="ar-work-mode-shock-front" id="ar-work-mode-shock-front" aria-hidden="true"></div>
+
+                            <div class="ar-work-mode-snap-markers" id="ar-work-mode-snap-markers" aria-hidden="true">
+                                <span class="ar-work-mode-snap-marker"></span>
+                                <span class="ar-work-mode-snap-marker"></span>
+                                <span class="ar-work-mode-snap-marker"></span>
+                                <span class="ar-work-mode-snap-marker"></span>
+                            </div>
+
+                            <div class="ar-work-mode-thumb" id="ar-work-mode-thumb" aria-hidden="true"></div>
+                        </div>
+
                         <div class="ar-row ar-row-limit">
                             <label class="ar-row-label" id="ar-limit-label" for="ar-limit-input">${I18n.t('panel.limitLabel')}</label>
                             <input type="number" id="ar-limit-input" class="ar-input ar-input-num" min="1" max="500">
@@ -4370,10 +4664,15 @@
     let uiAbortController = null;
     let uiDiagTimer = null;
     let uiStatsTimer = null;
+    let uiWorkModeResizeObserver = null;
 
     function cleanupUI() {
         if (uiDiagTimer) { clearInterval(uiDiagTimer); uiDiagTimer = null; }
         if (uiStatsTimer) { clearInterval(uiStatsTimer); uiStatsTimer = null; }
+        if (uiWorkModeResizeObserver) {
+            try { uiWorkModeResizeObserver.disconnect(); } catch (e) { /* ignore */ }
+            uiWorkModeResizeObserver = null;
+        }
         if (uiAbortController) {
             try { uiAbortController.abort(); } catch (e) { /* ignore */ }
             uiAbortController = null;
@@ -4442,153 +4741,639 @@
         el('ar-use-cover-check').addEventListener('change', renderCoverState);
         renderCoverState();
 
-        // ---------- Пресеты темпа ----------
-        const presetSeg = el('ar-preset-seg');
-        const presetHint = el('ar-preset-hint');
+        // ---------- Новый селектор режима (Work Mode Slider) ----------
+        const modeCard = el('ar-mode-card');
+        const slider = el('ar-work-mode-slider');
+        const thumb = el('ar-work-mode-thumb');
+        const currentModeState = el('ar-work-mode-state');
+        const gridStrip = el('ar-work-mode-grid-strip');
+        const shockFront = el('ar-work-mode-shock-front');
+        const reducedMotionQuery = typeof window.matchMedia === 'function'
+            ? window.matchMedia('(prefers-reduced-motion: reduce)')
+            : { matches: false };
 
-        let turboActivationSeq = 0;
-        let turboTimers = [];
-
-        const clearAllTurboTimers = () => {
-            turboTimers.forEach(t => clearTimeout(t));
-            turboTimers = [];
+        let gridCells = [];
+        let gridMetrics = {
+            width: 1,
+            columns: 1,
+            rows: 5,
+            periodWidth: 1
         };
 
-        const cancelTurboActivation = () => {
-            turboActivationSeq++;
-            clearAllTurboTimers();
+        const SHOCK_CYCLE_SECONDS = 5;
+        const GRID_DRIFT_SECONDS = 60;
 
-            const p = el('ar-main-panel');
-            const modeCard = el('ar-mode-card');
-            const turboLine = el('ar-seg-line');
-            const flowLine = el('ar-flow-line');
-            const statusText = el('ar-status-text');
+        if (modeCard) {
+            modeCard.style.setProperty('--ar-work-shock-cycle-duration', `${SHOCK_CYCLE_SECONDS}s`);
+            modeCard.style.setProperty('--ar-work-turbo-grid-duration', `${GRID_DRIFT_SECONDS}s`);
+        }
 
-            p?.classList.remove('is-turbo-activating');
-            modeCard?.classList.remove('is-turbo-activating');
-            turboLine?.classList.remove('is-active');
-            flowLine?.classList.remove('is-turbo-activating');
-            qa('.ar-seg-btn--turbo', presetSeg).forEach(b => b.classList.remove('is-activating'));
+        let gridDriftAnimation = null;
+        let shockCycleSeconds = SHOCK_CYCLE_SECONDS;
+        let shockStart = 0;
+        let shockTravelMs = 0;
+        let shockRafId = 0;
+        let shockCycleTimer = 0;
+        let shockEntryTimer = 0;
+        let shockActive = false;
+        let lastShockStartedAt = 0;
 
-            if (statusText && statusText.classList.contains('ar-status--turbo-confirm')) {
-                statusText.classList.remove('ar-status--turbo-confirm');
-                setStatus(State.amIRunning() ? 'running' : 'idle');
+        function seededNoise(index) {
+            const x = Math.sin(index * 12.9898 + 78.233) * 43758.5453;
+            return x - Math.floor(x);
+        }
+
+        function levelFor(index) {
+            const n = seededNoise(index + 91);
+
+            // Regular geometry, irregular deterministic intensity.
+            if (n < .18) return 'l0';
+            if (n < .35) return 'l1';
+            if (n < .53) return 'l2';
+            if (n < .69) return 'l3';
+            if (n < .84) return 'l4';
+            return 'l5';
+        }
+
+        function pxVar(name, fallback) {
+            if (!modeCard && !slider) return fallback;
+            const style = getComputedStyle(modeCard || slider);
+            const n = parseFloat(style.getPropertyValue(name));
+            return Number.isFinite(n) ? n : fallback;
+        }
+
+        function gaussian(distance, width) {
+            const ratio = distance / width;
+            return Math.exp(-.5 * ratio * ratio);
+        }
+
+        function clamp01(val) {
+            return Math.max(0, Math.min(1, val));
+        }
+
+        function smoothstep(edge0, edge1, x) {
+            if (edge0 === edge1) return x < edge0 ? 0 : 1;
+            const t = clamp01((x - edge0) / (edge1 - edge0));
+            return t * t * (3 - 2 * t);
+        }
+
+        function resetShockCells() {
+            for (const cell of gridCells) {
+                const style = cell.element.style;
+                style.setProperty('--wave-boost', '0');
+                style.setProperty('--wave-x', '0px');
+                style.setProperty('--wave-y', '0px');
+                style.setProperty('--wave-scale', '1');
             }
-        };
 
-        const triggerTurboActivation = () => {
-            cancelTurboActivation();
+            if (shockFront) {
+                shockFront.style.opacity = '0';
+                shockFront.style.transform = 'translate3d(0,0,0)';
+            }
+        }
 
-            const isReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            const mySeq = ++turboActivationSeq;
-            const statusText = el('ar-status-text');
+        function rebuildGrid() {
+            if (!slider || !gridStrip) return;
+            const rows = 5;
+            const cellSize = pxVar('--ar-work-grid-cell', 5);
+            const gap = pxVar('--ar-work-grid-col-gap', 2);
+            const cadence = cellSize + gap;
+            const width = Math.max(1, slider.clientWidth);
 
-            if (isReducedMotion) {
-                if (!State.amIRunning() && statusText) {
-                    statusText.textContent = I18n.t('status.turboActive');
-                    statusText.classList.add('ar-status--turbo-confirm');
-                    const tid = setTimeout(() => {
-                        if (mySeq !== turboActivationSeq || config?.preset !== 'turbo') return;
-                        if (!State.amIRunning() && statusText) {
-                            setStatus('idle');
-                            statusText.classList.remove('ar-status--turbo-confirm');
-                        }
-                    }, 1000);
-                    turboTimers.push(tid);
+            // Two exact periods: seamless right-to-left drift.
+            const columns = Math.max(1, Math.ceil((width + gap) / cadence) + 2);
+            const periodWidth = columns * cadence;
+            const fragment = document.createDocumentFragment();
+            const metadata = [];
+
+            for (let period = 0; period < 2; period++) {
+                for (let column = 0; column < columns; column++) {
+                    for (let row = 0; row < rows; row++) {
+                        const index = column * rows + row;
+                        const baseLevel = levelFor(index);
+                        const element = document.createElement('span');
+
+                        element.className = `ar-work-mode-grid-cell ${baseLevel}`;
+                        fragment.appendChild(element);
+
+                        metadata.push({
+                            element,
+                            column,
+                            row,
+                            period,
+
+                            // Physical center of THIS rendered cell in the two-period strip.
+                            // Shockwave uses this together with the live CSS drift offset,
+                            // so the reaction always happens where the square is actually seen.
+                            stripX:
+                                period * periodWidth +
+                                column * cadence +
+                                cellSize / 2,
+
+                            phase: (seededNoise(index * 1.731 + 17.9) - .5) * .018,
+                            baseLevel
+                        });
+                    }
                 }
+            }
+
+            gridStrip.replaceChildren(fragment);
+            gridStrip.style.width = `${(periodWidth * 2) - gap}px`;
+            slider.style.setProperty('--ar-work-grid-shift', `${-periodWidth}px`);
+
+            gridCells = metadata;
+            gridMetrics = {
+                width,
+                columns,
+                rows,
+                periodWidth
+            };
+
+            refreshGridDriftAnimation();
+            resetShockCells();
+        }
+
+        function refreshGridDriftAnimation() {
+            if (!gridStrip || typeof gridStrip.getAnimations !== 'function') {
+                gridDriftAnimation = null;
+                return;
+            }
+            const animations = gridStrip.getAnimations();
+            gridDriftAnimation = animations.length ? animations[0] : null;
+        }
+
+        function currentGridDriftOffset() {
+            if (!gridDriftAnimation) {
+                refreshGridDriftAnimation();
+            }
+
+            if (!gridDriftAnimation) {
+                return 0;
+            }
+
+            const timing = gridDriftAnimation.effect?.getComputedTiming?.();
+            const progress = Number.isFinite(timing?.progress)
+                ? timing.progress
+                : 0;
+
+            return -gridMetrics.periodWidth * progress;
+        }
+
+        function travelDurationMs(cycleSeconds = shockCycleSeconds) {
+            const normalized = clamp01((cycleSeconds - 5) / 35);
+            return 1800 + normalized * 1200;
+        }
+
+        function clearShockTimers() {
+            if (shockCycleTimer) {
+                clearTimeout(shockCycleTimer);
+                shockCycleTimer = 0;
+            }
+
+            if (shockEntryTimer) {
+                clearTimeout(shockEntryTimer);
+                shockEntryTimer = 0;
+            }
+        }
+
+        function stopShockwave({ clearSchedule = true } = {}) {
+            if (shockRafId) {
+                cancelAnimationFrame(shockRafId);
+                shockRafId = 0;
+            }
+
+            if (clearSchedule) {
+                clearShockTimers();
+            }
+
+            shockActive = false;
+            resetShockCells();
+        }
+
+        function scheduleNextShockwave() {
+            const curVal = modeKeyToIndex(config.preset);
+            if (curVal !== 3 || reducedMotionQuery.matches) return;
+
+            if (shockCycleTimer) {
+                clearTimeout(shockCycleTimer);
+            }
+
+            const intervalMs = Math.max(5000, shockCycleSeconds * 1000);
+            const targetTime = lastShockStartedAt
+                ? lastShockStartedAt + intervalMs
+                : performance.now() + intervalMs;
+            const delay = Math.max(300, targetTime - performance.now());
+
+            shockCycleTimer = setTimeout(() => {
+                shockCycleTimer = 0;
+                startShockwave();
+            }, delay);
+        }
+
+        function startShockwave() {
+            const curVal = modeKeyToIndex(config.preset);
+            if (curVal !== 3 || reducedMotionQuery.matches || !gridCells.length) return;
+
+            if (shockRafId) {
+                cancelAnimationFrame(shockRafId);
+                shockRafId = 0;
+            }
+
+            if (shockCycleTimer) {
+                clearTimeout(shockCycleTimer);
+                shockCycleTimer = 0;
+            }
+
+            shockActive = true;
+            shockStart = performance.now();
+            lastShockStartedAt = shockStart;
+            shockTravelMs = travelDurationMs();
+
+            shockRafId = requestAnimationFrame(updateShockwave);
+        }
+
+        function updateShockwave(now) {
+            const curVal = modeKeyToIndex(config.preset);
+            if (!shockActive || curVal !== 3 || reducedMotionQuery.matches) {
+                stopShockwave({ clearSchedule: false });
                 return;
             }
 
-            const p = el('ar-main-panel');
-            const modeCard = el('ar-mode-card');
-            const turboLine = el('ar-seg-line');
-            const flowLine = el('ar-flow-line');
-            const turboBtn = qa('.ar-seg-btn--turbo', presetSeg)[0];
+            const elapsed = now - shockStart;
+            const travelProgress = clamp01(elapsed / shockTravelMs);
 
-            void modeCard?.offsetWidth; // reflow
+            // Almost linear propagation with a subtle natural ease at the tail.
+            const travelEase = 1 - Math.pow(1 - travelProgress, 1.08);
+            const frontX = 1.08 - 1.16 * travelEase;
+            const elapsedSeconds = elapsed / 1000;
 
-            p?.classList.add('is-turbo-activating');
-            modeCard?.classList.add('is-turbo-activating');
-            turboLine?.classList.add('is-active');
-            flowLine?.classList.add('is-turbo-activating');
-            turboBtn?.classList.add('is-activating');
+            // Main wave remains active during travel; wake/echo gets ~950ms to settle.
+            const settleMs = 950;
+            const globalDecay = elapsed <= shockTravelMs
+                ? 1
+                : 1 - smoothstep(shockTravelMs, shockTravelMs + settleMs, elapsed);
 
-            if (!State.amIRunning() && statusText) {
-                statusText.textContent = I18n.t('status.turboActive');
-                statusText.classList.add('ar-status--turbo-confirm');
-                const confirmTid = setTimeout(() => {
-                    if (mySeq !== turboActivationSeq || config?.preset !== 'turbo') return;
-                    if (!State.amIRunning() && statusText) {
-                        setStatus('idle');
-                        statusText.classList.remove('ar-status--turbo-confirm');
+            // Read current CSS animation phase once and convert every cell's strip-space X into slider-space X.
+            const driftOffset = currentGridDriftOffset();
+            const sliderWidth = gridMetrics.width;
+
+            for (const cell of gridCells) {
+                const visualXPx = cell.stripX + driftOffset;
+                const visualX = visualXPx / sliderWidth;
+                const x = visualX + cell.phase;
+                const distance = x - frontX;
+
+                // Wave moves right -> left:
+                // negative distance = just ahead of the front,
+                // positive distance = already passed / wake side.
+                const core = gaussian(distance, .026) * globalDecay;
+                const compression = gaussian(distance + .034, .030) * globalDecay;
+
+                const wakeGate = smoothstep(-.012, .018, distance);
+                const wake = gaussian(distance - .075, .105) * wakeGate * globalDecay;
+
+                const echoGate = smoothstep(.035, .075, distance);
+                const echo = gaussian(distance - .135, .040) * echoGate * globalDecay;
+
+                // Preserve base l0-l5 opacity and only add a temporary response.
+                const boost =
+                    core * .50 +
+                    compression * .055 +
+                    wake * .13 +
+                    echo * .08;
+
+                const scale =
+                    1 +
+                    core * .185 +
+                    wake * .035 +
+                    echo * .018 -
+                    compression * .018;
+
+                // Micro compression/recoil only — no layout-scale displacement.
+                const waveX =
+                    core * -1.05 +
+                    compression * -.55 +
+                    wake * .30 +
+                    echo * .10;
+
+                const interference =
+                    Math.sin(
+                        visualX * 19.0 +
+                        cell.row * 1.27 +
+                        elapsedSeconds * 6.2 +
+                        cell.phase * 55
+                    );
+
+                const echoInterference =
+                    Math.sin(
+                        visualX * 14.0 +
+                        cell.row * 1.61 +
+                        elapsedSeconds * 4.1
+                    );
+
+                const waveY =
+                    interference * wake * .46 +
+                    echoInterference * echo * .16;
+
+                const style = cell.element.style;
+                style.setProperty('--wave-boost', boost.toFixed(3));
+                style.setProperty('--wave-x', `${waveX.toFixed(3)}px`);
+                style.setProperty('--wave-y', `${waveY.toFixed(3)}px`);
+                style.setProperty('--wave-scale', scale.toFixed(3));
+            }
+
+            if (shockFront) {
+                const frontPx = frontX * gridMetrics.width;
+                const frontOpacity =
+                    travelProgress < 1
+                        ? Math.min(.34, .34 * globalDecay)
+                        : .34 * globalDecay;
+
+                shockFront.style.transform = `translate3d(${frontPx.toFixed(2)}px,0,0)`;
+                shockFront.style.opacity = Math.max(0, frontOpacity).toFixed(3);
+            }
+
+            if (elapsed < shockTravelMs + settleMs) {
+                shockRafId = requestAnimationFrame(updateShockwave);
+                return;
+            }
+
+            shockRafId = 0;
+            shockActive = false;
+            resetShockCells();
+            scheduleNextShockwave();
+        }
+
+        function enterTurbo() {
+            if (reducedMotionQuery.matches) {
+                resetShockCells();
+                return;
+            }
+
+            clearShockTimers();
+
+            // Pick up the freshly-created CSS drift animation on the next frame so shockwave shares its timeline.
+            requestAnimationFrame(() => {
+                refreshGridDriftAnimation();
+            });
+
+            // Let the thumb/surface start their transition, then fire wave.
+            shockEntryTimer = setTimeout(() => {
+                shockEntryTimer = 0;
+                startShockwave();
+            }, 150);
+        }
+
+        function exitTurbo() {
+            stopShockwave({ clearSchedule: true });
+            lastShockStartedAt = 0;
+            gridDriftAnimation = null;
+        }
+
+        function getMetrics() {
+            if (!slider || !thumb) return { pad: 3, thumbWidth: 44, travel: 0 };
+            const style = getComputedStyle(slider);
+            const pad = parseFloat(style.getPropertyValue('--ar-work-track-pad')) || 3;
+            const thumbWidth = thumb.getBoundingClientRect().width || 44;
+            const travel = Math.max(0, slider.clientWidth - (pad * 2) - thumbWidth);
+            return { pad, thumbWidth, travel };
+        }
+
+        function positionForValue(val) {
+            const { travel } = getMetrics();
+            return (travel / 3) * val;
+        }
+
+        function setThumbX(x, animate = true) {
+            if (!slider || !thumb) return;
+            if (animate) {
+                slider.classList.remove('is-dragging');
+            } else {
+                slider.classList.add('is-dragging');
+            }
+            thumb.style.transform = `translate3d(${x}px, 0, 0)`;
+        }
+
+        function syncThumb(animate = true) {
+            const currentVal = modeKeyToIndex(config.preset);
+            setThumbX(positionForValue(currentVal), animate);
+        }
+
+        function updateModeUI(val, { animateThumb = true } = {}) {
+            const key = modeIndexToKey(val);
+            const label = presetLabel(key);
+            const wasTurbo = slider?.classList.contains('is-turbo') || false;
+            const isTurbo = key === 'turbo';
+
+            if (slider) {
+                slider.dataset.value = String(val);
+                slider.classList.toggle('is-turbo', isTurbo);
+                slider.setAttribute('aria-valuenow', String(val));
+                slider.setAttribute('aria-valuetext', label);
+            }
+            if (modeCard) {
+                modeCard.dataset.mode = key;
+            }
+            if (currentModeState) {
+                currentModeState.textContent = label;
+            }
+            syncThumb(animateThumb);
+
+            if (!wasTurbo && isTurbo) {
+                enterTurbo();
+            } else if (wasTurbo && !isTurbo) {
+                exitTurbo();
+            }
+        }
+
+        function selectWorkMode(nextIndex, { focus = false } = {}) {
+            const clampedIndex = Math.max(0, Math.min(3, nextIndex));
+            const nextKey = modeIndexToKey(clampedIndex);
+
+            if (config.preset !== nextKey) {
+                config.preset = nextKey;
+                Settings.save(config);
+
+                updateModeUI(clampedIndex, { animateThumb: true });
+
+                if (State.amIRunning()) {
+                    setStatus('running');
+                }
+
+                log(I18n.t('logs.modeSet', { mode: (nextKey === 'turbo' ? '↯ ' : '') + presetLabel(nextKey) }));
+            } else {
+                updateModeUI(clampedIndex, { animateThumb: true });
+            }
+
+            if (focus && slider) {
+                slider.focus({ preventScroll: true });
+            }
+        }
+
+        if (slider) {
+            let dragging = false;
+            let pointerId = null;
+            let dragX = 0;
+            let pointerStartX = 0;
+            let pointerMoved = false;
+
+            function valueFromPointer(clientX) {
+                const rect = slider.getBoundingClientRect();
+                const local = Math.max(0, Math.min(rect.width, clientX - rect.left));
+                const ratio = rect.width ? local / rect.width : 0;
+                return Math.max(0, Math.min(3, Math.floor(ratio * 4)));
+            }
+
+            function dragPositionFromPointer(clientX) {
+                const rect = slider.getBoundingClientRect();
+                const { pad, thumbWidth, travel } = getMetrics();
+                const centered = clientX - rect.left - pad - (thumbWidth / 2);
+                return Math.max(0, Math.min(travel, centered));
+            }
+
+            function nearestValueForX(x) {
+                const { travel } = getMetrics();
+                if (travel <= 0) return 0;
+                return Math.max(0, Math.min(3, Math.round((x / travel) * 3)));
+            }
+
+            slider.addEventListener('pointerdown', (event) => {
+                if (event.button !== undefined && event.button !== 0) return;
+                dragging = true;
+                pointerId = event.pointerId;
+                pointerStartX = event.clientX;
+                pointerMoved = false;
+                try { slider.setPointerCapture?.(pointerId); } catch (e) { /* ignore */ }
+
+                slider.classList.add('is-pressed', 'is-dragging');
+                dragX = dragPositionFromPointer(event.clientX);
+                setThumbX(dragX, false);
+            }, { signal: uiSignal });
+
+            slider.addEventListener('pointermove', (event) => {
+                if (!dragging || event.pointerId !== pointerId) return;
+                if (Math.abs(event.clientX - pointerStartX) > 4) {
+                    pointerMoved = true;
+                }
+                dragX = dragPositionFromPointer(event.clientX);
+                setThumbX(dragX, false);
+            }, { signal: uiSignal });
+
+            const finishPointer = (event) => {
+                if (!dragging || event.pointerId !== pointerId) return;
+                dragging = false;
+                slider.classList.remove('is-pressed', 'is-dragging');
+                try { slider.releasePointerCapture?.(pointerId); } catch (e) { /* ignore */ }
+                pointerId = null;
+
+                const target = pointerMoved
+                    ? nearestValueForX(dragX)
+                    : valueFromPointer(event.clientX);
+
+                selectWorkMode(target, { focus: true });
+            };
+
+            slider.addEventListener('pointerup', finishPointer, { signal: uiSignal });
+            slider.addEventListener('pointercancel', (event) => {
+                if (event.pointerId !== pointerId) return;
+                dragging = false;
+                pointerId = null;
+                slider.classList.remove('is-pressed', 'is-dragging');
+                syncThumb(true);
+            }, { signal: uiSignal });
+
+            slider.addEventListener('keydown', (event) => {
+                const curVal = modeKeyToIndex(config.preset);
+                let nextVal = curVal;
+                switch (event.key) {
+                    case 'ArrowLeft':
+                    case 'ArrowDown':
+                        nextVal = Math.max(0, curVal - 1);
+                        break;
+                    case 'ArrowRight':
+                    case 'ArrowUp':
+                        nextVal = Math.min(3, curVal + 1);
+                        break;
+                    case 'Home':
+                        nextVal = 0;
+                        break;
+                    case 'End':
+                        nextVal = 3;
+                        break;
+                    default:
+                        return;
                     }
-                }, 1000);
-                turboTimers.push(confirmTid);
-            }
+                event.preventDefault();
+                selectWorkMode(nextVal);
+            }, { signal: uiSignal });
 
-            const animTid = setTimeout(() => {
-                if (mySeq !== turboActivationSeq) return;
-                p?.classList.remove('is-turbo-activating');
-                modeCard?.classList.remove('is-turbo-activating');
-                turboLine?.classList.remove('is-active');
-                flowLine?.classList.remove('is-turbo-activating');
-                turboBtn?.classList.remove('is-activating');
-            }, 650);
-            turboTimers.push(animTid);
-        };
+            uiWorkModeResizeObserver = new ResizeObserver(() => {
+                const wasTurbo = modeKeyToIndex(config.preset) === 3;
 
-        const renderPreset = () => {
-            const active = PRESETS[config.preset] ? config.preset : DEFAULT_PRESET;
-            qa('.ar-seg-btn', presetSeg).forEach(btn => {
-                const isActive = btn.dataset.preset === active;
-                btn.classList.toggle('is-active', isActive);
-                btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
-                btn.tabIndex = isActive ? 0 : -1;
-                const labelSpan = btn.querySelector('.ar-seg-btn-label');
-                if (labelSpan) labelSpan.textContent = presetLabel(btn.dataset.preset);
+                if (shockActive) {
+                    stopShockwave({ clearSchedule: true });
+                }
+
+                rebuildGrid();
+                syncThumb(false);
+                refreshGridDriftAnimation();
+
+                if (wasTurbo && !reducedMotionQuery.matches) {
+                    clearShockTimers();
+                    shockEntryTimer = setTimeout(() => {
+                        shockEntryTimer = 0;
+                        startShockwave();
+                    }, 120);
+                }
+
+                requestAnimationFrame(() => {
+                    slider?.classList.remove('is-dragging');
+                });
             });
-            if (presetHint) presetHint.textContent = presetHintText(active);
-        };
-        const presetHintText = (key) => presetHint(key);
+            uiWorkModeResizeObserver.observe(slider);
 
-        const selectPreset = (key, { focus = false } = {}) => {
-            if (!PRESETS[key] || config.preset === key) return;
-            const wasTurbo = config.preset === 'turbo';
-            const isEnteringTurbo = key === 'turbo' && !wasTurbo;
-
-            cancelTurboActivation();
-
-            config.preset = key;
-            Settings.save(config);
-            renderPreset();
-            if (focus) qa('.ar-seg-btn', presetSeg).find(b => b.dataset.preset === key)?.focus();
-
-            if (State.amIRunning()) {
-                setStatus('running');
+            function handleReducedMotionChange() {
+                if (reducedMotionQuery.matches) {
+                    stopShockwave({ clearSchedule: true });
+                } else if (modeKeyToIndex(config.preset) === 3) {
+                    enterTurbo();
+                }
             }
 
-            if (isEnteringTurbo) {
-                triggerTurboActivation();
+            if (typeof reducedMotionQuery.addEventListener === 'function') {
+                try {
+                    reducedMotionQuery.addEventListener('change', handleReducedMotionChange, { signal: uiSignal });
+                } catch (e) {
+                    reducedMotionQuery.addEventListener('change', handleReducedMotionChange);
+                }
+            } else if (typeof reducedMotionQuery.addListener === 'function') {
+                reducedMotionQuery.addListener(handleReducedMotionChange);
             }
 
-            log(I18n.t('logs.modeSet', { mode: (key === 'turbo' ? '↯ ' : '') + presetLabel(config.preset) }));
-        };
+            function cleanupWorkModeAnimation() {
+                stopShockwave({ clearSchedule: true });
+                clearShockTimers();
+                if (typeof reducedMotionQuery.removeEventListener === 'function') {
+                    try { reducedMotionQuery.removeEventListener('change', handleReducedMotionChange); } catch (e) {}
+                } else if (typeof reducedMotionQuery.removeListener === 'function') {
+                    try { reducedMotionQuery.removeListener(handleReducedMotionChange); } catch (e) {}
+                }
+            }
 
-        if (presetSeg) {
-            presetSeg.addEventListener('click', (e) => {
-                const btn = e.target.closest('.ar-seg-btn');
-                if (btn) selectPreset(btn.dataset.preset);
-            });
-            presetSeg.addEventListener('keydown', (e) => {
-                if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
-                e.preventDefault();
-                const keys = Object.keys(PRESETS);
-                const cur = keys.indexOf(PRESETS[config.preset] ? config.preset : DEFAULT_PRESET);
-                const dir = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1;
-                selectPreset(keys[(cur + dir + keys.length) % keys.length], { focus: true });
+            uiSignal.addEventListener('abort', cleanupWorkModeAnimation, { once: true });
+
+            rebuildGrid();
+            updateModeUI(modeKeyToIndex(config.preset), { animateThumb: false });
+            requestAnimationFrame(() => {
+                syncThumb(false);
+                requestAnimationFrame(() => {
+                    slider?.classList.remove('is-dragging');
+                    if (config.preset === 'turbo' && !reducedMotionQuery.matches) {
+                        enterTurbo();
+                    }
+                });
             });
         }
-        renderPreset();
 
         // ---------- Сохранение настроек ----------
         const saveSettings = () => {
@@ -4635,11 +5420,32 @@
                 minDiagBtn.setAttribute('aria-label', I18n.t('panel.minimizeTitle'));
             }
 
-            const modeTitle = el('ar-mode-card-title');
-            if (modeTitle) modeTitle.textContent = I18n.t('panel.modeTitle');
-            const segGroup = el('ar-preset-seg');
-            if (segGroup) segGroup.setAttribute('aria-label', I18n.t('panel.modePaceGroup'));
-            renderPreset();
+            const currentPresetKey = PRESETS[config.preset] ? config.preset : DEFAULT_PRESET;
+            const modeLabel = presetLabel(currentPresetKey);
+
+            const workModeLabel = el('ar-work-mode-label');
+            if (workModeLabel) workModeLabel.textContent = I18n.t('panel.modeTitle');
+
+            const workModeState = el('ar-work-mode-state');
+            if (workModeState) workModeState.textContent = modeLabel;
+
+            const helpBtn = el('ar-work-mode-help-btn');
+            if (helpBtn) {
+                helpBtn.setAttribute('aria-label', I18n.t('panel.modeHelpAria'));
+                helpBtn.title = I18n.t('panel.modeHelpTitle');
+            }
+
+            const safeLbl = el('ar-work-mode-lbl-safe');
+            if (safeLbl) safeLbl.textContent = presetLabel('safe');
+
+            const turboLbl = el('ar-work-mode-lbl-turbo');
+            if (turboLbl) turboLbl.textContent = presetLabel('turbo');
+
+            const modeSlider = el('ar-work-mode-slider');
+            if (modeSlider) {
+                modeSlider.setAttribute('aria-label', I18n.t('panel.modeTitle'));
+                modeSlider.setAttribute('aria-valuetext', modeLabel);
+            }
             const limitLabel = el('ar-limit-label');
             if (limitLabel) limitLabel.textContent = I18n.t('panel.limitLabel');
 
@@ -4730,7 +5536,7 @@
                 if (!targetLang || targetLang === I18n.getLanguage()) return;
                 I18n.setLanguage(targetLang);
                 refreshLocalizedUI();
-                log(I18n.t('logs.modeSet', { mode: presetLabel(config.preset) }));
+                log(I18n.t('logs.modeSet', { mode: (config.preset === 'turbo' ? '↯ ' : '') + presetLabel(config.preset) }));
             });
         });
 
