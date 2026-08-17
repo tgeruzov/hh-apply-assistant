@@ -26,6 +26,7 @@
     const STORAGE_PREFIX = 'hh_ar_v2_';
     const KEYS = {
         settings: STORAGE_PREFIX + 'cfg_data',
+        language: STORAGE_PREFIX + 'language',
         isRunning: STORAGE_PREFIX + 'is_active',
         returnUrl: STORAGE_PREFIX + 'list_url',
         history: STORAGE_PREFIX + 'processed_ids',
@@ -82,41 +83,805 @@
         vacancyCard: 'div[data-qa="vacancy-serp__vacancy"], .vacancy-serp-item'
     };
 
+
+    // ─────────────────────────────────────────────────────────────
+    //  1.1. ЛОКАЛИЗАЦИЯ (i18n Core)
+    // ─────────────────────────────────────────────────────────────
+
+    const SUPPORTED_LANGUAGES = ['ru', 'en'];
+    const DEFAULT_LANGUAGE = 'ru';
+
+    const LOCALE_TAGS = {
+        ru: 'ru-RU',
+        en: 'en-US'
+    };
+
+    const TRANSLATIONS = {
+        ru: {
+            presets: {
+                safe: {
+                    label: 'Безопасный',
+                    hint: '≈ 1 отклик в минуту. Паузы 4-8 с, чтение вакансии 15-35 с. Медленно и максимально похоже на человека.'
+                },
+                balanced: {
+                    label: 'Оптимальный',
+                    hint: '≈ 2 отклика в минуту. Паузы 2-5 с, чтение вакансии 8-20 с. Рекомендуемый баланс скорости и естественности.'
+                },
+                fast: {
+                    label: 'Быстрый',
+                    hint: '≈ 3-4 отклика в минуту. Паузы 1,5-3 с, чтение вакансии 4-9 с. Повышенный темп — заметнее для hh.ru.'
+                },
+                turbo: {
+                    label: 'Турбо',
+                    hint: '↯ Максимальная скорость. Только необходимые технические паузы. При блокировке applomat автоматически остановится.'
+                }
+            },
+            cover: {
+                defaultText: 'Добрый день! Заинтересовала ваша вакансия. Опыт релевантен, подробности в резюме. Буду рад обратной связи!',
+                title: 'Сопроводительное письмо',
+                placeholder: 'Текст сопроводительного письма...',
+                rejectWarningLabel: 'Откликаться несмотря на предупреждение',
+                rejectWarningTitle: 'Дожимать отклик на вакансиях, где hh предупреждает о вероятном отказе'
+            },
+            status: {
+                idle: 'Ожидание',
+                running: 'В работе',
+                runningTurbo: 'В работе · ↯ Турбо',
+                stopped: 'Остановлено',
+                error: 'Внимание',
+                done: 'Завершено',
+                turboActive: '↯ Турбо включён',
+                busyTab: 'Занято другой вкладкой',
+                returningToList: 'Возврат к списку...',
+                waitingToReturn: 'Ожидание возврата...',
+                captchaStopped: 'Обнаружена капча — остановлено',
+                storageFailed: 'Сбой сохранения Manual Queue',
+                autoStarting: 'Авто-запуск...'
+            },
+            panel: {
+                minimizeTitle: 'Свернуть панель',
+                expandTitle: 'Развернуть applomat',
+                langSwitchLabel: 'Язык интерфейса',
+                modeTitle: 'Режим работы',
+                modePaceGroup: 'Темп откликов',
+                limitLabel: 'Лимит откликов за запуск',
+                startBtn: 'Запустить отклики',
+                stopBtn: 'Остановить (Стоп)',
+                resetHistory: 'Сбросить историю',
+                resetHistoryTitle: 'Сбросить историю отправленных откликов и статистику',
+                diagnostics: 'Диагностика',
+                diagnosticsTitle: 'Открыть диагностику и лог',
+                statsTitle: 'Статистика запуска',
+                statsProgressTitle: 'Отправлено откликов из лимита за запуск',
+                statAttempts: 'Попыток',
+                statSuccess: 'Успешно',
+                statManual: 'В ручной',
+                statSkipped: 'Пропущено',
+                manualTitle: 'Ручная очередь',
+                manualCountTitle: 'Сохранено вакансий для ручного отклика',
+                manualExport: 'Экспорт',
+                manualClear: 'Очистить',
+                manualEmpty: 'Очередь пуста · Вакансии с вопросами сохраняются сюда автоматически',
+                manualNoTitle: 'Название недоступно',
+                manualOpen: 'Открыть',
+                manualOpenTitle: 'Открыть вакансию в новой вкладке',
+                manualUnsafeUrl: 'Ссылка не прошла проверку безопасности',
+                manualRemoveTitle: 'Удалить из очереди',
+                manualMore: 'Открыть очередь ({count}) →',
+                manualMoreTitle: 'Открыть интерактивную страницу со всей очередью вакансий'
+            },
+            diag: {
+                backTitle: 'Вернуться в основную панель',
+                backBtn: 'Назад',
+                title: 'Диагностика',
+                downloadLog: 'Скачать лог',
+                downloadLogTitle: 'Скачать полный диагностический отчет',
+                checkSelectors: 'Проверить селекторы',
+                errorsOnly: 'Только ошибки',
+                moreBtn: 'Дополнительно',
+                moreTitle: 'Дополнительные действия',
+                clearView: 'Очистить вид',
+                clearAll: 'Очистить сохр. лог и метрики',
+                statSummary: '{errText} · {recText}',
+                badgeTitle: '{errText} в диагностическом логе · Открыть диагностику',
+                badgeTitleClean: 'Открыть диагностику и лог'
+            },
+            confirm: {
+                clearDiag: 'Очистить сохранённый диагностический лог и метрики? (выгрузите файл перед очисткой, если нужен для анализа)',
+                resetHistory: 'Сбросить историю откликов, лимит и статистику текущего запуска?',
+                clearManual: 'Очистить сохранённый список вакансий ручной очереди?'
+            },
+            alert: {
+                manualEmpty: 'Список пуст'
+            },
+            health: {
+                starting: 'Запускаю диагностику селекторов...',
+                applyBtnList: 'Кнопка отклика (list)',
+                vacancyApply: 'Кнопка отклика (vacancy page)',
+                vacancyLink: 'Ссылка вакансии (card)',
+                attachCoverBtn: 'Прикрепить письмо (сценарий А)',
+                letterSubmit: 'Кнопка отправки письма',
+                letterTextarea: 'Поле письма (textarea)',
+                reasons: {
+                    emptySearch: 'не применимо — список вакансий пуст',
+                    onVacancyPage: 'не применимо на странице вакансии',
+                    onResponsePage: 'не применимо на странице формы отклика',
+                    notApplicable: 'не применимо на текущей странице',
+                    alreadyApplied: 'не требуется — уже откликались',
+                    onSearchPage: 'не применимо на странице поиска',
+                    notInScenario: 'не требуется в текущем сценарии',
+                    questionnaire: 'не применимо — анкета с вопросами работодателя',
+                    modalNotOpen: 'не применимо — форма отклика не открыта',
+                    letterNotExpanded: 'не применимо — форма письма не раскрыта'
+                },
+                statusOk: '{name}: OK ({sel})',
+                statusFallback: '{name}: ЭВРИСТИЧЕСКИ НАЙДЕНО (селектор {sel} не сработал)',
+                statusNotFound: '{name}: НЕ НАЙДЕНО ({sel})',
+                summary: 'Healthcheck завершён: {okCount} OK · {skipCount} не применимо · {errText}.',
+                instanceLock: 'Instance lock: tabId={tabId} ts={ts}',
+                instanceLockMissing: 'Instance lock: отсутствует'
+            },
+            plurals: {
+                error: {
+                    one: 'ошибка',
+                    few: 'ошибки',
+                    many: 'ошибок',
+                    other: 'ошибок'
+                },
+                record: {
+                    one: 'запись',
+                    few: 'записи',
+                    many: 'записей',
+                    other: 'записей'
+                }
+            },
+            logs: {
+                pageLoad: '- Загрузка страницы: {path} (running={running}, sent={sent}/{limit}) -',
+                newRun: 'Новый запуск: счётчик откликов сброшен. Режим - {mode}.',
+                limitReached: 'Лимит достигнут ({limit}). Работа завершена.',
+                runCompleted: 'Работа завершена. Отправлено всего: {count}.',
+                stoppedByUser: 'Остановлено пользователем.',
+                stoppedDuringVacancy: 'Остановлено пользователем во время обработки вакансии.',
+                stoppedProcessing: 'Обработка остановлена пользователем.',
+                settingsSaved: 'Настройки сохранены.',
+                historyReset: 'История откликов, счётчик и статистика сброшены.',
+                manualCleared: 'Список ручной очереди очищен.',
+                diagCleared: 'Сохранённый диагностический лог и метрики очищены.',
+                diagExported: 'Диагностический лог выгружен в файл.',
+                diagExportFailed: 'Не удалось выгрузить лог: {err}',
+                htmlExported: 'HTML экспорт выполнен.',
+                trapTimeout: 'Очистил ar_trap_lock по таймауту.',
+                tabBusy: 'Запуск отменён: в другой вкладке уже запущен процесс (instance lock).',
+                onResponsePage: 'На странице отклика - управление у обработчика формы.',
+                onVacancyPage: 'На странице вакансии - продолжаю обработку тут.',
+                vacanciesFound: 'Найдено вакансий: {total}. Новых к обработке: {targets}. Отправлено: {sent}/{limit}.',
+                buttonDisappeared: 'Кнопка исчезла из DOM - перезапускаю поиск.',
+                navigatingVacancy: 'Переход на страницу вакансии - завершаю цикл для корректной навигации.',
+                redirectWaiting: 'Редирект/внешний тест. Ожидаю возврат через watchdog.',
+                skippingCode: 'Пропускаю вакансию (код: {code}).',
+                mainLoopError: 'Ошибка в главном цикле: {err}',
+                captchaHalt: 'Обнаружена проверка «я не робот» / анти-бот hh.ru. Прогон остановлен: решите капчу вручную и запустите заново.',
+                instanceLockLost: 'Работа остановлена: межвкладочный instance lock перешёл к другой вкладке.',
+                persistenceFailure: 'Критический сбой хранилища: не удалось сохранить вакансию {vid} в список для ручного отклика. Автоматизация остановлена во избежание потери данных.',
+                readingFound: 'Найдена секция "Подходящие вакансии..." - скроллю до неё.',
+                readingFallback: 'Секция не найдена - скроллю до 60% страницы (фоллбек).',
+                readingSim: 'Читаю ~{sec} сек (имитирую просмотр страницы).',
+                relocationConfirm: 'Окно переезда - подтверждаю.',
+                letterMissing: 'Поле письма не появилось - отправляю отклик без сопроводительного.',
+                formSubmitFallback: 'Отправил форму через form.submit() (fallback).',
+                submitBtnMissing: 'Кнопка отправки письма не найдена.',
+                responsePageRejectSkip: 'Страница отклика с предупреждением об отказе; форс выключен - сохраняю для ручного отклика.',
+                responsePageFilling: 'Страница отклика (не тест){reject} - заполняю и отправляю.',
+                responsePageRejectNote: ' с предупреждением об отказе',
+                responsePageSubmitFail: 'Не удалось нажать отправку на странице отклика - сохранил для ручного.',
+                responsePageSent: 'Отклик отправлен со страницы отклика.',
+                responsePageQuestions: 'Страница отклика перенаправила на вопросы/тест - сохранил для ручного.',
+                responsePageNoConfirm: 'Не удалось подтвердить отправку со страницы отклика - сохранил для ручного.',
+                noHref: 'Не удалось получить href вакансии - пропускаю.',
+                openingVacancy: 'Открываю страницу вакансии {vid} для чтения...',
+                alreadyApplied: 'На эту вакансию уже откликались ранее - пропускаю.',
+                applyBtnMissingReturning: 'Кнопка "Откликнуться" не найдена - помечаю вакансию как обработанную и возвращаюсь.',
+                scenarioA: 'Сценарий А: резюме отправлено, письмо необязательно.',
+                coverOff: 'Письмо выключено - пропускаю прикрепление.',
+                scenarioASent: 'Отклик отправлен (сценарий А).',
+                scenarioBRejectSkip: 'Предупреждение об отказе, откликаться всё равно выключено - сохраняю для ручного отклика.',
+                scenarioBModal: 'Сценарий Б: модалка отклика{reject}{cover}',
+                scenarioBRejectNote: ' (⚠ предупреждение об отказе)',
+                scenarioBCoverNote: ', заполняю письмо и отправляю.',
+                scenarioBNoCoverNote: ' - отправляю без письма.',
+                scenarioBSubmitFail: 'Не удалось нажать отправку отклика - возвращаюсь к списку.',
+                scenarioBSent: 'Отклик отправлен (сценарий Б{reject}).',
+                scenarioBSentRejectNote: ', несмотря на предупреждение об отказе',
+                scenarioBForcing: 'Предупреждение об отказе - дожимаю отправку (включено откликаться всё равно).',
+                scenarioBForcedSent: 'Отклик отправлен (форс, предупреждение об отказе).',
+                blockedResumeHidden: 'Отклик заблокирован: скрыта видимость резюме. Измените видимость резюме в настройках hh.ru, иначе часть откликов не проходит.',
+                blockedRejectWarning: 'Вакансия с предупреждением скорее всего, отказ - отклик не подтверждён.',
+                letterSentNoConfirm: 'Письмо отправлено, подтверждение не получено.',
+                responseConfirmed: 'Отклик подтверждён (есть подтверждение отправки).',
+                responseConfirmedExtra: 'Отклик подтверждён после дополнительной проверки DOM.',
+                btnDisappearedUnconfirmed: 'Кнопка "Откликнуться" исчезла, но подтверждение отправки не получено - сохраняю для ручной обработки.',
+                retryClick: 'Окно не открылось - повторный клик по Откликнуться.',
+                retryClickSent: 'Отклик отправлен после повторного клика.',
+                timeoutUnresolved: 'Не удалось определить результат отклика - сохраняю для ручной обработки и возвращаюсь.',
+                scenarioC: 'Сценарий В: прямой отклик - резюме отправлено.',
+                noLinkSelector: 'Не найден селектор ссылки вакансии. Проверьте структуру карточки.',
+                modeSet: 'Режим работы: {mode}.',
+                autoResumeFound: 'Обнаружена незавершенная работа. Авто-возобновление через 1.5 сек...',
+                autoResumeCanceled: 'Авто-возобновление отменено: прогон остановлен пользователем.',
+                returnedReloading: 'Возврат выполнен. Перезагружаю страницу, чтобы обновить список вакансий...',
+                questionsPage: 'Попали на тест/анкету с вопросами. Сохраняю для ручного отклика и возвращаюсь.',
+                manualSaved: 'Сохранено для ручного отклика{note}: {vid}',
+                manualAlready: 'Вакансия уже в списке для ручного отклика{note}: {vid}',
+                manualSaveFailed: 'Ошибка сохранения в список для ручного отклика (сбой хранилища){note}: {vid}',
+                twoStepBackFailed: 'Двухшаговый возврат не сработал. Перехожу на список вакансий.',
+                noVidOnQuestions: 'Не удалось определить ID вакансии на странице с вопросами.',
+                domSnapshot: 'Снимок DOM ({label}): data-qa={dataQa}, textarea={textareas}, taskFields={taskFields}, modalBtns={modalButtons}.',
+                heuristicFallback: '[Heuristics] Резервный поиск для "{key}": обнаружен <{tag}>',
+                heuristicFallbackAll: '[Heuristics] Резервный поиск всех элементов для "{key}": найдено {count}',
+                jsError: 'JS-ошибка [applomat]: {msg}{where}',
+                unhandledRejection: 'Unhandled rejection [applomat]: {msg}'
+            },
+            report: {
+                headerTitle: '===== applomat - Diagnostic Log =====',
+                scriptVersion: 'Версия скрипта : v{version}',
+                exportedAt: 'Выгружено      : {time}',
+                currentUrl: 'URL сейчас     : {url}',
+                userAgent: 'User-Agent     : {ua}',
+                tabId: 'TAB_ID         : {tabId}',
+                running: 'Running        : {running}',
+                sent: 'Отправлено     : {sent} / лимит {limit}',
+                processedIds: 'Обработано ID  : {count}',
+                manualList: 'Ручной список  : {count}',
+                instanceLock: 'Instance lock  : {lock}',
+                trapLock: 'Trap lock      : {trap}',
+                f5Needed: 'F5 needed      : {f5}',
+                lastAttempt: 'Last attempt   : {last}',
+                returnUrl: 'Return URL     : {url}',
+                config: 'Config         : {cfg}',
+                logEntries: 'Записей в логе  : {count}',
+                none: '(нет)',
+                metricsTitle: '----- МЕТРИКИ (накопительно) -----',
+                metricsSince: 'Метрики с      : {time}',
+                scenariosHeading: 'Сценарии после клика Откликнуться:',
+                scenarios: {
+                    A: '  А (письмо необязательно) : {val}',
+                    B: '  Б (письмо обязательно)   : {val}',
+                    C: '  В (прямой отклик)        : {val}',
+                    relocation: '  Окно переезда            : {val}',
+                    questions: '  Тесты/вопросы (в отклике): {val}',
+                    questionsWatchdog: '  Тесты/вопросы (watchdog) : {val}',
+                    timeout: '  Таймаут (не опознано)    : {val} (из них неразрешённых: {unresolved})',
+                    noApply: '  Нет кнопки отклика       : {val}',
+                    bNoConfirm: '  Б без подтверждения      : {val}'
+                },
+                otherCounters: 'Прочие счётчики:',
+                timingsHeading: 'Тайминги (мс - n / avg / max / last):',
+                selectorsHeading: 'Здоровье селекторов (found / missing):',
+                snapshotsTitle: '----- СНИМКИ DOM (последние, для обновления селекторов) -----',
+                snapshotsEmpty: '(пока пусто - снимки делаются только при сбое детекта/тестах)',
+                taskFieldsHeading: '  taskFields (вопросы работодателя):'
+            },
+            export: {
+                docTitle: 'applomat · сохранённые вакансии',
+                brandWordmark: 'applomat',
+                brandSub: 'сохранённые вакансии',
+                metaText: 'Экспорт ручной очереди от {date} · дубликатов удалено: {duplicates}',
+                searchPlaceholder: 'Поиск по названию или ссылке...',
+                sortPrefix: 'Сортировка: ',
+                sortOptions: {
+                    ts_desc: 'Новые → старые',
+                    ts_asc: 'Старые → новые',
+                    title_asc: 'Название A→Z',
+                    title_desc: 'Название Z→A'
+                },
+                statusPrefix: 'Статус: ',
+                statusOptions: {
+                    new: 'Новые',
+                    opened: 'Открытые'
+                },
+                openSelected: 'Открыть выбранные',
+                openSelectedTitle: 'Открыть отмеченные вакансии, по одной вкладке на каждую. Если открылась только первая - разрешите этому файлу всплывающие окна в браузере.',
+                resetMarkers: 'Сбросить отметки',
+                resetMarkersTitle: 'Снять отметку открыто со всех вакансий: режим Открытые опустеет, вакансии снова станут Новыми. Сами записи не удаляются.',
+                tableHeaders: {
+                    saved: 'Сохранена',
+                    vacancy: 'Вакансия',
+                    link: 'Ссылка',
+                    age: 'Возраст'
+                },
+                openLinkTitle: 'Открыть вакансию',
+                noLinkTag: 'нет',
+                noTitleText: 'Название недоступно',
+                noTitleTooltip: 'Название не удалось определить при сохранении',
+                emptyStates: {
+                    filter: 'Ничего не найдено по запросу',
+                    opened: 'Открытых вакансий пока нет',
+                    new: 'Новых вакансий нет'
+                },
+                summaryStats: {
+                    total: 'Всего',
+                    new: 'Новые',
+                    opened: 'Открытые',
+                    shown: 'Показано'
+                },
+                confirmReset: 'Снять отметку открыто со всех вакансий? Записи не удаляются - они снова появятся в режиме Новые.'
+            }
+        },
+        en: {
+            presets: {
+                safe: {
+                    label: 'Safe',
+                    hint: '≈ 1 application/min. Pauses 4–8s, vacancy view 15–35s. Slow and most human-like.'
+                },
+                balanced: {
+                    label: 'Balanced',
+                    hint: '≈ 2 applications/min. Pauses 2–5s, vacancy view 8–20s. Recommended balance of speed and natural behavior.'
+                },
+                fast: {
+                    label: 'Fast',
+                    hint: '≈ 3–4 applications/min. Pauses 1.5–3s, vacancy view 4–9s. Elevated pace — more noticeable to hh.ru.'
+                },
+                turbo: {
+                    label: 'Turbo',
+                    hint: '↯ Maximum speed. Only essential technical pauses. If throttled or blocked, applomat halts automatically.'
+                }
+            },
+            cover: {
+                defaultText: 'Hello! I am very interested in this position. My experience is relevant, and more details can be found in my CV. I look forward to your feedback!',
+                title: 'Cover letter',
+                placeholder: 'Cover letter text...',
+                rejectWarningLabel: 'Apply despite warning',
+                rejectWarningTitle: 'Proceed with application even if hh warns of a likely rejection'
+            },
+            status: {
+                idle: 'Idle',
+                running: 'Running',
+                runningTurbo: 'Running · ↯ Turbo',
+                stopped: 'Stopped',
+                error: 'Warning',
+                done: 'Completed',
+                turboActive: '↯ Turbo active',
+                busyTab: 'Active in another tab',
+                returningToList: 'Returning to list...',
+                waitingToReturn: 'Waiting to return...',
+                captchaStopped: 'Captcha detected — stopped',
+                storageFailed: 'Manual Queue storage error',
+                autoStarting: 'Auto-starting...'
+            },
+            panel: {
+                minimizeTitle: 'Collapse panel',
+                expandTitle: 'Expand applomat',
+                langSwitchLabel: 'Interface language',
+                modeTitle: 'Application mode',
+                modePaceGroup: 'Application pace',
+                limitLabel: 'Application limit per run',
+                startBtn: 'Start applying',
+                stopBtn: 'Stop',
+                resetHistory: 'Reset history',
+                resetHistoryTitle: 'Reset application history and run statistics',
+                diagnostics: 'Diagnostics',
+                diagnosticsTitle: 'Open diagnostics and log',
+                statsTitle: 'Run statistics',
+                statsProgressTitle: 'Sent applications / Run limit',
+                statAttempts: 'Attempts',
+                statSuccess: 'Success',
+                statManual: 'Manual',
+                statSkipped: 'Skipped',
+                manualTitle: 'Manual queue',
+                manualCountTitle: 'Saved vacancies for manual review',
+                manualExport: 'Export',
+                manualClear: 'Clear',
+                manualEmpty: 'Queue is empty · Vacancies with questions/tests are saved here automatically',
+                manualNoTitle: 'Title unavailable',
+                manualOpen: 'Open',
+                manualOpenTitle: 'Open vacancy in a new tab',
+                manualUnsafeUrl: 'URL failed security check',
+                manualRemoveTitle: 'Remove from queue',
+                manualMore: 'Open queue ({count}) →',
+                manualMoreTitle: 'Open interactive page with the full vacancy queue'
+            },
+            diag: {
+                backTitle: 'Return to main panel',
+                backBtn: 'Back',
+                title: 'Diagnostics',
+                downloadLog: 'Download log',
+                downloadLogTitle: 'Download full diagnostic report',
+                checkSelectors: 'Check selectors',
+                errorsOnly: 'Errors only',
+                moreBtn: 'More',
+                moreTitle: 'Additional actions',
+                clearView: 'Clear view',
+                clearAll: 'Clear saved log & metrics',
+                statSummary: '{errText} · {recText}',
+                badgeTitle: '{errText} in diagnostic log · Open diagnostics',
+                badgeTitleClean: 'Open diagnostics and log'
+            },
+            confirm: {
+                clearDiag: 'Clear saved diagnostic log and metrics? (download the log before clearing if needed for analysis)',
+                resetHistory: 'Reset application history, limit counter, and current run statistics?',
+                clearManual: 'Clear saved vacancies from the manual queue?'
+            },
+            alert: {
+                manualEmpty: 'List is empty'
+            },
+            health: {
+                starting: 'Starting selector diagnostics...',
+                applyBtnList: 'Apply button (list)',
+                vacancyApply: 'Apply button (vacancy page)',
+                vacancyLink: 'Vacancy link (card)',
+                attachCoverBtn: 'Attach cover letter (Scenario A)',
+                letterSubmit: 'Submit letter button',
+                letterTextarea: 'Cover letter field (textarea)',
+                reasons: {
+                    emptySearch: 'not applicable — search list is empty',
+                    onVacancyPage: 'not applicable on vacancy page',
+                    onResponsePage: 'not applicable on response form page',
+                    notApplicable: 'not applicable on current page',
+                    alreadyApplied: 'not required — already applied',
+                    onSearchPage: 'not applicable on search page',
+                    notInScenario: 'not required in current scenario',
+                    questionnaire: 'not applicable — employer questionnaire',
+                    modalNotOpen: 'not applicable — response form not open',
+                    letterNotExpanded: 'not applicable — letter form not expanded'
+                },
+                statusOk: '{name}: OK ({sel})',
+                statusFallback: '{name}: HEURISTICALLY FOUND (selector {sel} missed)',
+                statusNotFound: '{name}: NOT FOUND ({sel})',
+                summary: 'Health check complete: {okCount} OK · {skipCount} not applicable · {errText}.',
+                instanceLock: 'Instance lock: tabId={tabId} ts={ts}',
+                instanceLockMissing: 'Instance lock: none'
+            },
+            plurals: {
+                error: {
+                    one: 'error',
+                    few: 'errors',
+                    many: 'errors',
+                    other: 'errors'
+                },
+                record: {
+                    one: 'entry',
+                    few: 'entries',
+                    many: 'entries',
+                    other: 'entries'
+                }
+            },
+            logs: {
+                pageLoad: '- Page load: {path} (running={running}, sent={sent}/{limit}) -',
+                newRun: 'New run: application counter reset. Mode — {mode}.',
+                limitReached: 'Limit reached ({limit}). Run completed.',
+                runCompleted: 'Completed. Total applications sent: {count}.',
+                stoppedByUser: 'Stopped by user.',
+                stoppedDuringVacancy: 'Stopped by user while processing vacancy.',
+                stoppedProcessing: 'Processing stopped by user.',
+                settingsSaved: 'Settings saved.',
+                historyReset: 'Application history, counter, and statistics reset.',
+                manualCleared: 'Manual queue list cleared.',
+                diagCleared: 'Saved diagnostic log and metrics cleared.',
+                diagExported: 'Diagnostic log exported to file.',
+                diagExportFailed: 'Failed to export log: {err}',
+                htmlExported: 'HTML export completed.',
+                trapTimeout: 'Cleared ar_trap_lock on timeout.',
+                tabBusy: 'Start canceled: process already active in another tab (instance lock).',
+                onResponsePage: 'On response page — handing over to form handler.',
+                onVacancyPage: 'On vacancy page — continuing processing here.',
+                vacanciesFound: 'Vacancies found: {total}. New to process: {targets}. Sent: {sent}/{limit}.',
+                buttonDisappeared: 'Button disappeared from DOM — restarting search.',
+                navigatingVacancy: 'Navigating to vacancy page — finishing loop for clean navigation.',
+                redirectWaiting: 'Redirect / external test. Waiting to return via watchdog.',
+                skippingCode: 'Skipping vacancy (code: {code}).',
+                mainLoopError: 'Main loop error: {err}',
+                captchaHalt: 'Bot check / captcha detected. Automation stopped: please solve captcha manually and restart.',
+                instanceLockLost: 'Run stopped: cross-tab instance lock transferred to another tab.',
+                persistenceFailure: 'Critical storage failure: could not save vacancy {vid} to manual queue. Automation stopped to prevent data loss.',
+                readingFound: 'Found "Similar vacancies" section — scrolling to it.',
+                readingFallback: 'Section not found — scrolling to 60% page height (fallback).',
+                readingSim: 'Viewing for ~{sec}s (simulating reading).',
+                relocationConfirm: 'Relocation dialog — confirming.',
+                letterMissing: 'Letter field did not appear — submitting without cover letter.',
+                formSubmitFallback: 'Submitted form via form.submit() (fallback).',
+                submitBtnMissing: 'Submit button not found.',
+                responsePageRejectSkip: 'Response page with rejection warning; force submit disabled — saving for manual queue.',
+                responsePageFilling: 'Response page (not a test){reject} — filling and submitting.',
+                responsePageRejectNote: ' with rejection warning',
+                responsePageSubmitFail: 'Failed to submit on response page — saved for manual review.',
+                responsePageSent: 'Application sent from response page.',
+                responsePageQuestions: 'Response page redirected to questions/test — saved for manual review.',
+                responsePageNoConfirm: 'Could not confirm submission from response page — saved for manual review.',
+                noHref: 'Could not obtain vacancy href — skipping.',
+                openingVacancy: 'Opening vacancy page {vid} for reading...',
+                alreadyApplied: 'Already applied to this vacancy — skipping.',
+                applyBtnMissingReturning: 'Apply button not found — marking vacancy processed and returning.',
+                scenarioA: 'Scenario A: resume sent, cover letter optional.',
+                coverOff: 'Cover letter disabled — skipping attachment.',
+                scenarioASent: 'Application sent (Scenario A).',
+                scenarioBRejectSkip: 'Rejection warning, force apply disabled — saving for manual review.',
+                scenarioBModal: 'Scenario B: response modal{reject}{cover}',
+                scenarioBRejectNote: ' (⚠ rejection warning)',
+                scenarioBCoverNote: ', filling letter and submitting.',
+                scenarioBNoCoverNote: ' - submitting without letter.',
+                scenarioBSubmitFail: 'Failed to click submit button — returning to list.',
+                scenarioBSent: 'Application sent (Scenario B{reject}).',
+                scenarioBSentRejectNote: ', despite rejection warning',
+                scenarioBForcing: 'Rejection warning — forcing submit (apply anyway is enabled).',
+                scenarioBForcedSent: 'Application sent (forced, rejection warning).',
+                blockedResumeHidden: 'Application blocked: resume visibility hidden. Adjust resume visibility in hh.ru settings to proceed.',
+                blockedRejectWarning: 'Vacancy has rejection warning — submission not confirmed.',
+                letterSentNoConfirm: 'Letter sent, confirmation not received.',
+                responseConfirmed: 'Application confirmed (confirmation present in DOM).',
+                responseConfirmedExtra: 'Application confirmed after extra DOM check.',
+                btnDisappearedUnconfirmed: 'Apply button disappeared without confirmation — saving for manual review.',
+                retryClick: 'Window did not open — retrying click on Apply.',
+                retryClickSent: 'Application sent after retry click.',
+                timeoutUnresolved: 'Could not determine application outcome — saving for manual review and returning.',
+                scenarioC: 'Scenario C: direct application — resume sent.',
+                noLinkSelector: 'Vacancy link selector not found. Check card structure.',
+                modeSet: 'Application mode: {mode}.',
+                autoResumeFound: 'Unfinished run detected. Auto-resuming in 1.5s...',
+                autoResumeCanceled: 'Auto-resume canceled: run stopped by user.',
+                returnedReloading: 'Returned to list. Reloading page to refresh vacancy list...',
+                questionsPage: 'Reached test/questionnaire page. Saving for manual review and returning.',
+                manualSaved: 'Saved for manual review{note}: {vid}',
+                manualAlready: 'Vacancy already in manual queue{note}: {vid}',
+                manualSaveFailed: 'Error saving to manual queue (storage failure){note}: {vid}',
+                twoStepBackFailed: 'Two-step back failed. Navigating to vacancy list.',
+                noVidOnQuestions: 'Could not determine vacancy ID on questions page.',
+                domSnapshot: 'DOM snapshot ({label}): data-qa={dataQa}, textarea={textareas}, taskFields={taskFields}, modalBtns={modalButtons}.',
+                heuristicFallback: '[Heuristics] Fallback search for "{key}": found <{tag}>',
+                heuristicFallbackAll: '[Heuristics] Fallback search for all items "{key}": found {count}',
+                jsError: 'JS-error [applomat]: {msg}{where}',
+                unhandledRejection: 'Unhandled rejection [applomat]: {msg}'
+            },
+            report: {
+                headerTitle: '===== applomat - Diagnostic Log =====',
+                scriptVersion: 'Script version : v{version}',
+                exportedAt: 'Exported at    : {time}',
+                currentUrl: 'Current URL    : {url}',
+                userAgent: 'User-Agent     : {ua}',
+                tabId: 'TAB_ID         : {tabId}',
+                running: 'Running        : {running}',
+                sent: 'Sent           : {sent} / limit {limit}',
+                processedIds: 'Processed IDs  : {count}',
+                manualList: 'Manual queue   : {count}',
+                instanceLock: 'Instance lock  : {lock}',
+                trapLock: 'Trap lock      : {trap}',
+                f5Needed: 'F5 needed      : {f5}',
+                lastAttempt: 'Last attempt   : {last}',
+                returnUrl: 'Return URL     : {url}',
+                config: 'Config         : {cfg}',
+                logEntries: 'Entries in log : {count}',
+                none: '(none)',
+                metricsTitle: '----- METRICS (cumulative) -----',
+                metricsSince: 'Metrics since  : {time}',
+                scenariosHeading: 'Scenarios after clicking Apply:',
+                scenarios: {
+                    A: '  A (cover letter optional) : {val}',
+                    B: '  B (cover letter required) : {val}',
+                    C: '  C (direct response)       : {val}',
+                    relocation: '  Relocation modal          : {val}',
+                    questions: '  Tests/questions (apply)   : {val}',
+                    questionsWatchdog: '  Tests/questions (watchdog): {val}',
+                    timeout: '  Timeout (unidentified)    : {val} (of which unresolved: {unresolved})',
+                    noApply: '  No apply button           : {val}',
+                    bNoConfirm: '  B without confirmation    : {val}'
+                },
+                otherCounters: 'Other counters:',
+                timingsHeading: 'Timings (ms - n / avg / max / last):',
+                selectorsHeading: 'Selector health (found / missing):',
+                snapshotsTitle: '----- DOM SNAPSHOTS (latest, for selector updates) -----',
+                snapshotsEmpty: '(currently empty - snapshots are taken only on detection failure/tests)',
+                taskFieldsHeading: '  taskFields (employer questions):'
+            },
+            export: {
+                docTitle: 'applomat · saved vacancies',
+                brandWordmark: 'applomat',
+                brandSub: 'saved vacancies',
+                metaText: 'Manual queue export from {date} · duplicates removed: {duplicates}',
+                searchPlaceholder: 'Search by title or URL...',
+                sortPrefix: 'Sort: ',
+                sortOptions: {
+                    ts_desc: 'Newest → oldest',
+                    ts_asc: 'Oldest → newest',
+                    title_asc: 'Title A→Z',
+                    title_desc: 'Title Z→A'
+                },
+                statusPrefix: 'Status: ',
+                statusOptions: {
+                    new: 'New',
+                    opened: 'Opened'
+                },
+                openSelected: 'Open selected',
+                openSelectedTitle: 'Open checked vacancies in separate tabs. If only the first one opens, enable pop-ups for this file in your browser.',
+                resetMarkers: 'Reset markers',
+                resetMarkersTitle: 'Remove opened markers from all vacancies: Opened view will clear and vacancies will reappear under New. Entries are not deleted.',
+                tableHeaders: {
+                    saved: 'Saved',
+                    vacancy: 'Vacancy',
+                    link: 'Link',
+                    age: 'Age'
+                },
+                openLinkTitle: 'Open vacancy',
+                noLinkTag: 'none',
+                noTitleText: 'Title unavailable',
+                noTitleTooltip: 'Title could not be determined upon saving',
+                emptyStates: {
+                    filter: 'No results matching query',
+                    opened: 'No opened vacancies yet',
+                    new: 'No new vacancies'
+                },
+                summaryStats: {
+                    total: 'Total',
+                    new: 'New',
+                    opened: 'Opened',
+                    shown: 'Shown'
+                },
+                confirmReset: 'Clear opened status from all vacancies? Entries will not be deleted and will reappear under New.'
+            }
+        }
+    };
+
+    const I18n = (() => {
+        let _currentLang = null;
+
+        function _detectInitialLang() {
+            try {
+                const saved = storage.localGet(KEYS.language);
+                if (saved && SUPPORTED_LANGUAGES.includes(saved)) return saved;
+            } catch (e) { /* ignore */ }
+
+            try {
+                const docLang = (document.documentElement.lang || '').toLowerCase();
+                if (docLang.startsWith('en')) return 'en';
+                if (docLang.startsWith('ru')) return 'ru';
+                const navLang = (navigator.language || navigator.userLanguage || '').toLowerCase();
+                if (navLang.startsWith('en')) return 'en';
+                if (navLang.startsWith('ru')) return 'ru';
+            } catch (e) { /* ignore */ }
+
+            return DEFAULT_LANGUAGE;
+        }
+
+        function _getNested(obj, path) {
+            if (!obj || typeof obj !== 'object') return undefined;
+            const parts = path.split('.');
+            let curr = obj;
+            for (const p of parts) {
+                if (curr && typeof curr === 'object' && p in curr) {
+                    curr = curr[p];
+                } else {
+                    return undefined;
+                }
+            }
+            return curr;
+        }
+
+        function _interpolate(template, params) {
+            if (typeof template !== 'string') return '';
+            if (!params || typeof params !== 'object') return template;
+            return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => {
+                return (key in params && params[key] !== undefined && params[key] !== null) ? String(params[key]) : match;
+            });
+        }
+
+        return {
+            init() {
+                if (!_currentLang) {
+                    _currentLang = _detectInitialLang();
+                }
+                return _currentLang;
+            },
+            getLanguage() {
+                if (!_currentLang) _currentLang = _detectInitialLang();
+                return _currentLang;
+            },
+            setLanguage(lang) {
+                if (!SUPPORTED_LANGUAGES.includes(lang)) return false;
+                _currentLang = lang;
+                try {
+                    storage.localSet(KEYS.language, lang);
+                } catch (e) { /* ignore */ }
+                return true;
+            },
+            getLocaleTag(lang) {
+                const target = lang || I18n.getLanguage();
+                return LOCALE_TAGS[target] || LOCALE_TAGS[DEFAULT_LANGUAGE];
+            },
+            t(key, params, lang) {
+                const current = lang || I18n.getLanguage();
+                let val = _getNested(TRANSLATIONS[current], key);
+                if (val === undefined && current !== DEFAULT_LANGUAGE) {
+                    val = _getNested(TRANSLATIONS[DEFAULT_LANGUAGE], key);
+                }
+                if (val === undefined) {
+                    return key;
+                }
+                return typeof val === 'string' ? _interpolate(val, params) : val;
+            },
+            plural(n, category, params, lang) {
+                const num = Number.isFinite(Number(n)) ? Number(n) : 0;
+                const current = lang || I18n.getLanguage();
+                const localeTag = I18n.getLocaleTag(current);
+                let form = 'other';
+                try {
+                    const pr = new Intl.PluralRules(localeTag);
+                    form = pr.select(num);
+                } catch (e) {
+                    if (current === 'ru') {
+                        const mod10 = num % 10;
+                        const mod100 = num % 100;
+                        if (mod100 >= 11 && mod100 <= 19) form = 'many';
+                        else if (mod10 === 1) form = 'one';
+                        else if (mod10 >= 2 && mod10 <= 4) form = 'few';
+                        else form = 'many';
+                    } else {
+                        form = num === 1 ? 'one' : 'other';
+                    }
+                }
+                const pluralsObj = _getNested(TRANSLATIONS[current], `plurals.${category}`)
+                    || _getNested(TRANSLATIONS[DEFAULT_LANGUAGE], `plurals.${category}`)
+                    || {};
+                const word = pluralsObj[form] || pluralsObj.other || pluralsObj.many || pluralsObj.one || category;
+                const mergedParams = { count: num, ...params };
+                return `${num} ${word}`;
+            },
+            formatTime(dateOrTs, options = {}, lang) {
+                const d = dateOrTs instanceof Date ? dateOrTs : new Date(dateOrTs || Date.now());
+                const localeTag = I18n.getLocaleTag(lang);
+                try {
+                    return d.toLocaleTimeString(localeTag, options);
+                } catch (e) {
+                    return d.toTimeString().slice(0, 8);
+                }
+            },
+            formatDate(dateOrTs, options = {}, lang) {
+                const d = dateOrTs instanceof Date ? dateOrTs : new Date(dateOrTs || Date.now());
+                const localeTag = I18n.getLocaleTag(lang);
+                try {
+                    return d.toLocaleDateString(localeTag, options);
+                } catch (e) {
+                    return d.toISOString().slice(0, 10);
+                }
+            },
+            formatDateTime(dateOrTs, options = {}, lang) {
+                const d = dateOrTs instanceof Date ? dateOrTs : new Date(dateOrTs || Date.now());
+                const localeTag = I18n.getLocaleTag(lang);
+                try {
+                    return d.toLocaleString(localeTag, options);
+                } catch (e) {
+                    return d.toISOString();
+                }
+            }
+        };
+    })();
+
     // Пресеты темпа работы. Все интервалы в миллисекундах [min, max]:
     //  delay  - пауза перед переходом к следующей вакансии;
     //  view   - чтение страницы вакансии (имитация просмотра);
     //  action - микро-паузы между отдельными действиями (клики, ввод).
     const PRESETS = {
         safe: {
-            label: 'Безопасный',
-            hint: '≈ 1 отклик в минуту. Паузы 4-8 с, чтение вакансии 15-35 с. Медленно и максимально похоже на человека.',
             delay: [4000, 8000],
             view: [15000, 35000],
             action: [300, 1000]
         },
         balanced: {
-            label: 'Оптимальный',
-            hint: '≈ 2 отклика в минуту. Паузы 2-5 с, чтение вакансии 8-20 с. Рекомендуемый баланс скорости и естественности.',
             delay: [2000, 5000],
             view: [8000, 20000],
             action: [150, 600]
         },
         fast: {
-            label: 'Быстрый',
-            hint: '≈ 3-4 отклика в минуту. Паузы 1,5-3 с, чтение вакансии 4-9 с. Повышенный темп — заметнее для hh.ru.',
             delay: [1500, 3000],
             view: [4000, 9000],
             action: [120, 350]
         },
         turbo: {
-            label: 'Турбо',
-            hint: '↯ Максимальная скорость. Только необходимые технические паузы. При блокировке applomat автоматически остановится.',
             delay: [80, 200],
             view: [0, 0],
             action: [25, 80]
         }
     };
     const DEFAULT_PRESET = 'balanced';
+    const presetLabel = (key) => I18n.t(`presets.${key || DEFAULT_PRESET}.label`);
+    const presetHint = (key) => I18n.t(`presets.${key || DEFAULT_PRESET}.hint`);
 
     // Пользовательские настройки по умолчанию
     const DEFAULTS = {
@@ -472,7 +1237,7 @@
         } catch (e) { /* ошибки storage не должны ломать UI */ }
 
         try {
-            const timeStr = new Date().toLocaleTimeString('ru-RU');
+            const timeStr = I18n.formatTime(Date.now());
             const fullText = `[${timeStr}] ${msg}`;
 
             // 2. Выделенный полноразмерный экран диагностики
@@ -551,7 +1316,7 @@
                 taskFields,
                 modalButtons
             });
-            log(`Снимок DOM (${label}): data-qa=${dataQa.length}, textarea=${textareas.length}, taskFields=${taskFields.length}, modalBtns=${modalButtons.length}.`);
+            log(I18n.t('logs.domSnapshot', { label, dataQa: dataQa.length, textareas: textareas.length, taskFields: taskFields.length, modalBtns: modalButtons.length }));
         } catch (e) { /* ignore */ }
     }
 
@@ -575,28 +1340,28 @@
             return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${pad3(d.getMilliseconds())}`;
         };
         let cfgSnapshot = '{}';
-        try { cfgSnapshot = JSON.stringify({ ...config, coverText: `(${(config.coverText || '').length} симв.)` }); } catch (e) { /* ignore */ }
-        const lockRaw = storage.localGet(KEYS.instanceLock) || '(нет)';
+        try { cfgSnapshot = JSON.stringify({ ...config, coverText: `(${(config.coverText || '').length} ${I18n.getLanguage() === 'ru' ? 'симв.' : 'chars'})` }); } catch (e) { /* ignore */ }
+        const lockRaw = storage.localGet(KEYS.instanceLock) || I18n.t('report.none');
 
         const entries = DiagLog.getAll();
         const header = [
-            '===== applomat - Diagnostic Log =====',
-            `Версия скрипта : v${VERSION}`,
-            `Выгружено      : ${new Date().toISOString()}`,
-            `URL сейчас     : ${location.href}`,
-            `User-Agent     : ${navigator.userAgent}`,
-            `TAB_ID         : ${TAB_ID}`,
-            `Running        : ${State.amIRunning()}`,
-            `Отправлено     : ${State.getSentCount()} / лимит ${config.limit}`,
-            `Обработано ID  : ${State.getProcessedIDs().size}`,
-            `Ручной список  : ${State.getManualList().length}`,
-            `Instance lock  : ${lockRaw}`,
-            `Trap lock      : ${State.hasTrapLock()}`,
-            `F5 needed      : ${State.isF5Needed()}`,
-            `Last attempt   : ${State.getLastAttemptID() || '(нет)'}`,
-            `Return URL     : ${State.getReturnUrl() || '(нет)'}`,
-            `Config         : ${cfgSnapshot}`,
-            `Записей в логе  : ${entries.length}`,
+            I18n.t('report.headerTitle'),
+            I18n.t('report.scriptVersion', { version: VERSION }),
+            I18n.t('report.exportedAt', { time: new Date().toISOString() }),
+            I18n.t('report.currentUrl', { url: location.href }),
+            I18n.t('report.userAgent', { ua: navigator.userAgent }),
+            I18n.t('report.tabId', { tabId: TAB_ID }),
+            I18n.t('report.running', { running: State.amIRunning() }),
+            I18n.t('report.sent', { sent: State.getSentCount(), limit: config.limit }),
+            I18n.t('report.processedIds', { count: State.getProcessedIDs().size }),
+            I18n.t('report.manualList', { count: State.getManualList().length }),
+            I18n.t('report.instanceLock', { lock: lockRaw }),
+            I18n.t('report.trapLock', { trap: State.hasTrapLock() }),
+            I18n.t('report.f5Needed', { f5: State.isF5Needed() }),
+            I18n.t('report.lastAttempt', { last: State.getLastAttemptID() || I18n.t('report.none') }),
+            I18n.t('report.returnUrl', { url: State.getReturnUrl() || I18n.t('report.none') }),
+            I18n.t('report.config', { cfg: cfgSnapshot }),
+            I18n.t('report.logEntries', { count: entries.length }),
             '==============================================',
             ''
         ].join('\n');
@@ -615,31 +1380,31 @@
         const c = m.counters || {};
         const get = (k) => c[k] || 0;
         const lines = [];
-        lines.push('', '----- МЕТРИКИ (накопительно) -----');
-        lines.push(`Метрики с      : ${new Date(m.startedAt || Date.now()).toISOString()}`);
-        lines.push('Сценарии после клика Откликнуться:');
-        lines.push(`  А (письмо необязательно) : ${get('scenario.A')}`);
-        lines.push(`  Б (письмо обязательно)   : ${get('scenario.B')}`);
-        lines.push(`  В (прямой отклик)        : ${get('scenario.C')}`);
-        lines.push(`  Окно переезда            : ${get('scenario.relocation')}`);
-        lines.push(`  Тесты/вопросы (в отклике): ${get('scenario.questions')}`);
-        lines.push(`  Тесты/вопросы (watchdog) : ${get('scenario.questions.watchdog')}`);
-        lines.push(`  Таймаут (не опознано)    : ${get('scenario.timeout')} (из них неразрешённых: ${get('scenario.timeout.unresolved')})`);
-        lines.push(`  Нет кнопки отклика       : ${get('scenario.noApply')}`);
-        lines.push(`  Б без подтверждения      : ${get('scenario.B.noConfirm')}`);
+        lines.push('', I18n.t('report.metricsTitle'));
+        lines.push(I18n.t('report.metricsSince', { time: new Date(m.startedAt || Date.now()).toISOString() }));
+        lines.push(I18n.t('report.scenariosHeading'));
+        lines.push(I18n.t('report.scenarios.A', { val: get('scenario.A') }));
+        lines.push(I18n.t('report.scenarios.B', { val: get('scenario.B') }));
+        lines.push(I18n.t('report.scenarios.C', { val: get('scenario.C') }));
+        lines.push(I18n.t('report.scenarios.relocation', { val: get('scenario.relocation') }));
+        lines.push(I18n.t('report.scenarios.questions', { val: get('scenario.questions') }));
+        lines.push(I18n.t('report.scenarios.questionsWatchdog', { val: get('scenario.questions.watchdog') }));
+        lines.push(I18n.t('report.scenarios.timeout', { val: get('scenario.timeout'), unresolved: get('scenario.timeout.unresolved') }));
+        lines.push(I18n.t('report.scenarios.noApply', { val: get('scenario.noApply') }));
+        lines.push(I18n.t('report.scenarios.bNoConfirm', { val: get('scenario.B.noConfirm') }));
 
         // Прочие счётчики (например, sel.* и всё, что не вошло выше)
         const known = new Set(['scenario.A', 'scenario.B', 'scenario.C', 'scenario.relocation', 'scenario.questions', 'scenario.questions.watchdog', 'scenario.timeout', 'scenario.timeout.unresolved', 'scenario.noApply', 'scenario.B.noConfirm']);
         const others = Object.keys(c).filter(k => !known.has(k)).sort();
         if (others.length) {
-            lines.push('Прочие счётчики:');
+            lines.push(I18n.t('report.otherCounters'));
             others.forEach(k => lines.push(`  ${k} : ${c[k]}`));
         }
 
         const t = m.timings || {};
         const tKeys = Object.keys(t);
         if (tKeys.length) {
-            lines.push('Тайминги (мс - n / avg / max / last):');
+            lines.push(I18n.t('report.timingsHeading'));
             tKeys.forEach(k => {
                 const v = t[k];
                 const avg = v.n ? Math.round(v.sum / v.n) : 0;
@@ -650,7 +1415,7 @@
         const sel = m.selectors || {};
         const sKeys = Object.keys(sel);
         if (sKeys.length) {
-            lines.push('Здоровье селекторов (found / missing):');
+            lines.push(I18n.t('report.selectorsHeading'));
             sKeys.forEach(k => lines.push(`  ${k} : ${sel[k].found} / ${sel[k].missing}`));
         }
         lines.push('==============================================');
@@ -662,9 +1427,9 @@
         const pad2 = (n) => String(n).padStart(2, '0');
         const fmt = (t) => { const d = new Date(t); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; };
         const snaps = (Metrics.getAll().snapshots) || [];
-        const lines = ['', '----- СНИМКИ DOM (последние, для обновления селекторов) -----'];
+        const lines = ['', I18n.t('report.snapshotsTitle')];
         if (!snaps.length) {
-            lines.push('(пока пусто - снимки делаются только при сбое детекта/тестах)');
+            lines.push(I18n.t('report.snapshotsEmpty'));
             return lines.join('\n');
         }
         snaps.forEach((s, i) => {
@@ -679,7 +1444,7 @@
                 s.textareas.forEach(t => lines.push(`    - name="${t.name}" qa="${t.qa}" ph="${t.ph}" vis=${t.vis}`));
             }
             if (Array.isArray(s.taskFields) && s.taskFields.length) {
-                lines.push('  taskFields (вопросы работодателя):');
+                lines.push(I18n.t('report.taskFieldsHeading'));
                 s.taskFields.forEach(f => lines.push(`    - <${f.tag}> type="${f.type}" name="${f.name}" vis=${f.vis}`));
             }
             if (Array.isArray(s.modalButtons) && s.modalButtons.length) {
@@ -696,9 +1461,9 @@
             const report = buildDiagnosticReport();
             const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
             downloadFile(`applomat_log_${stamp}.txt`, report, 'text/plain;charset=utf-8');
-            log('Диагностический лог выгружен в файл.');
+            log(I18n.t('logs.diagExported'));
         } catch (e) {
-            log('Не удалось выгрузить лог: ' + (e && e.message), true);
+            log(I18n.t('logs.diagExportFailed', { err: (e && e.message ? e.message : e) }), true);
         }
     }
 
@@ -765,7 +1530,7 @@
             setTimeout(() => {
                 if (storage.sessionGet(KEYS.trapLock) === token) {
                     storage.sessionRemove(KEYS.trapLock);
-                    log('Очистил ar_trap_lock по таймауту.');
+                    log(I18n.t('logs.trapTimeout'));
                 }
             }, ttlMs);
             return token;
@@ -859,7 +1624,7 @@
                     if (list.length > 500) list.length = 500;
                     const saved = storage.localSet(KEYS.manualList, JSON.stringify(list));
                     return saved ? 'ADDED' : 'FAILED';
-                } else if ((!exists.title || exists.title === 'Название недоступно') && normalizedEntry.title && normalizedEntry.title !== 'Название недоступно') {
+                } else if ((!exists.title || exists.title === 'Название недоступно' || exists.title === 'Title unavailable') && normalizedEntry.title && normalizedEntry.title !== 'Название недоступно' && normalizedEntry.title !== 'Title unavailable') {
                     exists.title = normalizedEntry.title;
                     const saved = storage.localSet(KEYS.manualList, JSON.stringify(list));
                     return saved ? 'UPDATED' : 'FAILED';
@@ -951,7 +1716,7 @@
         const found = runHeuristic(keyOrSelector, root || document);
         if (found && !isAutoResponderUI(found)) {
             Metrics.bump(`heuristic.fallback.${keyOrSelector}`);
-            log(`[Heuristics] Резервный поиск для "${keyOrSelector}": обнаружен <${found.tagName.toLowerCase()}>`);
+            log(I18n.t('logs.heuristicFallback', { key: keyOrSelector, tag: found.tagName.toLowerCase() }));
             return found;
         }
         return null;
@@ -973,7 +1738,7 @@
         let found = runHeuristicAll(keyOrSelector, root || document).filter(el => !isAutoResponderUI(el));
         if (found.length > 0) {
             Metrics.bump(`heuristic.fallback.all.${keyOrSelector}`);
-            log(`[Heuristics] Резервный поиск всех элементов для "${keyOrSelector}": найдено ${found.length}`);
+            log(I18n.t('logs.heuristicFallbackAll', { key: keyOrSelector, count: found.length }));
         }
         return found;
     }
@@ -1505,7 +2270,7 @@
             const nodes = document.querySelectorAll('h1,h2,h3,p,div,span');
             for (const el of nodes) {
                 const t = el.childElementCount === 0 ? (el.textContent || '') : '';
-                if (t && t.trim().toLowerCase().includes('резюме доставлено') && isVisible(el)) return true;
+                if (t && /(?:резюме доставлено|resume delivered|application sent|response sent)/i.test(t.trim()) && isVisible(el)) return true;
             }
         } catch (e) { /* ignore */ }
         return false;
@@ -1697,20 +2462,20 @@
             });
             if (res === 'ADDED') {
                 Stats.bump('manual');
-                log(`Сохранено для ручного отклика${note ? ' (' + note + ')' : ''}: ${vid}`);
+                log(I18n.t('logs.manualSaved', { note: note ? ' (' + note + ')' : '', vid }));
                 try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
                 return true;
             } else if (res === 'EXISTS' || res === 'UPDATED') {
-                log(`Вакансия уже в списке для ручного отклика${note ? ' (' + note + ')' : ''}: ${vid}`);
+                log(I18n.t('logs.manualAlready', { note: note ? ' (' + note + ')' : '', vid }));
                 try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
                 return true;
             } else {
-                log(`Ошибка сохранения в список для ручного отклика (сбой хранилища)${note ? ' [' + note + ']' : ''}: ${vid}`, true);
+                log(I18n.t('logs.manualSaveFailed', { note: note ? ' [' + note + ']' : '', vid }), true);
                 return false;
             }
         } catch (e) {
             console.warn('[applomat] saveCurrentForManual error', e);
-            log(`Ошибка сохранения в список для ручного отклика: ${vid}`, true);
+            log(I18n.t('logs.manualSaveFailed', { note: '', vid }), true);
             return false;
         }
     }
@@ -1719,23 +2484,35 @@
     //  9. СТАТУС В ПАНЕЛИ
     // ─────────────────────────────────────────────────────────────
 
-    const STATUS_TEXT = {
-        idle: 'Ожидание',
-        running: 'В работе',
-        stopped: 'Остановлено',
-        error: 'Внимание',
-        done: 'Завершено'
+    const STATUS_KEYS = ['idle', 'running', 'stopped', 'error', 'done'];
+
+    let currentStatusState = {
+        statusKey: 'idle',
+        customKeyOrText: null,
+        params: null
     };
 
-    function setStatus(statusKey, customText) {
-        const key = STATUS_TEXT[statusKey] ? statusKey : 'idle';
+    function setStatus(statusKey, customKeyOrText, params) {
+        const key = STATUS_KEYS.includes(statusKey) ? statusKey : 'idle';
+        currentStatusState = { statusKey: key, customKeyOrText, params };
+
         const el = document.getElementById('ar-status-text');
         if (!el) return;
         const isTurbo = config?.preset === 'turbo';
-        let text = customText || STATUS_TEXT[key];
-        if (key === 'running' && isTurbo && !customText) {
-            text = 'В работе · ↯ Турбо';
+
+        let text;
+        if (customKeyOrText) {
+            if (typeof customKeyOrText === 'string' && (customKeyOrText.startsWith('status.') || I18n.t(customKeyOrText) !== customKeyOrText)) {
+                text = I18n.t(customKeyOrText, params);
+            } else {
+                text = String(customKeyOrText);
+            }
+        } else if (key === 'running' && isTurbo) {
+            text = I18n.t('status.runningTurbo');
+        } else {
+            text = I18n.t(`status.${key}`);
         }
+
         el.textContent = text;
         el.title = text;
         el.className = 'ar-status ar-status--' + key + (isTurbo ? ' is-turbo' : '');
@@ -1751,8 +2528,6 @@
             stopBtn.style.display = running ? 'inline-flex' : 'none';
             stopBtn.disabled = !running;
         }
-
-        /* Top red flow line removed per design polish */
 
         const progBar = document.querySelector('.ar-progress');
         if (progBar) progBar.classList.toggle('is-turbo', running && isTurbo);
@@ -1780,11 +2555,11 @@
             const winH = window.innerHeight || document.documentElement.clientHeight;
             const maxY = Math.max(0, docHeight - winH);
 
-            const needle = 'подходящие вакансии в этой компании';
+            const needleRx = /(?:подходящие вакансии в этой компании|similar vacancies|vacancies at this company)/i;
             let sectionEl = null;
             for (const el of qa('h1,h2,h3,h4,div,section')) {
                 try {
-                    if (el.innerText && el.innerText.trim().toLowerCase().includes(needle)) {
+                    if (el.innerText && needleRx.test(el.innerText.trim())) {
                         sectionEl = el;
                         break;
                     }
@@ -1795,10 +2570,10 @@
             if (sectionEl) {
                 const rect = sectionEl.getBoundingClientRect();
                 targetY = clamp(Math.round(rect.top + window.pageYOffset - 100), 0, maxY);
-                log('Найдена секция "Подходящие вакансии..." - скроллю до неё.');
+                log(I18n.t('logs.readingFound'));
             } else {
                 targetY = Math.round(maxY * 0.6);
-                log('Секция не найдена - скроллю до 60% страницы (фоллбек).');
+                log(I18n.t('logs.readingFallback'));
             }
 
             const totalSteps = Math.max(6, Math.floor((viewTime / stepMs) / 2));
@@ -1877,7 +2652,7 @@
             if (!isRunCurrent(runId)) return 'STOPPED';
             guard++;
             Metrics.bump('scenario.relocation');
-            log('Окно переезда - подтверждаю.');
+            log(I18n.t('logs.relocationConfirm'));
             const reloc = query('relocationBtn');
             if (reloc) {
                 await actionPause();
@@ -1916,7 +2691,7 @@
                 fillTextarea(area, config.coverText);
                 await actionPause();
             } else {
-                log('Поле письма не появилось - отправляю отклик без сопроводительного.', true);
+                log(I18n.t('logs.letterMissing'), true);
             }
         }
         if (!isRunCurrent(runId)) return false;
@@ -1932,13 +2707,13 @@
                 submitButton = q('button[type="submit"], input[type="submit"]', form);
                 if (!submitButton) {
                     if (!isRunCurrent(runId)) return false;
-                    try { form.submit(); log('Отправил форму через form.submit() (fallback).'); return true; }
+                    try { form.submit(); log(I18n.t('logs.formSubmitFallback')); return true; }
                     catch (e) { console.warn('[applomat] form.submit fallback failed', e); }
                 }
             }
         }
         if (!isRunCurrent(runId)) return false;
-        if (!submitButton) { log('Кнопка отправки письма не найдена.', true); return false; }
+        if (!submitButton) { log(I18n.t('logs.submitBtnMissing'), true); return false; }
 
         await actionPause();
         if (!isRunCurrent(runId)) return false;
@@ -2047,11 +2822,11 @@
         try {
             if (reject && !config.applyOnRejectWarning) {
                 if (!isRunCurrent(runId)) return;
-                log('Страница отклика с предупреждением об отказе; форс выключен - сохраняю для ручного отклика.', true);
+                log(I18n.t('logs.responsePageRejectSkip'), true);
                 Metrics.bump('page.reject.skipped');
                 savedForManual = saveCurrentForManual(vid, 'reject-warning');
             } else {
-                log(`Страница отклика (не тест)${reject ? ' с предупреждением об отказе' : ''} - заполняю и отправляю.`);
+                log(I18n.t('logs.responsePageFilling', { reject: reject ? I18n.t('logs.responsePageRejectNote') : '' }));
                 captureResponseDom('response-page-form');
                 const submitted = await fillLetterAndSubmit({ withCover: config.useCover, runId });
                 if (!isRunCurrent(runId)) return;
@@ -2059,7 +2834,7 @@
                     Metrics.bump('page.response.fail');
                     captureResponseDom('response-page-no-submit');
                     savedForManual = saveCurrentForManual(vid, reject ? 'reject-warning' : 'page-no-submit');
-                    log('Не удалось нажать отправку на странице отклика - сохранил для ручного.', true);
+                    log(I18n.t('logs.responsePageSubmitFail'), true);
                 } else {
                     let redirectedToQuestions = false;
 
@@ -2093,16 +2868,16 @@
                     if (confirmed) {
                         Metrics.bump('page.response.ok' + (reject ? '.reject' : ''));
                         State.incSentCount();
-                        log('Отклик отправлен со страницы отклика.');
+                        log(I18n.t('logs.responsePageSent'));
                     } else if (redirectedToQuestions) {
                         Metrics.bump('scenario.questions.responsePage');
                         savedForManual = saveCurrentForManual(vid, 'questions');
-                        log('Страница отклика перенаправила на вопросы/тест - сохранил для ручного.', true);
+                        log(I18n.t('logs.responsePageQuestions'), true);
                     } else {
                         Metrics.bump('page.response.fail');
                         captureResponseDom('response-page-no-confirm');
                         savedForManual = saveCurrentForManual(vid, reject ? 'reject-warning' : 'page-no-confirm');
-                        log('Не удалось подтвердить отправку со страницы отклика - сохранил для ручного.', true);
+                        log(I18n.t('logs.responsePageNoConfirm'), true);
                     }
                 }
             }
@@ -2156,10 +2931,10 @@
         if (!isRunCurrent(runId)) return 'STOPPED';
 
         if (!href) {
-            log('Не удалось получить href вакансии - пропускаю.', true);
+            log(I18n.t('logs.noHref'), true);
             return 'ERROR_NO_HREF';
         }
-        log(`Открываю страницу вакансии ${vid} для чтения...`);
+        log(I18n.t('logs.openingVacancy', { vid }));
         await actionPause();
         if (!isRunCurrent(runId)) return 'STOPPED';
         State.setLastAttemptID(vid); // запомним, на какую вакансию кликаем
@@ -2185,7 +2960,7 @@
         if (detectAlreadyApplied()) {
             Metrics.bump('scenario.alreadyApplied');
             Stats.bump('skipped');
-            log('На эту вакансию уже откликались ранее - пропускаю.');
+            log(I18n.t('logs.alreadyApplied'));
             returnToList(vid, { markProcessed: true, runId });
             return 'RETURNED';
         }
@@ -2193,7 +2968,7 @@
         Metrics.bump('scenario.noApply');
         Stats.bump('skipped');
         captureResponseDom('no-apply-button');
-        log('Кнопка "Откликнуться" не найдена - помечаю вакансию как обработанную и возвращаюсь.', true);
+        log(I18n.t('logs.applyBtnMissingReturning'), true);
         returnToList(vid, { markProcessed: true, runId });
         return 'RETURNED';
     }
@@ -2201,7 +2976,7 @@
     // Сценарий А: резюме уже отправлено, письмо - по желанию.
     async function handleScenarioA(vid, runId = currentRunId) {
         if (!isRunCurrent(runId)) return 'STOPPED';
-        log('Сценарий А: резюме отправлено, письмо необязательно.');
+        log(I18n.t('logs.scenarioA'));
         if (config.useCover) {
             const attach = query('attachCoverBtn');
             if (attach) {
@@ -2219,11 +2994,11 @@
                 if (!isRunCurrent(runId)) return 'STOPPED';
             }
         } else {
-            log('Письмо выключено - пропускаю прикрепление.');
+            log(I18n.t('logs.coverOff'));
         }
         if (!isRunCurrent(runId)) return 'STOPPED';
         State.incSentCount();
-        log('Отклик отправлен (сценарий А).');
+        log(I18n.t('logs.scenarioASent'));
         returnToList(vid, { markProcessed: true, runId });
         return 'OK';
     }
@@ -2242,7 +3017,7 @@
         // а откладываем в ручной список (иначе realisticClick отправил бы их с первого клика).
         if (rejectSeen && !config.applyOnRejectWarning) {
             Metrics.bump('reject.skipped.modal');
-            log('Предупреждение об отказе, откликаться всё равно выключено - сохраняю для ручного отклика.');
+            log(I18n.t('logs.scenarioBRejectSkip'));
             const saved = saveCurrentForManual(vid, 'reject-warning');
             if (!saved) {
                 haltForPersistenceFailure(vid);
@@ -2251,11 +3026,11 @@
             returnToList(vid, { markProcessed: true, runId });
             return 'RETURNED';
         }
-        log(`Сценарий Б: модалка отклика${rejectSeen ? ' (⚠ предупреждение об отказе)' : ''}${config.useCover ? ', заполняю письмо и отправляю.' : ' - отправляю без письма.'}`);
+        log(I18n.t('logs.scenarioBModal', { reject: rejectSeen ? I18n.t('logs.scenarioBRejectNote') : '', cover: config.useCover ? I18n.t('logs.scenarioBCoverNote') : I18n.t('logs.scenarioBNoCoverNote') }));
         const submitted = await fillLetterAndSubmit({ withCover: config.useCover, runId });
         if (!isRunCurrent(runId)) return 'STOPPED';
         if (!submitted) {
-            log('Не удалось нажать отправку отклика - возвращаюсь к списку.', true);
+            log(I18n.t('logs.scenarioBSubmitFail'), true);
             captureResponseDom('scenarioB-no-submit');
             const saved = saveCurrentForManual(vid, rejectSeen ? 'reject-warning' : 'no-submit');
             if (!saved) {
@@ -2272,7 +3047,7 @@
             if (rejectSeen) Metrics.bump('reject.sent.modal');
             if (!isRunCurrent(runId)) return 'STOPPED';
             State.incSentCount();
-            log(`Отклик отправлен (сценарий Б${rejectSeen ? ', несмотря на предупреждение об отказе' : ''}).`);
+            log(I18n.t('logs.scenarioBSent', { reject: rejectSeen ? I18n.t('logs.scenarioBSentRejectNote') : '' }));
             returnToList(vid, { markProcessed: true, runId });
             return 'OK';
         }
@@ -2281,7 +3056,7 @@
 
         // Предупреждение Скорее всего, будет отказ: если включён форс - дожимаем отправку.
         if (reason === 'reject-warning' && config.applyOnRejectWarning) {
-            log('Предупреждение об отказе - дожимаю отправку (включено откликаться всё равно).');
+            log(I18n.t('logs.scenarioBForcing'));
             const forced = await forceSubmitReject(TUNING.forceSubmitAttempts, { onResponsePage: false, runId });
             if (forced === 'STOPPED' || !isRunCurrent(runId)) return 'STOPPED';
             if (forced === 'REDIRECT') return markRedirect(vid);
@@ -2289,7 +3064,7 @@
                 if (!isRunCurrent(runId)) return 'STOPPED';
                 Metrics.bump('scenario.B.rejectForced.ok');
                 State.incSentCount();
-                log('Отклик отправлен (форс, предупреждение об отказе).');
+                log(I18n.t('logs.scenarioBForcedSent'));
                 returnToList(vid, { markProcessed: true, runId });
                 return 'OK';
             }
@@ -2299,11 +3074,11 @@
         Metrics.bump('scenario.B.noConfirm' + (reason ? '.' + reason : ''));
         captureResponseDom('scenarioB-no-confirm');
         if (reason === 'resume-hidden') {
-            log('Отклик заблокирован: скрыта видимость резюме. Измените видимость резюме в настройках hh.ru, иначе часть откликов не проходит.', true);
+            log(I18n.t('logs.blockedResumeHidden'), true);
         } else if (reason === 'reject-warning') {
-            log('Вакансия с предупреждением скорее всего, отказ - отклик не подтверждён.', true);
+            log(I18n.t('logs.blockedRejectWarning'), true);
         } else {
-            log('Письмо отправлено, подтверждение не получено.', true);
+            log(I18n.t('logs.letterSentNoConfirm'), true);
         }
         // Не теряем такие вакансии - сохраняем для ручной обработки.
         const saved = saveCurrentForManual(vid, reason || 'no-confirm');
@@ -2323,7 +3098,7 @@
         if (isResponseConfirmed()) {
             if (!isRunCurrent(runId)) return 'STOPPED';
             Metrics.bump('scenario.timeout.confirmed');
-            log('Отклик подтверждён (есть подтверждение отправки).');
+            log(I18n.t('logs.responseConfirmed'));
             State.incSentCount();
             returnToList(vid, { markProcessed: true, runId });
             return 'OK';
@@ -2335,7 +3110,7 @@
         if (detectAlreadyApplied()) {
             Metrics.bump('scenario.alreadyApplied');
             Stats.bump('skipped');
-            log('На эту вакансию уже откликались ранее - пропускаю.');
+            log(I18n.t('logs.alreadyApplied'));
             returnToList(vid, { markProcessed: true, runId });
             return 'RETURNED';
         }
@@ -2354,7 +3129,7 @@
             if (isResponseConfirmed()) {
                 if (!isRunCurrent(runId)) return 'STOPPED';
                 Metrics.bump('scenario.timeout.confirmed');
-                log('Отклик подтверждён после дополнительной проверки DOM.');
+                log(I18n.t('logs.responseConfirmedExtra'));
                 State.incSentCount();
                 returnToList(vid, { markProcessed: true, runId });
                 return 'OK';
@@ -2364,7 +3139,7 @@
             if (detectAlreadyApplied()) {
                 Metrics.bump('scenario.alreadyApplied');
                 Stats.bump('skipped');
-                log('На эту вакансию уже откликались ранее - пропускаю.');
+                log(I18n.t('logs.alreadyApplied'));
                 returnToList(vid, { markProcessed: true, runId });
                 return 'RETURNED';
             }
@@ -2378,7 +3153,7 @@
             // Доказать успех нельзя: не увеличиваем success, сохраняем для ручной обработки.
             Metrics.bump('scenario.timeout.buttonDisappeared.unconfirmed');
             captureResponseDom('timeout-button-disappeared');
-            log('Кнопка "Откликнуться" исчезла, но подтверждение отправки не получено - сохраняю для ручной обработки.', true);
+            log(I18n.t('logs.btnDisappearedUnconfirmed'), true);
             const blockReason = detectModalBlockReason();
             const saved = saveCurrentForManual(vid, blockReason || 'button-disappeared-unconfirmed');
             if (!saved) {
@@ -2392,7 +3167,7 @@
         // Кнопка отклика всё ещё на месте и ничего не открылось - вероятно, первый клик не сработал.
         // Пробуем один повторный клик.
         Metrics.bump('scenario.retryClick');
-        log('Окно не открылось - повторный клик по Откликнуться.', true);
+        log(I18n.t('logs.retryClick'), true);
         await actionPause();
         if (!isRunCurrent(runId)) return 'STOPPED';
         const retryClicked = await realisticClick(applyBtn, runId);
@@ -2407,7 +3182,7 @@
             if (!isRunCurrent(runId)) return 'STOPPED';
             Metrics.bump('scenario.retryClick.ok');
             State.incSentCount();
-            log('Отклик отправлен после повторного клика.');
+            log(I18n.t('logs.retryClickSent'));
             returnToList(vid, { markProcessed: true, runId });
             return 'OK';
         }
@@ -2415,7 +3190,7 @@
         // Совсем неопознанный исход - снимок DOM максимально полезен для обновления селекторов.
         Metrics.bump('scenario.timeout.unresolved');
         captureResponseDom('timeout-unresolved');
-        log('Не удалось определить результат отклика - сохраняю для ручной обработки и возвращаюсь.', true);
+        log(I18n.t('logs.timeoutUnresolved'), true);
         const saved = saveCurrentForManual(vid, 'timeout');
         if (!saved) {
             haltForPersistenceFailure(vid);
@@ -2441,7 +3216,7 @@
 
         const t = timings();
         const viewTime = randBetween(t.view[0], t.view[1]);
-        log(`Читаю ~${Math.round(viewTime / 1000)} сек (имитирую просмотр страницы).`);
+        log(I18n.t('logs.readingSim', { sec: Math.round(viewTime / 1000) }));
         await simulateReading(viewTime, runId);
 
         await actionPause();
@@ -2499,7 +3274,7 @@
                 return handleScenarioB(vid, runId);
             case 'SCENARIO_C':
                 if (!isRunCurrent(runId)) return 'STOPPED';
-                log('Сценарий В: прямой отклик - резюме отправлено.');
+                log(I18n.t('logs.scenarioC'));
                 State.incSentCount();
                 returnToList(vid, { markProcessed: true, runId });
                 return 'OK';
@@ -2518,7 +3293,7 @@
             const card = getVacancyCard(btn);
             const vacLink = (card && query('vacancyLink', card)) || (card && q('a[href*="/vacancy/"]', card));
             if (!vacLink) {
-                log('Не найден селектор ссылки вакансии. Проверьте структуру карточки.', true);
+                log(I18n.t('logs.noLinkSelector'), true);
                 return 'ERROR_NO_LINK';
             }
             return openVacancyFromList(vacLink, runId);
@@ -2565,9 +3340,9 @@
         if (!acquired) {
             if (runId === currentRunId) {
                 isLoopActive = false;
-                log('Запуск отменён: в другой вкладке уже запущен процесс (instance lock).', true);
+                log(I18n.t('logs.tabBusy'), true);
                 State.setRunning(false);
-                setStatus('error', 'Занято другой вкладкой');
+                setStatus('error', 'status.busyTab');
             }
             return;
         }
@@ -2576,7 +3351,7 @@
         if (!wasRunning) {
             State.resetSentCount();
             Stats.reset();
-            log(`Новый запуск: счётчик откликов сброшен. Режим - ${timings().label}.`);
+            log(I18n.t('logs.newRun', { mode: presetLabel(config.preset) }));
         }
 
         const finishRun = (statusKey, msg) => {
@@ -2594,31 +3369,31 @@
         try {
             // Лимит уже достигнут - завершаем прогон.
             if (State.getSentCount() >= config.limit) {
-                finishRun('done', `Лимит достигнут (${config.limit}). Работа завершена.`);
+                finishRun('done', I18n.t('logs.limitReached', { limit: config.limit }));
                 return;
             }
 
             // Если на странице формы отклика - управление у watchdog/submitResponsePage
             if (Page.isResponseForm()) {
                 isLoopActive = false;
-                log('На странице отклика - управление у обработчика формы.');
+                log(I18n.t('logs.onResponsePage'));
                 return;
             }
 
             // Если уже на странице вакансии - обрабатываем её напрямую.
             if (Page.isVacancy()) {
-                log('На странице вакансии - продолжаю обработку тут.');
+                log(I18n.t('logs.onVacancyPage'));
                 const res = await processVacancy(null, runId);
                 if (runId !== currentRunId) return;
                 if (res === 'STOPPED' || stopSignal) {
-                    finishRun('stopped', 'Остановлено пользователем во время обработки вакансии.');
+                    finishRun('stopped', I18n.t('logs.stoppedDuringVacancy'));
                     return;
                 }
                 // Капча: haltForCaptcha уже снял флаги, освободил лок и выставил статус - просто выходим.
                 if (res === 'CAPTCHA') { isLoopActive = false; return; }
                 // OK / REDIRECT / RETURNED: навигация или watchdog продолжат цикл - флаг running сохраняем.
                 isLoopActive = false;
-                setStatus('running', res === 'OK' ? 'Возврат к списку...' : 'Ожидание возврата...');
+                setStatus('running', res === 'OK' ? 'status.returningToList' : 'status.waitingToReturn');
                 return;
             }
 
@@ -2630,12 +3405,12 @@
                 return !processed.has(getVacancyID(b));
             });
 
-            log(`Найдено вакансий: ${allBtns.length}. Новых к обработке: ${targets.length}. Отправлено: ${State.getSentCount()}/${config.limit}.`);
+            log(I18n.t('logs.vacanciesFound', { total: allBtns.length, targets: targets.length, sent: State.getSentCount(), limit: config.limit }));
 
             for (const btn of targets) {
                 if (stopSignal || runId !== currentRunId) break;
                 if (State.getSentCount() >= config.limit) {
-                    finishRun('done', `Лимит достигнут (${config.limit}). Работа завершена.`);
+                    finishRun('done', I18n.t('logs.limitReached', { limit: config.limit }));
                     return;
                 }
                 if (State.touchInstanceLock(TAB_ID) !== 'OWNED') {
@@ -2643,7 +3418,7 @@
                     return;
                 }
                 if (!document.body.contains(btn)) {
-                    log('Кнопка исчезла из DOM - перезапускаю поиск.', true);
+                    log(I18n.t('logs.buttonDisappeared'), true);
                     break;
                 }
 
@@ -2658,7 +3433,7 @@
                 if (runId !== currentRunId) return;
 
                 if (result === 'STOPPED' || stopSignal) {
-                    finishRun('stopped', 'Обработка остановлена пользователем.');
+                    finishRun('stopped', I18n.t('logs.stoppedProcessing'));
                     return;
                 } else if (result === 'CAPTCHA') {
                     // haltForCaptcha уже остановил прогон и выставил статус.
@@ -2666,30 +3441,30 @@
                     return;
                 } else if (result === 'NAVIGATED') {
                     // Перешли на страницу вакансии - завершаем цикл, флаг running оставляем для авто-старта.
-                    log('Переход на страницу вакансии - завершаю цикл для корректной навигации.');
+                    log(I18n.t('logs.navigatingVacancy'));
                     isLoopActive = false;
                     return;
                 } else if (result === 'REDIRECT') {
-                    log('Редирект/внешний тест. Ожидаю возврат через watchdog.', true);
+                    log(I18n.t('logs.redirectWaiting'), true);
                     isLoopActive = false;
-                    setStatus('running', 'Ожидание возврата...');
+                    setStatus('running', 'status.waitingToReturn');
                     return;
                 } else {
                     // ERROR_NO_LINK / ERROR_NO_HREF и т.п. - пропускаем эту карточку и продолжаем.
-                    log(`Пропускаю вакансию (код: ${result}).`, true);
+                    log(I18n.t('logs.skippingCode', { code: result }), true);
                 }
             }
 
             if (stopSignal || runId !== currentRunId) {
-                finishRun('stopped', 'Обработка остановлена пользователем.');
+                finishRun('stopped', I18n.t('logs.stoppedProcessing'));
                 return;
             }
             if (!Page.isResponseForm()) {
-                finishRun('done', `Работа завершена. Отправлено всего: ${State.getSentCount()}.`);
+                finishRun('done', I18n.t('logs.runCompleted', { count: State.getSentCount() }));
             }
         } catch (e) {
             console.warn('[applomat] startLoop error', e);
-            finishRun('error', 'Ошибка в главном цикле: ' + (e && e.message ? e.message : e));
+            finishRun('error', I18n.t('logs.mainLoopError', { err: (e && e.message ? e.message : e) }));
         }
     }
 
@@ -2707,7 +3482,7 @@
         State.setRunning(false);
         setStatus('stopped');
         State.releaseInstanceLock(TAB_ID);
-        log('Остановлено пользователем.');
+        log(I18n.t('logs.stoppedByUser'));
     }
 
     // Обнаружение капчи / анти-бот проверки hh.ru. Если она появилась, прогон надо
@@ -2745,8 +3520,8 @@
         isLoopActive = false;
         State.setRunning(false);
         State.releaseInstanceLock(TAB_ID);
-        setStatus('error', 'Обнаружена капча — остановлено');
-        log('Обнаружена проверка «я не робот» / анти-бот hh.ru. Прогон остановлен: решите капчу вручную и запустите заново.', true);
+        setStatus('error', 'status.captchaStopped');
+        log(I18n.t('logs.captchaHalt'), true);
     }
 
     // Остановка из-за потери межвкладочного instance lock (другая вкладка перехватила лок после засыпания/зависания).
@@ -2764,8 +3539,8 @@
         }
         isLoopActive = false;
         State.setRunning(false);
-        setStatus('error', 'Занято другой вкладкой');
-        log('Работа остановлена: межвкладочный instance lock перешёл к другой вкладке.', true);
+        setStatus('error', 'status.busyTab');
+        log(I18n.t('logs.instanceLockLost'), true);
     }
 
     // Остановка из-за сбоя сохранения в список для ручного отклика (Manual Queue).
@@ -2784,8 +3559,8 @@
         isLoopActive = false;
         State.setRunning(false);
         State.releaseInstanceLock(TAB_ID);
-        setStatus('error', 'Сбой сохранения Manual Queue');
-        log(`Критический сбой хранилища: не удалось сохранить вакансию ${vid || ''} в список для ручного отклика. Автоматизация остановлена во избежание потери данных.`, true);
+        setStatus('error', 'status.storageFailed');
+        log(I18n.t('logs.persistenceFailure', { vid: vid || '' }), true);
     }
 
     // Watchdog: следит за URL. Если попали на страницу отклика/теста - обрабатываем её;
@@ -2842,7 +3617,7 @@
                 if (handlingResponsePage) return; // уже обрабатываем эту страницу
                 handlingResponsePage = true;
                 Metrics.bump('page.response.detected');
-                log('Открылась страница отклика (не тест) - обрабатываю.');
+                log(I18n.t('logs.onResponsePage'));
                 if (currentRunId === 0) currentRunId = 1;
                 submitResponsePage(vid, backUrl, currentRunId, trapToken); // async: сам заполнит/отправит и вернёт к списку
                 return;
@@ -2851,7 +3626,7 @@
             // Настоящий тест/анкета - авто-ответить не можем: сохраняем для ручного отклика.
             Metrics.bump('scenario.questions.watchdog');
             captureResponseDom('questions-page');
-            log('Попали на тест/анкету с вопросами. Сохраняю для ручного отклика и возвращаюсь.', true);
+            log(I18n.t('logs.questionsPage'), true);
 
             let saved = false;
             try {
@@ -2865,20 +3640,20 @@
                 const res = State.addManualEntry(entry);
                 if (res === 'ADDED') {
                     Stats.bump('manual');
-                    log(`Сохранена вакансия для ручного отклика: ${entry.vid}`);
+                    log(I18n.t('logs.manualSaved', { note: '', vid: entry.vid }));
                     try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
                     saved = true;
                 } else if (res === 'EXISTS' || res === 'UPDATED') {
-                    log(`Вакансия уже в списке для ручного отклика: ${entry.vid}`);
+                    log(I18n.t('logs.manualAlready', { note: '', vid: entry.vid }));
                     try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
                     saved = true;
                 } else {
-                    log(`Ошибка сохранения вакансии в ручной список (сбой хранилища): ${entry.vid}`, true);
+                    log(I18n.t('logs.manualSaveFailed', { note: '', vid: entry.vid }), true);
                     saved = false;
                 }
             } catch (e) {
                 console.warn('[applomat] save manual entry error', e);
-                log(`Ошибка сохранения вакансии в ручной список: ${vid}`, true);
+                log(I18n.t('logs.manualSaveFailed', { note: '', vid }), true);
                 saved = false;
             }
 
@@ -2888,7 +3663,7 @@
                     markAliasProcessed(vid);
                     State.clearLastAttemptID();
                 } else {
-                    log('Не удалось определить ID вакансии на странице с вопросами.', true);
+                    log(I18n.t('logs.noVidOnQuestions'), true);
                 }
 
                 State.setF5Needed(); // после возвращения нужно обновить список
@@ -2900,7 +3675,7 @@
                 const timerRunId = currentRunId;
                 setTimeout(() => {
                     if (isRunCurrent(timerRunId) && Page.isResponseForm()) {
-                        log('Двухшаговый возврат не сработал. Перехожу на список вакансий.', true);
+                        log(I18n.t('logs.twoStepBackFailed'), true);
                         window.location.href = backUrl;
                     }
                 }, 1200);
@@ -2917,7 +3692,7 @@
             const backOnList = Page.isSearchList()
                 || (!Page.isVacancy() && !Page.isResponseForm() && query('applyBtn'));
             if (State.isF5Needed() && backOnList) {
-                log('Возврат выполнен. Перезагружаю страницу, чтобы обновить список вакансий...');
+                log(I18n.t('logs.returnedReloading'));
                 State.clearF5Flag();
                 window.location.reload();
             }
@@ -3062,6 +3837,24 @@
         }
         .ar-sub{ font-size:11px; font-weight:500; color:var(--ink-3); }
         .ar-header-right{ display:flex; align-items:center; gap:6px; flex:0 1 auto; min-width:0; }
+        .ar-lang-switcher{
+            display:inline-flex; align-items:center; gap:2px;
+            background:var(--bg-2); border:1px solid var(--line);
+            border-radius:var(--r-sm); padding:1px 2px; flex:none;
+        }
+        .ar-lang-btn{
+            border:none; background:transparent; font-family:inherit;
+            font-size:10px; font-weight:700; color:var(--ink-3);
+            padding:2px 4px; border-radius:4px; cursor:pointer; line-height:1;
+            transition:background .12s, color .12s;
+        }
+        .ar-lang-btn:hover{ color:var(--ink); }
+        .ar-lang-btn.is-active{
+            background:var(--card); color:var(--ink);
+            box-shadow:0 1px 2px rgba(15,23,42,.08);
+        }
+        .ar-lang-btn:focus-visible{ outline:2px solid var(--hh-blue); outline-offset:1px; }
+        .ar-lang-sep{ color:var(--line); font-size:9px; user-select:none; }
 
         /* Статус-пилюля */
         .ar-status{
@@ -3406,8 +4199,9 @@
     // ─────────────────────────────────────────────────────────────
 
     function buildPanelHtml() {
+        const lang = I18n.getLanguage();
         const presetButtons = Object.entries(PRESETS).map(([key, p]) =>
-            `<button type="button" class="ar-seg-btn${key === 'turbo' ? ' ar-seg-btn--turbo' : ''}" data-preset="${key}" role="radio" aria-checked="false">${key === 'turbo' ? '<span class="ar-turbo-icon">↯</span> ' : ''}${p.label}</button>`
+            `<button type="button" class="ar-seg-btn${key === 'turbo' ? ' ar-seg-btn--turbo' : ''}" data-preset="${key}" role="radio" aria-checked="false">${key === 'turbo' ? '<span class="ar-turbo-icon">↯</span> ' : ''}<span class="ar-seg-btn-label">${presetLabel(key)}</span></button>`
         ).join('');
 
         return `
@@ -3419,8 +4213,13 @@
                         <span class="ar-sub">v${VERSION}</span>
                     </div>
                     <div class="ar-header-right">
-                        <span id="ar-status-text" class="ar-status ar-status--idle" role="status" aria-live="polite">Ожидание</span>
-                        <button id="ar-minimize-btn" class="ar-icon-btn" title="Свернуть панель" aria-label="Свернуть панель">
+                        <span id="ar-status-text" class="ar-status ar-status--idle" role="status" aria-live="polite">${I18n.t('status.idle')}</span>
+                        <div class="ar-lang-switcher" role="group" aria-label="${I18n.t('panel.langSwitchLabel')}">
+                            <button type="button" class="ar-lang-btn${lang === 'ru' ? ' is-active' : ''}" data-lang="ru" aria-pressed="${lang === 'ru'}">RU</button>
+                            <span class="ar-lang-sep" aria-hidden="true">|</span>
+                            <button type="button" class="ar-lang-btn${lang === 'en' ? ' is-active' : ''}" data-lang="en" aria-pressed="${lang === 'en'}">EN</button>
+                        </div>
+                        <button id="ar-minimize-btn" class="ar-icon-btn" title="${I18n.t('panel.minimizeTitle')}" aria-label="${I18n.t('panel.minimizeTitle')}">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
                         </button>
                     </div>
@@ -3428,29 +4227,29 @@
 
                 <div class="ar-scroll">
                     <section class="ar-card" id="ar-mode-card">
-                        <div class="ar-card-title">Режим работы</div>
-                        <div class="ar-seg" id="ar-preset-seg" role="radiogroup" aria-label="Темп откликов">
+                        <div class="ar-card-title" id="ar-mode-card-title">${I18n.t('panel.modeTitle')}</div>
+                        <div class="ar-seg" id="ar-preset-seg" role="radiogroup" aria-label="${I18n.t('panel.modePaceGroup')}">
                             ${presetButtons}
                             <span class="ar-seg-line" id="ar-seg-line" aria-hidden="true"></span>
                         </div>
                         <div class="ar-preset-hint" id="ar-preset-hint"></div>
                         <div class="ar-row ar-row-limit">
-                            <label class="ar-row-label" for="ar-limit-input">Лимит откликов за запуск</label>
+                            <label class="ar-row-label" id="ar-limit-label" for="ar-limit-input">${I18n.t('panel.limitLabel')}</label>
                             <input type="number" id="ar-limit-input" class="ar-input ar-input-num" min="1" max="500">
                         </div>
                     </section>
 
                     <section class="ar-card">
                         <label class="ar-switch-row" for="ar-use-cover-check">
-                            <span class="ar-card-title" style="margin:0;">Сопроводительное письмо</span>
+                            <span class="ar-card-title" id="ar-cover-card-title" style="margin:0;">${I18n.t('cover.title')}</span>
                             <span class="ar-switch"><input type="checkbox" id="ar-use-cover-check"><i></i></span>
                         </label>
-                        <textarea id="ar-cover-text" class="ar-textarea" rows="2" maxlength="5000" placeholder="Текст сопроводительного письма..."></textarea>
+                        <textarea id="ar-cover-text" class="ar-textarea" rows="2" maxlength="5000" placeholder="${I18n.t('cover.placeholder')}"></textarea>
                         <div class="ar-cover-footer">
                             <span id="ar-cover-counter" class="ar-cover-counter">0 / 5000</span>
                         </div>
-                        <label class="ar-switch-row ar-switch-row-sub" for="ar-apply-reject-check" title="Дожимать отклик на вакансиях, где hh предупреждает о вероятном отказе">
-                            <span class="ar-row-label" style="font-size:12px;">Откликаться несмотря на предупреждение</span>
+                        <label class="ar-switch-row ar-switch-row-sub" id="ar-apply-reject-wrap" for="ar-apply-reject-check" title="${I18n.t('cover.rejectWarningTitle')}">
+                            <span class="ar-row-label" id="ar-apply-reject-label" style="font-size:12px;">${I18n.t('cover.rejectWarningLabel')}</span>
                             <span class="ar-switch"><input type="checkbox" id="ar-apply-reject-check"><i></i></span>
                         </label>
                     </section>
@@ -3458,20 +4257,20 @@
                     <section class="ar-card">
                         <button id="ar-start-btn" class="ar-btn ar-btn-primary ar-btn-cta">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                            <span>Запустить отклики</span>
+                            <span id="ar-start-btn-text">${I18n.t('panel.startBtn')}</span>
                         </button>
                         <button id="ar-stop-btn" class="ar-btn ar-btn-danger ar-btn-cta" style="display:none;">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-                            <span>Остановить (Стоп)</span>
+                            <span id="ar-stop-btn-text">${I18n.t('panel.stopBtn')}</span>
                         </button>
                         <div class="ar-util-row">
-                            <button id="ar-reset-history" class="ar-btn ar-btn-tertiary ar-btn-sm ar-util-btn" title="Сбросить историю отправленных откликов и статистику">
+                            <button id="ar-reset-history" class="ar-btn ar-btn-tertiary ar-btn-sm ar-util-btn" title="${I18n.t('panel.resetHistoryTitle')}">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                                <span>Сбросить историю</span>
+                                <span id="ar-reset-history-text">${I18n.t('panel.resetHistory')}</span>
                             </button>
-                            <button id="ar-health-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-util-btn" title="Открыть диагностику и лог">
+                            <button id="ar-health-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-util-btn" title="${I18n.t('panel.diagnosticsTitle')}">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-                                <span>Диагностика</span>
+                                <span id="ar-health-btn-text">${I18n.t('panel.diagnostics')}</span>
                                 <span id="ar-health-badge" class="ar-badge-count" style="display:none;"></span>
                             </button>
                         </div>
@@ -3479,26 +4278,26 @@
 
                     <section class="ar-card">
                         <div class="ar-card-head">
-                            <div class="ar-card-title">Статистика запуска</div>
-                            <span id="ar-stat-progress" class="ar-badge" title="Отправлено откликов из лимита за запуск">0 / 0</span>
+                            <div class="ar-card-title" id="ar-stats-card-title">${I18n.t('panel.statsTitle')}</div>
+                            <span id="ar-stat-progress" class="ar-badge" title="${I18n.t('panel.statsProgressTitle')}">0 / 0</span>
                         </div>
                         <div class="ar-progress" aria-hidden="true"><i id="ar-progress-fill"></i></div>
                         <div class="ar-stats">
                             <div class="ar-stat" id="ar-stat-tile-attempts">
                                 <span class="ar-stat-num" id="ar-stat-attempts">0</span>
-                                <span class="ar-stat-cap">Попыток</span>
+                                <span class="ar-stat-cap" id="ar-stat-cap-attempts">${I18n.t('panel.statAttempts')}</span>
                             </div>
                             <div class="ar-stat" id="ar-stat-tile-success">
                                 <span class="ar-stat-num" id="ar-stat-success">0</span>
-                                <span class="ar-stat-cap">Успешно</span>
+                                <span class="ar-stat-cap" id="ar-stat-cap-success">${I18n.t('panel.statSuccess')}</span>
                             </div>
                             <div class="ar-stat" id="ar-stat-tile-manual">
                                 <span class="ar-stat-num" id="ar-stat-manual">0</span>
-                                <span class="ar-stat-cap">В ручной</span>
+                                <span class="ar-stat-cap" id="ar-stat-cap-manual">${I18n.t('panel.statManual')}</span>
                             </div>
                             <div class="ar-stat" id="ar-stat-tile-skip">
                                 <span class="ar-stat-num" id="ar-stat-skipped">0</span>
-                                <span class="ar-stat-cap">Пропущено</span>
+                                <span class="ar-stat-cap" id="ar-stat-cap-skipped">${I18n.t('panel.statSkipped')}</span>
                             </div>
                         </div>
                     </section>
@@ -3506,12 +4305,12 @@
                     <section class="ar-card">
                         <div class="ar-card-head">
                             <div class="ar-title-with-count">
-                                <span class="ar-card-title">Ручная очередь</span>
-                                <span id="ar-manual-count" class="ar-badge" data-has="0" title="Сохранено вакансий для ручного отклика">0</span>
+                                <span class="ar-card-title" id="ar-manual-card-title">${I18n.t('panel.manualTitle')}</span>
+                                <span id="ar-manual-count" class="ar-badge" data-has="0" title="${I18n.t('panel.manualCountTitle')}">0</span>
                             </div>
                             <div style="display:flex; gap:6px;">
-                                <button id="ar-export-manual" class="ar-btn ar-btn-soft ar-btn-sm">Экспорт</button>
-                                <button id="ar-clear-manual" class="ar-btn ar-btn-soft ar-btn-sm">Очистить</button>
+                                <button id="ar-export-manual" class="ar-btn ar-btn-soft ar-btn-sm">${I18n.t('panel.manualExport')}</button>
+                                <button id="ar-clear-manual" class="ar-btn ar-btn-soft ar-btn-sm">${I18n.t('panel.manualClear')}</button>
                             </div>
                         </div>
                         <div id="ar-manual-list" class="ar-manual"></div>
@@ -3522,40 +4321,40 @@
             <div id="ar-view-diag" class="ar-view ar-view--diag" style="display:none;">
                 <div class="ar-header">
                     <div class="ar-diag-nav">
-                        <button id="ar-diag-back-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-btn-back" type="button" title="Вернуться в основную панель">
+                        <button id="ar-diag-back-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-btn-back" type="button" title="${I18n.t('diag.backTitle')}">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
-                            <span>Назад</span>
+                            <span id="ar-diag-back-text">${I18n.t('diag.backBtn')}</span>
                         </button>
-                        <span class="ar-diag-view-title">Диагностика</span>
+                        <span class="ar-diag-view-title" id="ar-diag-view-title">${I18n.t('diag.title')}</span>
                     </div>
                     <div class="ar-header-right">
-                        <button id="ar-diag-full-save" class="ar-btn ar-btn-soft ar-btn-sm" type="button" title="Скачать полный диагностический отчет">Скачать лог</button>
-                        <button id="ar-minimize-diag-btn" class="ar-icon-btn" title="Свернуть панель" aria-label="Свернуть панель">
+                        <button id="ar-diag-full-save" class="ar-btn ar-btn-soft ar-btn-sm" type="button" title="${I18n.t('diag.downloadLogTitle')}">${I18n.t('diag.downloadLog')}</button>
+                        <button id="ar-minimize-diag-btn" class="ar-icon-btn" title="${I18n.t('panel.minimizeTitle')}" aria-label="${I18n.t('panel.minimizeTitle')}">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
                         </button>
                     </div>
                 </div>
                 <div class="ar-diag-body">
                     <div class="ar-diag-stat-row">
-                        <span id="ar-diag-full-stat" class="ar-diag-stat">0 ошибок · 0 записей</span>
+                        <span id="ar-diag-full-stat" class="ar-diag-stat">0</span>
                     </div>
                     <div class="ar-diag-toolbar">
-                        <button id="ar-diag-full-check" class="ar-btn ar-btn-soft ar-btn-sm" type="button" title="Проверить селекторы">Проверить селекторы</button>
+                        <button id="ar-diag-full-check" class="ar-btn ar-btn-soft ar-btn-sm" type="button" title="${I18n.t('diag.checkSelectors')}">${I18n.t('diag.checkSelectors')}</button>
                         <label class="ar-inline-check" for="ar-diag-full-errors-only">
                             <input type="checkbox" id="ar-diag-full-errors-only">
-                            <span>Только ошибки</span>
+                            <span id="ar-diag-errors-only-text">${I18n.t('diag.errorsOnly')}</span>
                         </label>
                     </div>
                     <div id="ar-diag-full-box" class="ar-diag-full-box"></div>
                     <div class="ar-diag-footer">
                         <div class="ar-dropdown" id="ar-diag-full-dropdown">
-                            <button id="ar-diag-full-more-btn" class="ar-btn ar-btn-ghost ar-btn-sm" type="button" title="Дополнительные действия">
-                                <span>Дополнительно</span>
+                            <button id="ar-diag-full-more-btn" class="ar-btn ar-btn-ghost ar-btn-sm" type="button" title="${I18n.t('diag.moreTitle')}">
+                                <span id="ar-diag-more-text">${I18n.t('diag.moreBtn')}</span>
                                 <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
                             </button>
                             <div class="ar-dropdown-menu" id="ar-diag-full-menu">
-                                <button id="ar-diag-full-clear-box" class="ar-dropdown-item" type="button">Очистить вид</button>
-                                <button id="ar-diag-full-clear-all" class="ar-dropdown-item ar-dropdown-item--danger" type="button">Очистить сохр. лог и метрики</button>
+                                <button id="ar-diag-full-clear-box" class="ar-dropdown-item" type="button">${I18n.t('diag.clearView')}</button>
+                                <button id="ar-diag-full-clear-all" class="ar-dropdown-item ar-dropdown-item--danger" type="button">${I18n.t('diag.clearAll')}</button>
                             </div>
                         </div>
                     </div>
@@ -3595,21 +4394,25 @@
 
         injectPanelStyles();
 
+        const lang = I18n.getLanguage();
+
         // Свёрнутое состояние - вертикальная вкладка applomat
         const toggleBtn = document.createElement('button');
         toggleBtn.id = 'ar-toggle-btn';
         toggleBtn.type = 'button';
+        toggleBtn.setAttribute('lang', lang);
         toggleBtn.innerHTML = `
             <span class="ar-tab-dot" aria-hidden="true"></span>
             <span class="ar-tab-text">applomat</span>
         `;
-        toggleBtn.title = 'Развернуть applomat';
-        toggleBtn.setAttribute('aria-label', 'Развернуть applomat');
+        toggleBtn.title = I18n.t('panel.expandTitle');
+        toggleBtn.setAttribute('aria-label', I18n.t('panel.expandTitle'));
         toggleBtn.style.display = 'none';
         document.body.appendChild(toggleBtn);
 
         const panel = document.createElement('div');
         panel.id = 'ar-main-panel';
+        panel.setAttribute('lang', lang);
         panel.innerHTML = buildPanelHtml();
         document.body.appendChild(panel);
 
@@ -3682,12 +4485,12 @@
 
             if (isReducedMotion) {
                 if (!State.amIRunning() && statusText) {
-                    statusText.textContent = '↯ Турбо включён';
+                    statusText.textContent = I18n.t('status.turboActive');
                     statusText.classList.add('ar-status--turbo-confirm');
                     const tid = setTimeout(() => {
                         if (mySeq !== turboActivationSeq || config?.preset !== 'turbo') return;
                         if (!State.amIRunning() && statusText) {
-                            statusText.textContent = STATUS_TEXT.idle;
+                            setStatus('idle');
                             statusText.classList.remove('ar-status--turbo-confirm');
                         }
                     }, 1000);
@@ -3711,12 +4514,12 @@
             turboBtn?.classList.add('is-activating');
 
             if (!State.amIRunning() && statusText) {
-                statusText.textContent = '↯ Турбо включён';
+                statusText.textContent = I18n.t('status.turboActive');
                 statusText.classList.add('ar-status--turbo-confirm');
                 const confirmTid = setTimeout(() => {
                     if (mySeq !== turboActivationSeq || config?.preset !== 'turbo') return;
                     if (!State.amIRunning() && statusText) {
-                        statusText.textContent = STATUS_TEXT.idle;
+                        setStatus('idle');
                         statusText.classList.remove('ar-status--turbo-confirm');
                     }
                 }, 1000);
@@ -3741,16 +4544,18 @@
                 btn.classList.toggle('is-active', isActive);
                 btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
                 btn.tabIndex = isActive ? 0 : -1;
+                const labelSpan = btn.querySelector('.ar-seg-btn-label');
+                if (labelSpan) labelSpan.textContent = presetLabel(btn.dataset.preset);
             });
-            if (presetHint) presetHint.textContent = (PRESETS[active] || PRESETS[DEFAULT_PRESET]).hint;
+            if (presetHint) presetHint.textContent = presetHintText(active);
         };
+        const presetHintText = (key) => presetHint(key);
 
         const selectPreset = (key, { focus = false } = {}) => {
             if (!PRESETS[key] || config.preset === key) return;
             const wasTurbo = config.preset === 'turbo';
             const isEnteringTurbo = key === 'turbo' && !wasTurbo;
 
-            // Немедленная отмена всех предыдущих эффектов Turbo и таймеров
             cancelTurboActivation();
 
             config.preset = key;
@@ -3762,12 +4567,11 @@
                 setStatus('running');
             }
 
-            // Фирменный эффект активации повышенной мощности Турбо
             if (isEnteringTurbo) {
                 triggerTurboActivation();
             }
 
-            log(`Режим работы: ${key === 'turbo' ? '↯ ' : ''}${PRESETS[config.preset].label}.`);
+            log(I18n.t('logs.modeSet', { mode: (key === 'turbo' ? '↯ ' : '') + presetLabel(config.preset) }));
         };
 
         if (presetSeg) {
@@ -3797,10 +4601,138 @@
             });
             el('ar-limit-input').value = config.limit;
             Settings.save(config);
-            log('Настройки сохранены.');
+            log(I18n.t('logs.settingsSaved'));
         };
         ['ar-cover-text', 'ar-use-cover-check', 'ar-apply-reject-check', 'ar-limit-input']
             .forEach(id => { const node = el(id); if (node) node.addEventListener('change', saveSettings); });
+
+        // ---------- Переключение языка (RU / EN) ----------
+        function refreshLocalizedUI() {
+            const currentLang = I18n.getLanguage();
+            const mainPanel = el('ar-main-panel');
+            if (mainPanel) mainPanel.setAttribute('lang', currentLang);
+            const toggle = el('ar-toggle-btn');
+            if (toggle) {
+                toggle.setAttribute('lang', currentLang);
+                toggle.title = I18n.t('panel.expandTitle');
+                toggle.setAttribute('aria-label', I18n.t('panel.expandTitle'));
+            }
+
+            qa('.ar-lang-btn', mainPanel).forEach(b => {
+                const isActive = b.dataset.lang === currentLang;
+                b.classList.toggle('is-active', isActive);
+                b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            });
+
+            const minBtn = el('ar-minimize-btn');
+            if (minBtn) {
+                minBtn.title = I18n.t('panel.minimizeTitle');
+                minBtn.setAttribute('aria-label', I18n.t('panel.minimizeTitle'));
+            }
+            const minDiagBtn = el('ar-minimize-diag-btn');
+            if (minDiagBtn) {
+                minDiagBtn.title = I18n.t('panel.minimizeTitle');
+                minDiagBtn.setAttribute('aria-label', I18n.t('panel.minimizeTitle'));
+            }
+
+            const modeTitle = el('ar-mode-card-title');
+            if (modeTitle) modeTitle.textContent = I18n.t('panel.modeTitle');
+            const segGroup = el('ar-preset-seg');
+            if (segGroup) segGroup.setAttribute('aria-label', I18n.t('panel.modePaceGroup'));
+            renderPreset();
+            const limitLabel = el('ar-limit-label');
+            if (limitLabel) limitLabel.textContent = I18n.t('panel.limitLabel');
+
+            const coverTitle = el('ar-cover-card-title');
+            if (coverTitle) coverTitle.textContent = I18n.t('cover.title');
+            const coverInput = el('ar-cover-text');
+            if (coverInput) coverInput.placeholder = I18n.t('cover.placeholder');
+            const rejectWrap = el('ar-apply-reject-wrap');
+            if (rejectWrap) rejectWrap.title = I18n.t('cover.rejectWarningTitle');
+            const rejectLabel = el('ar-apply-reject-label');
+            if (rejectLabel) rejectLabel.textContent = I18n.t('cover.rejectWarningLabel');
+
+            const startText = el('ar-start-btn-text');
+            if (startText) startText.textContent = I18n.t('panel.startBtn');
+            const stopText = el('ar-stop-btn-text');
+            if (stopText) stopText.textContent = I18n.t('panel.stopBtn');
+            const resetBtn = el('ar-reset-history');
+            if (resetBtn) resetBtn.title = I18n.t('panel.resetHistoryTitle');
+            const resetText = el('ar-reset-history-text');
+            if (resetText) resetText.textContent = I18n.t('panel.resetHistory');
+            const healthBtn = el('ar-health-btn');
+            if (healthBtn) healthBtn.title = I18n.t('panel.diagnosticsTitle');
+            const healthText = el('ar-health-btn-text');
+            if (healthText) healthText.textContent = I18n.t('panel.diagnostics');
+
+            const statsTitle = el('ar-stats-card-title');
+            if (statsTitle) statsTitle.textContent = I18n.t('panel.statsTitle');
+            const statProg = el('ar-stat-progress');
+            if (statProg) statProg.title = I18n.t('panel.statsProgressTitle');
+            const capAttempts = el('ar-stat-cap-attempts');
+            if (capAttempts) capAttempts.textContent = I18n.t('panel.statAttempts');
+            const capSuccess = el('ar-stat-cap-success');
+            if (capSuccess) capSuccess.textContent = I18n.t('panel.statSuccess');
+            const capManual = el('ar-stat-cap-manual');
+            if (capManual) capManual.textContent = I18n.t('panel.statManual');
+            const capSkip = el('ar-stat-cap-skipped');
+            if (capSkip) capSkip.textContent = I18n.t('panel.statSkipped');
+
+            const manualTitle = el('ar-manual-card-title');
+            if (manualTitle) manualTitle.textContent = I18n.t('panel.manualTitle');
+            const manualCount = el('ar-manual-count');
+            if (manualCount) manualCount.title = I18n.t('panel.manualCountTitle');
+            const exportBtn = el('ar-export-manual');
+            if (exportBtn) exportBtn.textContent = I18n.t('panel.manualExport');
+            const clearManualBtn = el('ar-clear-manual');
+            if (clearManualBtn) clearManualBtn.textContent = I18n.t('panel.manualClear');
+
+            const backBtn = el('ar-diag-back-btn');
+            if (backBtn) backBtn.title = I18n.t('diag.backTitle');
+            const backText = el('ar-diag-back-text');
+            if (backText) backText.textContent = I18n.t('diag.backBtn');
+            const diagViewTitle = el('ar-diag-view-title');
+            if (diagViewTitle) diagViewTitle.textContent = I18n.t('diag.title');
+            const diagSaveBtn = el('ar-diag-full-save');
+            if (diagSaveBtn) {
+                diagSaveBtn.title = I18n.t('diag.downloadLogTitle');
+                diagSaveBtn.textContent = I18n.t('diag.downloadLog');
+            }
+            const diagCheckBtn = el('ar-diag-full-check');
+            if (diagCheckBtn) {
+                diagCheckBtn.title = I18n.t('diag.checkSelectors');
+                diagCheckBtn.textContent = I18n.t('diag.checkSelectors');
+            }
+            const errorsOnlyText = el('ar-diag-errors-only-text');
+            if (errorsOnlyText) errorsOnlyText.textContent = I18n.t('diag.errorsOnly');
+            const diagMoreBtn = el('ar-diag-full-more-btn');
+            if (diagMoreBtn) diagMoreBtn.title = I18n.t('diag.moreTitle');
+            const diagMoreText = el('ar-diag-more-text');
+            if (diagMoreText) diagMoreText.textContent = I18n.t('diag.moreBtn');
+            const diagClearBox = el('ar-diag-full-clear-box');
+            if (diagClearBox) diagClearBox.textContent = I18n.t('diag.clearView');
+            const diagClearAll = el('ar-diag-full-clear-all');
+            if (diagClearAll) diagClearAll.textContent = I18n.t('diag.clearAll');
+
+            setStatus(currentStatusState.statusKey, currentStatusState.customKeyOrText, currentStatusState.params);
+            renderStats();
+            renderManualList();
+            updateDiagCount();
+            if (el('ar-view-diag')?.style.display !== 'none') {
+                renderFullDiag();
+            }
+        }
+
+        qa('.ar-lang-btn', panel).forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const targetLang = btn.dataset.lang;
+                if (!targetLang || targetLang === I18n.getLanguage()) return;
+                I18n.setLanguage(targetLang);
+                refreshLocalizedUI();
+                log(I18n.t('logs.modeSet', { mode: presetLabel(config.preset) }));
+            });
+        });
 
         // ---------- Экран диагностики ----------
         const openFullDiag = () => {
@@ -3832,7 +4764,7 @@
                 if (filterErr && !isErr) return;
                 const line = document.createElement('div');
                 line.className = 'ar-log-line' + (isErr ? ' ar-log-err' : '');
-                const time = new Date(item.t || Date.now()).toLocaleTimeString('ru-RU');
+                const time = I18n.formatTime(item.t || Date.now());
                 line.textContent = `[${time}] ${item.msg}`;
                 line.dataset.error = isErr ? '1' : '0';
                 fullBox.appendChild(line);
@@ -3876,14 +4808,8 @@
             const total = all.length;
             const errors = all.filter(e => e.lvl === 'ERR').length;
 
-            const formatPlural = (n, one, few, many) => {
-                const mod10 = n % 10;
-                const mod100 = n % 100;
-                if (mod100 >= 11 && mod100 <= 19) return `${n} ${many}`;
-                if (mod10 === 1) return `${n} ${one}`;
-                if (mod10 >= 2 && mod10 <= 4) return `${n} ${few}`;
-                return `${n} ${many}`;
-            };
+            const errText = I18n.plural(errors, 'error');
+            const recText = I18n.plural(total, 'record');
 
             const badge = el('ar-health-badge');
             const healthBtn = el('ar-health-btn');
@@ -3892,23 +4818,20 @@
                     badge.textContent = errors;
                     badge.style.display = 'inline-flex';
                     if (healthBtn) {
-                        const errText = formatPlural(errors, 'ошибка', 'ошибки', 'ошибок');
-                        healthBtn.title = `${errText} в диагностическом логе · Открыть диагностику`;
+                        healthBtn.title = I18n.t('diag.badgeTitle', { errText });
                     }
                 } else {
                     badge.textContent = '';
                     badge.style.display = 'none';
                     if (healthBtn) {
-                        healthBtn.title = 'Открыть диагностику и лог';
+                        healthBtn.title = I18n.t('diag.badgeTitleClean');
                     }
                 }
             }
 
             const fullStat = el('ar-diag-full-stat');
             if (fullStat) {
-                const errText = formatPlural(errors, 'ошибка', 'ошибки', 'ошибок');
-                const recText = formatPlural(total, 'запись', 'записи', 'записей');
-                fullStat.textContent = `${errText} · ${recText}`;
+                fullStat.textContent = I18n.t('diag.statSummary', { errText, recText });
             }
         };
         window._applomat_updateDiagBadge = window._hh_ar_updateDiagBadge = updateDiagCount;
@@ -3932,13 +4855,13 @@
 
         // Очистка постоянного лога
         const handleClearAllDiag = () => {
-            if (confirm('Очистить сохранённый диагностический лог и метрики? (выгрузите файл перед очисткой, если нужен для анализа)')) {
+            if (confirm(I18n.t('confirm.clearDiag'))) {
                 DiagLog.clear();
                 Metrics.clear();
                 const fullBox = el('ar-diag-full-box');
                 if (fullBox) fullBox.innerHTML = '';
                 updateDiagCount();
-                log('Сохранённый диагностический лог и метрики очищены.');
+                log(I18n.t('logs.diagCleared'));
                 el('ar-diag-full-dropdown')?.classList.remove('is-open');
             }
         };
@@ -3950,12 +4873,12 @@
         el('ar-stop-btn').onclick = stopRun;
 
         el('ar-reset-history').onclick = () => {
-            if (confirm('Сбросить историю откликов, лимит и статистику текущего запуска?')) {
+            if (confirm(I18n.t('confirm.resetHistory'))) {
                 State.clearProcessedIDs();
                 State.resetSentCount();
                 Stats.reset();
                 renderStats();
-                log('История откликов, счётчик и статистика сброшены.');
+                log(I18n.t('logs.historyReset'));
             }
         };
 
@@ -3965,10 +4888,10 @@
 
         // ---------- Ручная очередь (без вложенного скролла) ----------
         el('ar-clear-manual').onclick = () => {
-            if (confirm('Очистить сохранённый список вакансий ручной очереди?')) {
+            if (confirm(I18n.t('confirm.clearManual'))) {
                 State.clearManualList();
                 renderManualList();
-                log('Список ручной очереди очищен.');
+                log(I18n.t('logs.manualCleared'));
             }
         };
 
@@ -3988,7 +4911,7 @@
             if (!list || !list.length) {
                 const empty = document.createElement('div');
                 empty.className = 'ar-empty';
-                empty.textContent = 'Очередь пуста · Вакансии с вопросами сохраняются сюда автоматически';
+                empty.textContent = I18n.t('panel.manualEmpty');
                 container.appendChild(empty);
                 return;
             }
@@ -4004,7 +4927,7 @@
 
                 const left = document.createElement('div');
                 left.className = 'ar-manual-main';
-                const time = new Date(Number(item?.ts) || Date.now()).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+                const time = I18n.formatTime(Number(item?.ts) || Date.now(), { hour: '2-digit', minute: '2-digit' });
 
                 const head = document.createElement('div');
                 head.className = 'ar-manual-meta';
@@ -4021,12 +4944,12 @@
                 const titleEl = document.createElement('div');
                 titleEl.className = 'ar-manual-title';
                 const itemTitle = prettifyTitle(item?.title);
-                if (itemTitle) {
+                if (itemTitle && itemTitle !== 'Название недоступно' && itemTitle !== 'Title unavailable') {
                     titleEl.textContent = itemTitle;
                     titleEl.title = itemTitle;
                 } else {
                     titleEl.classList.add('is-empty');
-                    titleEl.textContent = 'Название недоступно';
+                    titleEl.textContent = I18n.t('panel.manualNoTitle');
                 }
 
                 left.appendChild(head);
@@ -4037,9 +4960,9 @@
 
                 const openBtn = document.createElement('button');
                 openBtn.className = 'ar-btn ar-btn-open';
-                openBtn.innerHTML = '<span>Открыть</span><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+                openBtn.innerHTML = `<span>${I18n.t('panel.manualOpen')}</span><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
                 openBtn.disabled = !safeUrl;
-                openBtn.title = safeUrl ? 'Открыть вакансию в новой вкладке' : 'Ссылка не прошла проверку безопасности';
+                openBtn.title = safeUrl ? I18n.t('panel.manualOpenTitle') : I18n.t('panel.manualUnsafeUrl');
                 openBtn.onclick = () => {
                     if (safeUrl) window.open(safeUrl, '_blank', 'noopener,noreferrer');
                 };
@@ -4047,7 +4970,7 @@
                 const removeBtn = document.createElement('button');
                 removeBtn.className = 'ar-btn ar-icon-del';
                 removeBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
-                removeBtn.title = 'Удалить из очереди';
+                removeBtn.title = I18n.t('panel.manualRemoveTitle');
                 removeBtn.onclick = () => { State.removeManualEntry(item.vid); renderManualList(); };
 
                 actions.appendChild(openBtn);
@@ -4061,8 +4984,8 @@
             if (totalCount > PREVIEW_LIMIT) {
                 const moreBtn = document.createElement('button');
                 moreBtn.className = 'ar-btn ar-btn-soft ar-queue-more-btn';
-                moreBtn.innerHTML = `<span>Открыть очередь (${totalCount}) →</span>`;
-                moreBtn.title = 'Открыть интерактивную страницу со всей очередью вакансий';
+                moreBtn.innerHTML = `<span>${I18n.t('panel.manualMore', { count: totalCount })}</span>`;
+                moreBtn.title = I18n.t('panel.manualMoreTitle');
                 moreBtn.onclick = exportManualListHtml;
                 container.appendChild(moreBtn);
             }
@@ -4137,92 +5060,92 @@
 
         const checks = [
             {
-                name: 'Кнопка отклика (list)',
+                name: I18n.t('health.applyBtnList'),
                 sel: SELECTORS.applyBtn,
                 key: 'applyBtn',
                 evaluate: () => {
                     if (Page.isSearch()) {
                         return hasSearchCards()
                             ? { required: true }
-                            : { required: false, reason: 'не применимо — список вакансий пуст' };
+                            : { required: false, reason: I18n.t('health.reasons.emptySearch') };
                     }
-                    if (Page.isVacancy()) return { required: false, reason: 'не применимо на странице вакансии' };
-                    if (Page.isResponseForm()) return { required: false, reason: 'не применимо на странице формы отклика' };
-                    return { required: false, reason: 'не применимо на текущей странице' };
+                    if (Page.isVacancy()) return { required: false, reason: I18n.t('health.reasons.onVacancyPage') };
+                    if (Page.isResponseForm()) return { required: false, reason: I18n.t('health.reasons.onResponsePage') };
+                    return { required: false, reason: I18n.t('health.reasons.notApplicable') };
                 }
             },
             {
-                name: 'Кнопка отклика (vacancy page)',
+                name: I18n.t('health.vacancyApply'),
                 sel: SELECTORS.vacancyApply,
                 key: 'vacancyApply',
                 evaluate: () => {
                     if (Page.isVacancy()) {
                         return detectAlreadyApplied()
-                            ? { required: false, reason: 'не требуется — уже откликались' }
+                            ? { required: false, reason: I18n.t('health.reasons.alreadyApplied') }
                             : { required: true };
                     }
-                    if (Page.isSearch()) return { required: false, reason: 'не применимо на странице поиска' };
-                    if (Page.isResponseForm()) return { required: false, reason: 'не применимо на странице формы отклика' };
-                    return { required: false, reason: 'не применимо на текущей странице' };
+                    if (Page.isSearch()) return { required: false, reason: I18n.t('health.reasons.onSearchPage') };
+                    if (Page.isResponseForm()) return { required: false, reason: I18n.t('health.reasons.onResponsePage') };
+                    return { required: false, reason: I18n.t('health.reasons.notApplicable') };
                 }
             },
             {
-                name: 'Ссылка вакансии (card)',
+                name: I18n.t('health.vacancyLink'),
                 sel: SELECTORS.vacancyLink,
                 key: 'vacancyLink',
                 evaluate: () => {
                     if (Page.isSearch()) {
                         return hasSearchCards()
                             ? { required: true }
-                            : { required: false, reason: 'не применимо — список вакансий пуст' };
+                            : { required: false, reason: I18n.t('health.reasons.emptySearch') };
                     }
-                    if (Page.isVacancy()) return { required: false, reason: 'не применимо на странице вакансии' };
-                    if (Page.isResponseForm()) return { required: false, reason: 'не применимо на странице формы отклика' };
-                    return { required: false, reason: 'не применимо на текущей странице' };
+                    if (Page.isVacancy()) return { required: false, reason: I18n.t('health.reasons.onVacancyPage') };
+                    if (Page.isResponseForm()) return { required: false, reason: I18n.t('health.reasons.onResponsePage') };
+                    return { required: false, reason: I18n.t('health.reasons.notApplicable') };
                 }
             },
             {
-                name: 'Прикрепить письмо (сценарий А)',
+                name: I18n.t('health.attachCoverBtn'),
                 sel: SELECTORS.attachCoverBtn,
                 key: 'attachCoverBtn',
                 evaluate: () => {
-                    return { required: false, reason: 'не требуется в текущем сценарии' };
+                    return { required: false, reason: I18n.t('health.reasons.notInScenario') };
                 }
             },
             {
-                name: 'Кнопка отправки письма',
+                name: I18n.t('health.letterSubmit'),
                 sel: SELECTORS.letterSubmit,
                 key: 'letterSubmit',
                 evaluate: () => {
                     if (Page.isResponseForm()) {
                         return pageLooksLikeTest()
-                            ? { required: false, reason: 'не применимо — анкета с вопросами работодателя' }
+                            ? { required: false, reason: I18n.t('health.reasons.questionnaire') }
                             : { required: true };
                     }
                     if (isResponseModalOpen()) {
                         return { required: true };
                     }
-                    return { required: false, reason: 'не применимо — форма отклика не открыта' };
+                    return { required: false, reason: I18n.t('health.reasons.modalNotOpen') };
                 }
             },
             {
-                name: 'Поле письма (textarea)',
+                name: I18n.t('health.letterTextarea'),
                 sel: SELECTORS.letterTextarea,
                 key: 'letterTextarea',
                 evaluate: () => {
                     if (Page.isResponseForm()) {
-                        if (pageLooksLikeTest()) return { required: false, reason: 'не применимо — анкета с вопросами работодателя' };
-                        return { required: false, reason: 'не применимо — форма письма не раскрыта' };
+                        if (pageLooksLikeTest()) return { required: false, reason: I18n.t('health.reasons.questionnaire') };
+                        return { required: false, reason: I18n.t('health.reasons.letterNotExpanded') };
                     }
                     if (isResponseModalOpen()) {
-                        return { required: false, reason: 'не применимо — форма письма не раскрыта' };
+                        return { required: false, reason: I18n.t('health.reasons.letterNotExpanded') };
                     }
-                    return { required: false, reason: 'не применимо — форма письма не открыта' };
+                    return { required: false, reason: I18n.t('health.reasons.modalNotOpen') };
                 }
             }
         ];
 
-        log('Запускаю диагностику селекторов...');
+        log(I18n.t('health.starting'));
         let okCount = 0;
         let skipCount = 0;
         let errCount = 0;
@@ -4232,48 +5155,42 @@
             const fallbackFound = found ? null : query(c.key);
             if (found) {
                 okCount++;
-                log(`${c.name}: OK (${c.sel})`);
+                log(I18n.t('health.statusOk', { name: c.name, sel: c.sel }));
             } else if (fallbackFound) {
                 okCount++;
-                log(`${c.name}: ЭВРИСТИЧЕСКИ НАЙДЕНО (селектор ${c.sel} не сработал)`, false);
+                log(I18n.t('health.statusFallback', { name: c.name, sel: c.sel }), false);
             } else {
                 const ctx = c.evaluate ? c.evaluate() : { required: true };
                 if (ctx.required) {
                     errCount++;
-                    log(`${c.name}: НЕ НАЙДЕНО (${c.sel})`, true);
+                    log(I18n.t('health.statusNotFound', { name: c.name, sel: c.sel }), true);
                 } else {
                     skipCount++;
-                    log(`${c.name}: ${ctx.reason || 'не применимо в текущем контексте'}`, false);
+                    log(`${c.name}: ${ctx.reason || I18n.t('health.reasons.notApplicable')}`, false);
                 }
             }
         });
 
-        const formatPlural = (n, one, few, many) => {
-            const mod10 = n % 10;
-            const mod100 = n % 100;
-            if (mod100 >= 11 && mod100 <= 19) return `${n} ${many}`;
-            if (mod10 === 1) return `${n} ${one}`;
-            if (mod10 >= 2 && mod10 <= 4) return `${n} ${few}`;
-            return `${n} ${many}`;
-        };
-
-        log(`Healthcheck завершён: ${okCount} OK · ${skipCount} не применимо · ${formatPlural(errCount, 'ошибка', 'ошибки', 'ошибок')}.`);
+        const errText = I18n.plural(errCount, 'error');
+        log(I18n.t('health.summary', { okCount, skipCount, errText }));
 
         const obj = parseJson(storage.localGet(KEYS.instanceLock), null);
         if (obj) {
-            log(`Instance lock: tabId=${obj.tabId} ts=${new Date(obj.ts).toLocaleTimeString('ru-RU')}`);
+            log(I18n.t('health.instanceLock', { tabId: obj.tabId, ts: I18n.formatTime(obj.ts) }));
         } else {
-            log('Instance lock: отсутствует');
+            log(I18n.t('health.instanceLockMissing'));
         }
     }
-
     // ─────────────────────────────────────────────────────────────
     //  14. ЭКСПОРТ РУЧНОГО СПИСКА (интерактивный HTML applomat)
     // ─────────────────────────────────────────────────────────────
 
     function exportManualListHtml() {
         const list = State.getManualList();
-        if (!list || !list.length) { alert('Список пуст'); return; }
+        if (!list || !list.length) { alert(I18n.t('alert.manualEmpty')); return; }
+
+        const lang = I18n.getLanguage();
+        const localeTag = I18n.getLocaleTag(lang);
 
         // dedupe by url (avoid duplicate identical links)
         const seen = new Set();
@@ -4288,8 +5205,10 @@
         }
 
         const rowsJson = JSON.stringify(uniq).replace(/</g, '\\u003c');
+        const expStringsJson = JSON.stringify(TRANSLATIONS[lang].export).replace(/</g, '\\u003c');
+        const exportDateStr = I18n.formatDateTime(Date.now(), {}, lang);
 
-        const content = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>applomat · сохранённые вакансии</title><meta name="viewport" content="width=device-width,initial-scale=1">
+        const content = `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><title>${I18n.t('export.docTitle')}</title><meta name="viewport" content="width=device-width,initial-scale=1">
             <style>
                 :root{
                     color-scheme:light;
@@ -4390,8 +5309,8 @@
                 <header class="topbar">
                     <div class="brand">
                         <div class="brand-txt">
-                            <h1 class="brand-heading"><span class="brand-wordmark">applomat</span><span class="brand-sep">·</span><span class="brand-sub">сохранённые вакансии</span></h1>
-                            <div class="meta">Экспорт ручной очереди от ${new Date().toLocaleString('ru-RU')} · дубликатов удалено: ${duplicates}</div>
+                            <h1 class="brand-heading"><span class="brand-wordmark">${I18n.t('export.brandWordmark')}</span><span class="brand-sep">·</span><span class="brand-sub">${I18n.t('export.brandSub')}</span></h1>
+                            <div class="meta">${I18n.t('export.metaText', { date: exportDateStr, duplicates })}</div>
                         </div>
                     </div>
                     <div class="stats" id="summary"></div>
@@ -4400,32 +5319,32 @@
                     <div class="toolbar">
                         <div class="search-field">
                             <svg class="search-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
-                            <input id="filter" type="text" placeholder="Поиск по названию или ссылке...">
+                            <input id="filter" type="text" placeholder="${I18n.t('export.searchPlaceholder')}">
                         </div>
                         <div class="dropdown" id="sort-dropdown">
-                            <div class="dropdown-trigger" tabindex="0">Сортировка: Новые → старые</div>
+                            <div class="dropdown-trigger" tabindex="0">${I18n.t('export.sortPrefix')}${I18n.t('export.sortOptions.ts_desc')}</div>
                             <div class="dropdown-menu">
-                                <div class="dropdown-item is-active" data-value="ts_desc">Новые → старые</div>
-                                <div class="dropdown-item" data-value="ts_asc">Старые → новые</div>
-                                <div class="dropdown-item" data-value="title_asc">Название A→Z</div>
-                                <div class="dropdown-item" data-value="title_desc">Название Z→A</div>
+                                <div class="dropdown-item is-active" data-value="ts_desc">${I18n.t('export.sortOptions.ts_desc')}</div>
+                                <div class="dropdown-item" data-value="ts_asc">${I18n.t('export.sortOptions.ts_asc')}</div>
+                                <div class="dropdown-item" data-value="title_asc">${I18n.t('export.sortOptions.title_asc')}</div>
+                                <div class="dropdown-item" data-value="title_desc">${I18n.t('export.sortOptions.title_desc')}</div>
                             </div>
                         </div>
                         <div class="dropdown" id="view-mode-dropdown">
-                            <div class="dropdown-trigger" tabindex="0">Статус: Новые</div>
+                            <div class="dropdown-trigger" tabindex="0">${I18n.t('export.statusPrefix')}${I18n.t('export.statusOptions.new')}</div>
                             <div class="dropdown-menu">
-                                <div class="dropdown-item is-active" data-value="new">Новые</div>
-                                <div class="dropdown-item" data-value="opened">Открытые</div>
+                                <div class="dropdown-item is-active" data-value="new">${I18n.t('export.statusOptions.new')}</div>
+                                <div class="dropdown-item" data-value="opened">${I18n.t('export.statusOptions.opened')}</div>
                             </div>
                         </div>
                         <div class="toolbar-spacer"></div>
-                        <button id="open-selected" class="btn primary" title="Открыть отмеченные вакансии, по одной вкладке на каждую. Если открылась только первая - разрешите этому файлу всплывающие окна в браузере.">
+                        <button id="open-selected" class="btn primary" title="${I18n.t('export.openSelectedTitle')}">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>
-                            Открыть выбранные
+                            ${I18n.t('export.openSelected')}
                         </button>
-                        <button id="clear-processed" class="btn secondary" title="Снять отметку открыто со всех вакансий: режим Открытые опустеет, вакансии снова станут Новыми. Сами записи не удаляются.">
+                        <button id="clear-processed" class="btn secondary" title="${I18n.t('export.resetMarkersTitle')}">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>
-                            Сбросить отметки
+                            ${I18n.t('export.resetMarkers')}
                         </button>
                     </div>
                     <div class="table-wrap">
@@ -4433,10 +5352,10 @@
                             <thead>
                                 <tr>
                                     <th class="col-check"><input type="checkbox" id="check-all"></th>
-                                    <th class="col-date">Сохранена</th>
-                                    <th class="col-title">Вакансия</th>
-                                    <th class="col-link">Ссылка</th>
-                                    <th class="col-age">Возраст</th>
+                                    <th class="col-date">${I18n.t('export.tableHeaders.saved')}</th>
+                                    <th class="col-title">${I18n.t('export.tableHeaders.vacancy')}</th>
+                                    <th class="col-link">${I18n.t('export.tableHeaders.link')}</th>
+                                    <th class="col-age">${I18n.t('export.tableHeaders.age')}</th>
                                 </tr>
                             </thead>
                             <tbody id="rows"></tbody>
@@ -4447,6 +5366,8 @@
 
             <script>
                 const data = ${rowsJson};
+                const exp = ${expStringsJson};
+                const activeLocale = '${localeTag}';
                 let sortKey = 'ts_desc';
                 let filterText = '';
                 let viewMode = 'new';
@@ -4520,8 +5441,8 @@
                         if (sortKey === 'ts_asc') return (a.ts||0)-(b.ts||0);
                         const ta = (a.title||'').toLowerCase();
                         const tb = (b.title||'').toLowerCase();
-                        if (sortKey === 'title_asc') return ta.localeCompare(tb);
-                        if (sortKey === 'title_desc') return tb.localeCompare(ta);
+                        if (sortKey === 'title_asc') return ta.localeCompare(tb, activeLocale);
+                        if (sortKey === 'title_desc') return tb.localeCompare(ta, activeLocale);
                         return 0;
                     });
                     return sorted;
@@ -4553,14 +5474,14 @@
                         const checked = selected.has(key) ? 'checked' : '';
                         const rowClass = processed[key] ? ' class="processed"' : '';
                         const url = safeHttpUrl(i.url);
-                        const link = url ? '<a class="icon-link" title="Открыть вакансию" aria-label="Открыть вакансию" data-open="1" href="' + escHtml(url) + '" target="_blank" rel="noopener noreferrer">' + openIcon + '</a>' : '<span class="tag">нет</span>';
+                        const link = url ? '<a class="icon-link" title="' + escHtml(exp.openLinkTitle) + '" aria-label="' + escHtml(exp.openLinkTitle) + '" data-open="1" href="' + escHtml(url) + '" target="_blank" rel="noopener noreferrer">' + openIcon + '</a>' : '<span class="tag">' + escHtml(exp.noLinkTag) + '</span>';
                         const title = (i.title && i.title.trim()) ? i.title.trim() : '';
-                        const titleCell = title
+                        const titleCell = (title && title !== 'Название недоступно' && title !== 'Title unavailable')
                             ? escHtml(title)
-                            : '<span class="muted" title="Название не удалось определить при сохранении">Название недоступно</span>';
+                            : '<span class="muted" title="' + escHtml(exp.noTitleTooltip) + '">' + escHtml(exp.noTitleText) + '</span>';
                         html += '<tr' + rowClass + ' data-key="' + keyEnc + '">'
                              + '<td class="col-check"><input type="checkbox" class="row-check" data-key="' + keyEnc + '" ' + checked + '></td>'
-                             + '<td class="col-date">' + escHtml(new Date(ts).toLocaleString('ru-RU')) + '</td>'
+                             + '<td class="col-date">' + escHtml(new Date(ts).toLocaleString(activeLocale)) + '</td>'
                              + '<td class="col-title">' + titleCell + '</td>'
                              + '<td class="col-link">' + link + '</td>'
                              + '<td class="col-age"><span class="age ' + aClass + '">' + ago + '</span></td>'
@@ -4568,7 +5489,7 @@
                     });
                     if (!sorted.length) {
                         const emptyIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M9 15h6"></path></svg>';
-                        const msg = ft ? 'Ничего не найдено по запросу' : (viewMode === 'opened' ? 'Открытых вакансий пока нет' : 'Новых вакансий нет');
+                        const msg = ft ? exp.emptyStates.filter : (viewMode === 'opened' ? exp.emptyStates.opened : exp.emptyStates.new);
                         html = '<tr><td colspan="5"><div class="empty-state">' + emptyIcon + '<div>' + escHtml(msg) + '</div></div></td></tr>';
                     }
                     tbody.innerHTML = html;
@@ -4587,8 +5508,8 @@
                     data.forEach((i, idx) => { if (processed[keyOf(i, idx)]) opened++; });
                     const fresh = total - opened;
                     const stat = (cls, val, lbl) => '<div class="stat' + (cls ? ' ' + cls : '') + '"><span class="stat-val">' + val + '</span><span class="stat-lbl">' + lbl + '</span></div>';
-                    let html = stat('', total, 'Всего') + stat('new', fresh, 'Новые') + stat('opened', opened, 'Открытые');
-                    if (filterText.trim() !== '') html += stat('shown', typeof shown === 'number' ? shown : 0, 'Показано');
+                    let html = stat('', total, exp.summaryStats.total) + stat('new', fresh, exp.summaryStats.new) + stat('opened', opened, exp.summaryStats.opened);
+                    if (filterText.trim() !== '') html += stat('shown', typeof shown === 'number' ? shown : 0, exp.summaryStats.shown);
                     box.innerHTML = html;
                 }
 
@@ -4649,8 +5570,8 @@
                     if (e.key === 'Escape') document.querySelectorAll('.dropdown.is-open').forEach(d => d.classList.remove('is-open'));
                 });
 
-                initDropdown('sort-dropdown', 'Сортировка: ', (val) => { sortKey = val; render(); });
-                initDropdown('view-mode-dropdown', 'Статус: ', (val) => {
+                initDropdown('sort-dropdown', exp.sortPrefix, (val) => { sortKey = val; render(); });
+                initDropdown('view-mode-dropdown', exp.statusPrefix, (val) => {
                     viewMode = val;
                     selected.clear();
                     render();
@@ -4700,7 +5621,7 @@
                 });
 
                 qs('clear-processed').addEventListener('click', ()=>{
-                    if (!confirm('Снять отметку открыто со всех вакансий? Записи не удаляются - они снова появятся в режиме Новые.')) return;
+                    if (!confirm(exp.confirmReset)) return;
                     const keys = Object.keys(processed);
                     keys.forEach(k => delete processed[k]);
                     saveProcessed();
@@ -4710,13 +5631,12 @@
 
                 // init
                 render();
-            <\/script>
+            </script>
             </body></html>`;
 
         downloadFile('applomat_manual_list.html', content, 'text/html;charset=utf-8');
-        log('HTML экспорт выполнен.');
+        log(I18n.t('logs.htmlExported'));
     }
-
     // ─────────────────────────────────────────────────────────────
     //  15. ЗАПУСК И ГЛОБАЛЬНЫЕ ОБРАБОТЧИКИ
     // ─────────────────────────────────────────────────────────────
@@ -4753,13 +5673,12 @@
             if (isInternal) {
                 if (applomatErrCount >= APPLOMAT_ERR_LIMIT) return;
                 applomatErrCount++;
-                log(`JS-ошибка [applomat]: ${e.message || 'Error'}${where}`, true);
+                log(I18n.t('logs.jsError', { msg: e.message || 'Error', where }), true);
             } else {
                 if (externalErrCount >= EXTERNAL_ERR_LIMIT) return;
                 externalErrCount++;
-                // Внешняя ошибка страницы hh.ru — логируем как INFO, не окрашивая диагностический бейдж в красный
-                DiagLog.push(`[Внешняя ошибка страницы hh.ru]: ${(e.message || 'Error').slice(0, 300)}${where}`, false);
-                console.warn('[applomat] Внешняя ошибка страницы hh.ru:', e.message, where);
+                DiagLog.push(`[External hh.ru error]: ${(e.message || 'Error').slice(0, 300)}${where}`, false);
+                console.warn('[applomat] External hh.ru error:', e.message, where);
             }
         } catch (_) { /* ignore */ }
     });
@@ -4772,22 +5691,23 @@
             if (isInternal) {
                 if (applomatErrCount >= APPLOMAT_ERR_LIMIT) return;
                 applomatErrCount++;
-                log(`Unhandled rejection [applomat]: ${String(text).slice(0, 500)}`, true);
+                log(I18n.t('logs.unhandledRejection', { msg: String(text).slice(0, 500) }), true);
             } else {
                 if (externalErrCount >= EXTERNAL_ERR_LIMIT) return;
                 externalErrCount++;
-                DiagLog.push(`[Внешний unhandled rejection]: ${String(text).slice(0, 300)}`, false);
-                console.warn('[applomat] Внешний unhandled rejection hh.ru:', text);
+                DiagLog.push(`[External unhandled rejection]: ${String(text).slice(0, 300)}`, false);
+                console.warn('[applomat] External unhandled rejection hh.ru:', text);
             }
         } catch (_) { /* ignore */ }
     });
 
     // Отметка загрузки каждой страницы - по ней в логе видна вся последовательность навигаций.
-    log(`- Загрузка страницы: ${location.pathname}${location.search} (running=${State.amIRunning()}, sent=${State.getSentCount()}/${config.limit}) -`);
+    log(I18n.t('logs.pageLoad', { path: location.pathname + location.search, running: State.amIRunning(), sent: State.getSentCount(), limit: config.limit }));
 
     startWatchdog();
 
     function bootstrap() {
+        I18n.init();
         setupUI();
         if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
         // Авто-возобновление, если скрипт был в работе перед перезагрузкой.
@@ -4795,18 +5715,18 @@
         // нажать Стоп в эти 1.5 секунды, отложенный startLoop не должен воскресить
         // прогон (State.setRunning(false) уже снят, и стартовать нечего).
         if (State.amIRunning()) {
-            log('Обнаружена незавершенная работа. Авто-возобновление через 1.5 сек...');
-            setStatus('running', 'Авто-запуск...');
+            log(I18n.t('logs.autoResumeFound'));
+            setStatus('running', 'status.autoStarting');
             resumeTimer = setTimeout(() => {
                 resumeTimer = null;
                 if (State.amIRunning()) {
                     if (Page.isResponseForm()) {
-                        log('На странице отклика - управление у обработчика формы.');
+                        log(I18n.t('logs.onResponsePage'));
                         return;
                     }
                     startLoop();
                 }
-                else log('Авто-возобновление отменено: прогон остановлен пользователем.');
+                else log(I18n.t('logs.autoResumeCanceled'));
             }, 1500);
         }
         // Сбрасываем ловушку только если мы не на странице отклика/вопросов
