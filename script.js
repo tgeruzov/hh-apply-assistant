@@ -3880,6 +3880,7 @@
             --ar-work-grid-shift: -320px;
             --ar-work-move-ease: cubic-bezier(.22, .8, .3, 1);
             --ar-work-reveal-ease: cubic-bezier(.18, .82, .22, 1);
+            --thumb-source-x: 0px;
 
             /* Static Turbo matrix geometry. Shockwave runs per-cell. */
             --ar-work-grid-cell: 5px;
@@ -4031,17 +4032,17 @@
             will-change: opacity, filter;
             -webkit-mask-image: linear-gradient(
                 to right,
-                transparent 12%,
-                rgba(0,0,0,.20) 32%,
-                rgba(0,0,0,.70) 56%,
-                #000 72%
+                #000 0,
+                #000 calc(var(--thumb-source-x, 0px) - 24px),
+                transparent var(--thumb-source-x, 0px),
+                transparent 100%
             );
             mask-image: linear-gradient(
                 to right,
-                transparent 12%,
-                rgba(0,0,0,.20) 32%,
-                rgba(0,0,0,.70) 56%,
-                #000 72%
+                #000 0,
+                #000 calc(var(--thumb-source-x, 0px) - 24px),
+                transparent var(--thumb-source-x, 0px),
+                transparent 100%
             );
             transition:
                 opacity var(--ar-work-turbo-exit-duration) ease,
@@ -4757,6 +4758,16 @@
         let shockEntryTimer = 0;
         let shockActive = false;
         let lastShockStartedAt = 0;
+        let currentThumbSourceX = 0;
+
+        function getThumbSourceX() {
+            if (Number.isFinite(currentThumbSourceX) && currentThumbSourceX > 0) {
+                return currentThumbSourceX;
+            }
+            const { pad } = getMetrics();
+            const curVal = modeKeyToIndex(config.preset);
+            return pad + positionForValue(curVal);
+        }
 
         function seededNoise(index) {
             const x = Math.sin(index * 12.9898 + 78.233) * 43758.5453;
@@ -4979,7 +4990,10 @@
 
             // Almost linear propagation with a subtle natural ease at the tail.
             const travelEase = 1 - Math.pow(1 - travelProgress, 1.08);
-            const frontX = 1.08 - 1.16 * travelEase;
+            const sliderWidth = Math.max(1, gridMetrics.width || slider?.clientWidth || 1);
+            const thumbSourceX = getThumbSourceX();
+            const originNorm = clamp01(thumbSourceX / sliderWidth);
+            const frontX = originNorm - (originNorm + 0.08) * travelEase;
             const elapsedSeconds = elapsed / 1000;
 
             // Main wave remains active during travel; wake/echo gets ~950ms to settle.
@@ -4990,7 +5004,6 @@
 
             // Read current CSS animation phase once and convert every cell's strip-space X into slider-space X.
             const driftOffset = currentGridDriftOffset();
-            const sliderWidth = gridMetrics.width;
 
             for (const cell of gridCells) {
                 const visualXPx = cell.stripX + driftOffset;
@@ -5115,6 +5128,10 @@
             } else {
                 slider.classList.add('is-dragging');
             }
+            const { pad } = getMetrics();
+            const leftEdge = Math.max(0, pad + x);
+            currentThumbSourceX = leftEdge;
+            slider.style.setProperty('--thumb-source-x', `${leftEdge.toFixed(2)}px`);
             thumb.style.transform = `translate3d(${x}px, 0, 0)`;
         }
 
