@@ -2452,8 +2452,22 @@
     function resolveManualTitle(vid) {
         const meta = State.getLastVacancyMeta();
         if (meta && meta.title) {
-            if (vid && meta.vid && meta.vid === vid) return meta.title;
-            if (Date.now() - (Number(meta.ts) || 0) < 15 * 60 * 1000) return meta.title;
+            const rawVid = String(vid || '');
+            const rawMetaVid = String(meta.vid || '');
+            const numVid = rawVid.replace(/^v_/, '');
+            const numMeta = rawMetaVid.replace(/^v_/, '');
+            const isNumVid = /^\d+$/.test(numVid);
+            const isNumMeta = /^\d+$/.test(numMeta);
+
+            if (rawVid && rawMetaVid && rawVid === rawMetaVid) {
+                return meta.title;
+            } else if (isNumVid && isNumMeta) {
+                if (numVid === numMeta) return meta.title;
+                // Разные числовые ID — мета принадлежит другой вакансии, не используем
+            } else if (Date.now() - (Number(meta.ts) || 0) < 15 * 60 * 1000) {
+                // Если один из ID не числовой (например, hash карточки), а мета свежая — разрешаем fallback
+                return meta.title;
+            }
         }
         if (Page.isVacancy()) {
             const t = parseVacancyTitle();
@@ -2483,6 +2497,7 @@
                 try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
                 return true;
             } else if (res === 'EXISTS' || res === 'UPDATED') {
+                Stats.bump('manual');
                 log(I18n.t('logs.manualAlready', { note: note ? ' (' + note + ')' : '', vid }));
                 try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
                 return true;
@@ -2808,7 +2823,6 @@
                 if (!isRunCurrent(runId)) return 'STOPPED';
                 // В модалке уход на /applicant/vacancy_response = редирект на тест; на самой странице отклика - нет.
                 if (!onPage && Page.isResponseForm()) return 'QUESTIONS';
-                if (onPage && !Page.isResponseForm()) return 'CONFIRMED';
                 if (isResponseConfirmed()) return 'CONFIRMED';
                 return false;
             }, 3500);
@@ -2906,7 +2920,7 @@
                     const ok = await waitForCondition(() => {
                         if (!isRunCurrent(runId)) return 'STOPPED';
                         if (detectCaptcha()) return 'CAPTCHA';
-                        if (!Page.isResponseForm()) return 'NAVIGATED';
+                        if (pageLooksLikeTest()) return 'QUESTIONS';
                         if (isResponseConfirmed()) return 'CONFIRMED';
                         return false;
                     }, TUNING.confirmWaitMs);
@@ -2916,8 +2930,10 @@
                         haltForCaptcha();
                         return;
                     }
-                    if (ok === 'NAVIGATED' || ok === 'CONFIRMED') {
+                    if (ok === 'CONFIRMED') {
                         confirmed = true;
+                    } else if (ok === 'QUESTIONS') {
+                        redirectedToQuestions = true;
                     } else if (isRunCurrent(runId)) {
                         const forced = await forceSubmitReject(TUNING.forceSubmitAttempts, { onResponsePage: true, runId });
                         if (forced === 'STOPPED' || !isRunCurrent(runId)) return;
@@ -3466,18 +3482,34 @@
                 return;
             }
 
-            const allBtns = queryAll('applyBtn');
+            let allBtns = queryAll('applyBtn');
+            if (allBtns.length === 0 && Page.isSearch()) {
+                await waitForCondition(() => {
+                    if (stopSignal || runId !== currentRunId) return 'STOPPED';
+                    const btns = queryAll('applyBtn');
+                    if (btns.length > 0) return 'READY';
+                    if (q('[data-qa*="empty" i], [class*="empty" i]')) return 'EMPTY';
+                    return false;
+                }, 2000);
+                if (stopSignal || runId !== currentRunId) return;
+                allBtns = queryAll('applyBtn');
+            }
+
             const processed = State.getProcessedIDs();
 
-            const targets = allBtns.filter(b => {
+            let targets = allBtns.filter(b => {
                 if (config.skipHidden && !isVisible(b)) return false;
                 return !processed.has(getVacancyID(b));
             });
 
             log(I18n.t('logs.vacanciesFound', { total: allBtns.length, targets: targets.length, sent: State.getSentCount(), limit: config.limit }));
 
-            for (const btn of targets) {
+            let rescanCount = 0;
+            const MAX_RESCANS = 3;
+
+            while (targets.length > 0) {
                 if (stopSignal || runId !== currentRunId) break;
+                const btn = targets.shift();
                 if (State.getSentCount() >= config.limit) {
                     finalizeRun(runId, 'done', I18n.t('logs.limitReached', { limit: config.limit }));
                     return;
@@ -3488,7 +3520,18 @@
                 }
                 if (!document.body.contains(btn)) {
                     log(I18n.t('logs.buttonDisappeared'), true);
-                    break;
+                    if (rescanCount < MAX_RESCANS) {
+                        rescanCount++;
+                        const currentProcessed = State.getProcessedIDs();
+                        const freshBtns = queryAll('applyBtn');
+                        targets = freshBtns.filter(b => {
+                            if (config.skipHidden && !isVisible(b)) return false;
+                            return !currentProcessed.has(getVacancyID(b));
+                        });
+                        continue;
+                    } else {
+                        break;
+                    }
                 }
 
                 await vacancyPause();
@@ -4750,6 +4793,7 @@
     const WorkModeSlider = (() => {
         let resizeObserver = null;
         let activeTurboEffects = null;
+        let onVisibilityChangeImpl = () => {};
 
         function mount({ el, uiSignal }) {
             // ---------- Новый селектор режима (Work Mode Slider) ----------
@@ -5659,6 +5703,22 @@
                     reducedMotionQuery.addListener(handleReducedMotionChange);
                 }
 
+                function onVisibilityChange(isOpen) {
+                    if (!isOpen || document.hidden) {
+                        TurboEffects.cancel({ resetToRest: true });
+                        TurboEffects.stopDepth();
+                    } else if (modeKeyToIndex(config.preset) === 3 && !reducedMotionQuery.matches) {
+                        TurboEffects.enter();
+                    }
+                }
+                onVisibilityChangeImpl = onVisibilityChange;
+
+                document.addEventListener('visibilitychange', () => {
+                    const panelEl = document.getElementById('ar-main-panel');
+                    const isPanelOpen = panelEl && panelEl.style.display !== 'none';
+                    onVisibilityChange(isPanelOpen && !document.hidden);
+                }, { signal: uiSignal });
+
                 function cleanupWorkModeAnimation() {
                     TurboEffects.cancel({ resetToRest: true });
                     TurboEffects.stopDepth();
@@ -5689,6 +5749,7 @@
         }
 
         function destroy() {
+            onVisibilityChangeImpl = () => {};
             if (activeTurboEffects) {
                 try { activeTurboEffects.cancel({ resetToRest: true }); } catch (e) { /* ignore */ }
                 try { activeTurboEffects.stopDepth(); } catch (e) { /* ignore */ }
@@ -5700,7 +5761,11 @@
             }
         }
 
-        return { mount, destroy };
+        return {
+            mount,
+            onVisibilityChange: (isOpen) => onVisibilityChangeImpl(isOpen),
+            destroy
+        };
     })();
 
     const ManualQueueView = (() => {
@@ -6184,6 +6249,7 @@
         if (oldToggle) oldToggle.remove();
         const oldPanel = document.getElementById('ar-main-panel');
         if (oldPanel) oldPanel.remove();
+        document.documentElement.classList.remove('hh-ar-open', 'hh-ar-anim');
     }
 
     function setupUI() {
@@ -6289,6 +6355,7 @@
             toggleBtn.style.display = isOpen ? 'none' : 'flex';
             rootEl.classList.toggle('hh-ar-open', isOpen);
             storage.localSet(KEYS.uiOpen, isOpen ? '1' : '0');
+            WorkModeSlider.onVisibilityChange(isOpen);
         };
         el('ar-minimize-btn').onclick = () => toggleVisibility(false);
         const minDiagBtn = el('ar-minimize-diag-btn');
