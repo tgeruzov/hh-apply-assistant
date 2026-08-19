@@ -180,7 +180,13 @@
                 clearAll: 'Очистить сохр. лог и метрики',
                 statSummary: '{errText} · {recText}',
                 badgeTitle: '{errText} в диагностическом логе · Открыть диагностику',
-                badgeTitleClean: 'Открыть диагностику и лог'
+                badgeTitleClean: 'Открыть диагностику и лог',
+                emptyTitle: 'Записей пока нет',
+                emptyHint: 'Диагностические события появятся здесь во время работы',
+                emptyNoErrorsTitle: 'Ошибок нет',
+                emptyNoErrorsHint: 'В диагностическом логе пока нет ошибок',
+                repeatExpand: 'Развернуть группу повторов',
+                repeatCollapse: 'Свернуть группу повторов'
             },
             confirm: {
                 clearDiag: 'Очистить сохранённый диагностический лог и метрики? (выгрузите файл перед очисткой, если нужен для анализа)',
@@ -486,7 +492,13 @@
                 clearAll: 'Clear saved log & metrics',
                 statSummary: '{errText} · {recText}',
                 badgeTitle: '{errText} in diagnostic log · Open diagnostics',
-                badgeTitleClean: 'Open diagnostics and log'
+                badgeTitleClean: 'Open diagnostics and log',
+                emptyTitle: 'No entries yet',
+                emptyHint: 'Diagnostic events will appear here while the script is running',
+                emptyNoErrorsTitle: 'No errors',
+                emptyNoErrorsHint: 'There are no errors in the diagnostic log',
+                repeatExpand: 'Expand repeat group',
+                repeatCollapse: 'Collapse repeat group'
             },
             confirm: {
                 clearDiag: 'Clear saved diagnostic log and metrics? (download the log before clearing if needed for analysis)',
@@ -812,7 +824,6 @@
                     || _getNested(TRANSLATIONS[DEFAULT_LANGUAGE], `plurals.${category}`)
                     || {};
                 const word = pluralsObj[form] || pluralsObj.other || pluralsObj.many || pluralsObj.one || category;
-                const mergedParams = { count: num, ...params };
                 return `${num} ${word}`;
             },
             formatTime(dateOrTs, options = {}, lang) {
@@ -882,6 +893,11 @@
         return WORK_MODE_KEYS[Math.max(0, Math.min(WORK_MODE_KEYS.length - 1, idx))] || DEFAULT_PRESET;
     };
 
+    const getDefaultCoverText = (lang) => {
+        const target = lang || I18n.getLanguage();
+        return TRANSLATIONS[target]?.cover?.defaultText || TRANSLATIONS[DEFAULT_LANGUAGE].cover.defaultText;
+    };
+
     // Пользовательские настройки по умолчанию
     const DEFAULTS = {
         coverText: TRANSLATIONS[DEFAULT_LANGUAGE].cover.defaultText,
@@ -914,7 +930,10 @@
         if (stopSignal || sig?.aborted || ms <= 0) return resolve();
         let timer = null;
         let onAbort = null;
+        let isDone = false;
         const cleanup = () => {
+            if (isDone) return;
+            isDone = true;
             if (timer) { clearTimeout(timer); timer = null; }
             if (onAbort && sig) {
                 try { sig.removeEventListener('abort', onAbort); } catch (e) {}
@@ -925,19 +944,23 @@
             resolve();
         };
         if (sig) {
-            if (sig.aborted) return resolve();
             try { sig.addEventListener('abort', onAbort, { once: true }); } catch (e) {}
-        }
-        const start = Date.now();
-        const check = () => {
-            if (stopSignal || (sig && sig.aborted) || (Date.now() - start >= ms)) {
+            timer = setTimeout(() => {
                 cleanup();
                 resolve();
-            } else {
-                timer = setTimeout(check, Math.min(40, ms - (Date.now() - start)));
-            }
-        };
-        timer = setTimeout(check, Math.min(40, ms));
+            }, ms);
+        } else {
+            const start = Date.now();
+            const check = () => {
+                if (stopSignal || (Date.now() - start >= ms)) {
+                    cleanup();
+                    resolve();
+                } else {
+                    timer = setTimeout(check, Math.min(40, ms - (Date.now() - start)));
+                }
+            };
+            timer = setTimeout(check, Math.min(40, ms));
+        }
     });
     const wait = interruptibleWait;
     const randBetween = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -1005,9 +1028,10 @@
         // Приводим сырые данные (в т.ч. конфиг от старых версий с ручными
         // таймингами) к актуальной схеме: пресет + несколько флагов.
         normalize(raw = {}) {
-            const merged = { ...DEFAULTS, ...(raw || {}) };
+            const defaultCover = getDefaultCoverText();
+            const merged = { ...DEFAULTS, coverText: defaultCover, ...(raw || {}) };
             return {
-                coverText: String(merged.coverText ?? DEFAULTS.coverText).slice(0, 5000),
+                coverText: String(merged.coverText ?? defaultCover).slice(0, 5000),
                 useCover: merged.useCover !== false,
                 applyOnRejectWarning: merged.applyOnRejectWarning !== false,
                 skipHidden: merged.skipHidden !== false,
@@ -1062,12 +1086,15 @@
         let _cache = null;
         let _saveTimer = null;
         let _isDirty = false;
+        let _version = 0;
+        let _errorCount = 0;
 
         function _ensureLoaded() {
             if (_cache === null) {
                 const raw = storage.localGet(KEYS.diagLog);
                 const parsed = parseJson(raw, []);
                 _cache = Array.isArray(parsed) ? parsed : [];
+                _errorCount = _cache.reduce((acc, item) => (item && item.lvl === 'ERR' ? acc + 1 : acc), 0);
             }
             return _cache;
         }
@@ -1078,11 +1105,13 @@
             try {
                 if (_cache.length > DIAG_LOG_MAX) {
                     _cache = _cache.slice(_cache.length - DIAG_LOG_MAX);
+                    _errorCount = _cache.reduce((acc, item) => (item && item.lvl === 'ERR' ? acc + 1 : acc), 0);
                 }
                 const json = JSON.stringify(_cache);
                 if (!storage.localSet(KEYS.diagLog, json)) {
                     // Переполнение квоты — агрессивно обрезаем и пробуем снова
                     _cache = _cache.slice(-300);
+                    _errorCount = _cache.reduce((acc, item) => (item && item.lvl === 'ERR' ? acc + 1 : acc), 0);
                     storage.localSet(KEYS.diagLog, JSON.stringify(_cache));
                 }
                 _isDirty = false;
@@ -1110,8 +1139,13 @@
                     tab: TAB_ID,
                     msg: String(msg).slice(0, 1000)
                 });
+                _version++;
+                if (isError) {
+                    _errorCount++;
+                }
                 if (arr.length > DIAG_LOG_MAX + 50) {
                     _cache = arr.slice(arr.length - DIAG_LOG_MAX);
+                    _errorCount = _cache.reduce((acc, item) => (item && item.lvl === 'ERR' ? acc + 1 : acc), 0);
                 }
                 _isDirty = true;
                 if (isError) {
@@ -1124,8 +1158,18 @@
             getAll() {
                 return _ensureLoaded().slice();
             },
+            getStats() {
+                const arr = _ensureLoaded();
+                return {
+                    total: arr.length,
+                    errors: _errorCount,
+                    version: _version
+                };
+            },
             clear() {
                 _cache = [];
+                _errorCount = 0;
+                _version++;
                 _isDirty = false;
                 if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
                 storage.localRemove(KEYS.diagLog);
@@ -1136,57 +1180,88 @@
         };
     })();
 
-    // Метрики: накопительная статистика для улучшения скрипта.
-    // Копим распределение сценариев, тайминги, здоровье селекторов (new vs legacy) и
-    // снимки DOM в проблемных местах - по ним видно, что и когда поменял hh.ru.
-    const Metrics = {
-        _get() {
-            const m = parseJson(storage.localGet(KEYS.metrics), null);
-            if (m && typeof m === 'object') {
-                m.counters = m.counters || {};
-                m.timings = m.timings || {};
-                m.selectors = m.selectors || {};
-                m.snapshots = Array.isArray(m.snapshots) ? m.snapshots : [];
-                return m;
+    const Metrics = (() => {
+        let _cache = null;
+        let _saveTimer = null;
+        let _isDirty = false;
+
+        function _ensureLoaded() {
+            if (_cache === null) {
+                const m = parseJson(storage.localGet(KEYS.metrics), null);
+                if (m && typeof m === 'object') {
+                    m.counters = m.counters || {};
+                    m.timings = m.timings || {};
+                    m.selectors = m.selectors || {};
+                    m.snapshots = Array.isArray(m.snapshots) ? m.snapshots : [];
+                    _cache = m;
+                } else {
+                    _cache = { startedAt: Date.now(), counters: {}, timings: {}, selectors: {}, snapshots: [] };
+                }
             }
-            return { startedAt: Date.now(), counters: {}, timings: {}, selectors: {}, snapshots: [] };
-        },
-        _save(m) {
-            if (!storage.localSet(KEYS.metrics, JSON.stringify(m))) {
-                // Переполнение - сбрасываем снимки (самое тяжёлое) и пробуем снова
-                m.snapshots = (m.snapshots || []).slice(-3);
-                storage.localSet(KEYS.metrics, JSON.stringify(m));
+            return _cache;
+        }
+
+        function _flushSync() {
+            if (!_isDirty || !_cache) return;
+            if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+            try {
+                if (!storage.localSet(KEYS.metrics, JSON.stringify(_cache))) {
+                    _cache.snapshots = (_cache.snapshots || []).slice(-3);
+                    storage.localSet(KEYS.metrics, JSON.stringify(_cache));
+                }
+                _isDirty = false;
+            } catch (e) { /* ignore */ }
+        }
+
+        function _scheduleSave() {
+            _isDirty = true;
+            if (_saveTimer) return;
+            _saveTimer = setTimeout(() => {
+                _saveTimer = null;
+                _flushSync();
+            }, 300);
+        }
+
+        return {
+            bump(key, by = 1) {
+                const m = _ensureLoaded();
+                m.counters[key] = (m.counters[key] || 0) + by;
+                _scheduleSave();
+            },
+            timing(key, ms) {
+                if (!Number.isFinite(ms)) return;
+                const m = _ensureLoaded();
+                const t = m.timings[key] || { n: 0, sum: 0, last: 0, max: 0 };
+                t.n++; t.sum += ms; t.last = ms; if (ms > t.max) t.max = ms;
+                m.timings[key] = t;
+                _scheduleSave();
+            },
+            selector(name, found) {
+                const m = _ensureLoaded();
+                const s = m.selectors[name] || { found: 0, missing: 0 };
+                if (found) s.found++; else s.missing++;
+                m.selectors[name] = s;
+                _scheduleSave();
+            },
+            snapshot(label, data) {
+                const m = _ensureLoaded();
+                m.snapshots.push({ t: Date.now(), label, ...data });
+                if (m.snapshots.length > DOM_SNAPSHOT_MAX) m.snapshots = m.snapshots.slice(-DOM_SNAPSHOT_MAX);
+                _isDirty = true;
+                _flushSync();
+            },
+            getAll() { return _ensureLoaded(); },
+            clear() {
+                _cache = { startedAt: Date.now(), counters: {}, timings: {}, selectors: {}, snapshots: [] };
+                _isDirty = false;
+                if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+                storage.localRemove(KEYS.metrics);
+            },
+            flush() {
+                _flushSync();
             }
-        },
-        bump(key, by = 1) {
-            const m = Metrics._get();
-            m.counters[key] = (m.counters[key] || 0) + by;
-            Metrics._save(m);
-        },
-        timing(key, ms) {
-            if (!Number.isFinite(ms)) return;
-            const m = Metrics._get();
-            const t = m.timings[key] || { n: 0, sum: 0, last: 0, max: 0 };
-            t.n++; t.sum += ms; t.last = ms; if (ms > t.max) t.max = ms;
-            m.timings[key] = t;
-            Metrics._save(m);
-        },
-        selector(name, found) {
-            const m = Metrics._get();
-            const s = m.selectors[name] || { found: 0, missing: 0 };
-            if (found) s.found++; else s.missing++;
-            m.selectors[name] = s;
-            Metrics._save(m);
-        },
-        snapshot(label, data) {
-            const m = Metrics._get();
-            m.snapshots.push({ t: Date.now(), label, ...data });
-            if (m.snapshots.length > DOM_SNAPSHOT_MAX) m.snapshots = m.snapshots.slice(-DOM_SNAPSHOT_MAX);
-            Metrics._save(m);
-        },
-        getAll() { return Metrics._get(); },
-        clear() { storage.localRemove(KEYS.metrics); }
-    };
+        };
+    })();
 
     // Живая статистика текущего прогона. Хранится в sessionStorage, поэтому переживает
     // навигацию скрипта между страницами (вкладка одна) и естественно сбрасывается на
@@ -1236,28 +1311,18 @@
         } catch (e) { /* ошибки storage не должны ломать UI */ }
 
         try {
-            const timeStr = I18n.formatTime(Date.now());
-            const fullText = `[${timeStr}] ${msg}`;
-
-            // 2. Выделенный полноразмерный экран диагностики
-            const fullBox = document.getElementById('ar-diag-full-box');
-            if (fullBox) {
-                const fullEntry = document.createElement('div');
-                fullEntry.className = 'ar-log-line' + (isError ? ' ar-log-err' : '');
-                fullEntry.textContent = fullText;
-                fullEntry.dataset.error = isError ? '1' : '0';
-                const fullErrorsOnly = document.getElementById('ar-diag-full-errors-only');
-                if (fullErrorsOnly && fullErrorsOnly.checked && !isError) {
-                    fullEntry.style.display = 'none';
-                }
-                fullBox.appendChild(fullEntry);
-                fullBox.scrollTop = fullBox.scrollHeight;
-            }
-
-            // 3. Обновляем счетчик / бейдж
+            // 2. Обновляем счетчик / бейдж
             try {
                 (window._applomat_updateDiagBadge || window._hh_ar_updateDiagBadge)?.();
             } catch (e) { /* ignore */ }
+
+            // 3. Выделенный полноразмерный экран диагностики (рендерим только если он активен/видим)
+            const viewDiag = document.getElementById('ar-view-diag');
+            if (viewDiag && viewDiag.style.display !== 'none') {
+                try {
+                    window._hha_renderDiagnostics?.();
+                } catch (e) { /* ignore */ }
+            }
         } catch (e) { /* UI-лог не критичен */ }
 
         console.log(`[applomat] ${msg}`);
@@ -3563,6 +3628,11 @@
                     return;
                 } else {
                     // SKIPPED / legacy terminal codes: сохраняем прежнее логирование и продолжаем.
+                    if (result.status === EXECUTION_STATUS.SKIPPED) {
+                        if (result.code === 'ERROR_NO_LINK' || result.code === 'ERROR_NO_HREF' || result.code === 'ERROR_UNKNOWN') {
+                            Stats.bump('skipped');
+                        }
+                    }
                     log(I18n.t('logs.skippingCode', { code: result.code }), true);
                 }
             }
@@ -3756,6 +3826,7 @@
                     try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
                     saved = true;
                 } else if (res === 'EXISTS' || res === 'UPDATED') {
+                    Stats.bump('manual');
                     log(I18n.t('logs.manualAlready', { note: '', vid: entry.vid }));
                     try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
                     saved = true;
@@ -4521,6 +4592,47 @@
 
         .ar-inline-check{ display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--ink-2); cursor:pointer; user-select:none; }
         .ar-inline-check input{ cursor:pointer; }
+        .ar-diag-full-box{
+            flex:1; overflow-y:auto; overflow-x:hidden;
+            font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+            font-size:11px; line-height:1.45;
+            background:var(--bg); border:1px solid var(--line); border-radius:var(--r-md);
+            padding:6px; display:flex; flex-direction:column; gap:4px;
+        }
+        .ar-log-row{
+            display:flex; align-items:flex-start; gap:6px; padding:3px 6px;
+            border-radius:4px; transition:background .1s; color:var(--ink-2);
+        }
+        .ar-log-row:hover{ background:var(--bg-2); }
+        .ar-log-row.is-error{ background:var(--hh-red-soft); color:var(--hh-red); }
+        .ar-log-row.is-warning{ background:var(--hh-amber-soft, rgba(245,158,11,.1)); color:var(--hh-amber, #d97706); }
+        .ar-log-row.is-grouped{ cursor:pointer; }
+        .ar-log-time{ color:var(--ink-3); font-size:10px; flex:none; padding-top:1px; }
+        .ar-log-level{
+            font-size:9.5px; font-weight:700; padding:1px 4px; border-radius:3px;
+            flex:none; background:var(--line); color:var(--ink-2);
+        }
+        .ar-log-level--err{ background:var(--hh-red); color:#fff; }
+        .ar-log-level--warn{ background:var(--hh-amber, #f59e0b); color:#fff; }
+        .ar-log-level--ok{ background:var(--hh-green, #10b981); color:#fff; }
+        .ar-log-message{ flex:1 1 0; min-width:0; word-break:break-word; white-space:pre-wrap; }
+        .ar-log-repeat{
+            flex:none; font-size:10px; font-weight:600; padding:1px 5px; border-radius:3px;
+            background:var(--card); border:1px solid var(--line); color:var(--ink-2);
+            cursor:pointer; line-height:1.2;
+        }
+        .ar-log-repeat:hover{ background:var(--bg-2); }
+        .ar-log-group-children{ display:flex; flex-direction:column; gap:2px; padding-left:22px; }
+        .ar-log-child{ display:flex; align-items:flex-start; gap:6px; font-size:10.5px; opacity:.85; }
+        .ar-log-child-time{ color:var(--ink-3); font-size:9.5px; flex:none; }
+        .ar-log-empty{
+            display:flex; align-items:center; justify-content:center;
+            min-height:140px; height:100%; text-align:center; padding:20px;
+        }
+        .ar-log-empty-inner{ display:flex; flex-direction:column; align-items:center; gap:6px; }
+        .ar-log-empty-icon svg{ width:28px; height:28px; color:var(--ink-3); }
+        .ar-log-empty-title{ font-size:12.5px; font-weight:600; color:var(--ink-2); }
+        .ar-log-empty-hint{ font-size:11px; color:var(--ink-3); max-width:240px; }
         .ar-diag-full-box .ar-log-err{ color:#f87171; }
         .ar-log-line{ word-break:break-word; white-space:pre-wrap; }
 
@@ -5883,66 +5995,179 @@
         }
 
         function render() { renderImpl(); }
-        function destroy() { renderImpl = () => {}; }
+        function destroy() {
+            renderImpl = () => {};
+            try {
+                delete window._applomat_renderManualList;
+                delete window._hh_ar_renderManualList;
+            } catch (e) {
+                window._applomat_renderManualList = undefined;
+                window._hh_ar_renderManualList = undefined;
+            }
+        }
         return { mount, render, destroy };
     })();
 
     const StatsView = (() => {
-        let timer = null;
         let renderImpl = () => {};
+        let lastState = null;
 
         function mount() {
             // ---------- Живая статистика прогона ----------
+            const statAttempts = document.getElementById('ar-stat-attempts');
+            const statSuccess = document.getElementById('ar-stat-success');
+            const statManual = document.getElementById('ar-stat-manual');
+            const statSkipped = document.getElementById('ar-stat-skipped');
+            const statProg = document.getElementById('ar-stat-progress');
+            const progressFill = document.getElementById('ar-progress-fill');
+            const tileAtt = document.getElementById('ar-stat-tile-attempts');
+            const tileSuc = document.getElementById('ar-stat-tile-success');
+            const tileMan = document.getElementById('ar-stat-tile-manual');
+            const tileSkp = document.getElementById('ar-stat-tile-skip');
+
             function renderStats() {
                 const s = Stats.getAll();
-                const setNum = (id, v) => { const n = document.getElementById(id); if (n) n.textContent = v; };
-                setNum('ar-stat-attempts', s.attempts);
-                setNum('ar-stat-success', s.success);
-                setNum('ar-stat-manual', s.manual);
-                setNum('ar-stat-skipped', s.skipped);
                 const sent = State.getSentCount();
-                const prog = document.getElementById('ar-stat-progress');
-                if (prog) prog.textContent = `${sent} / ${config.limit}`;
-                const fill = document.getElementById('ar-progress-fill');
-                if (fill) fill.style.width = clamp(Math.round(sent / Math.max(1, config.limit) * 100), 0, 100) + '%';
+                const limit = config.limit;
+
+                if (lastState &&
+                    lastState.attempts === s.attempts &&
+                    lastState.success === s.success &&
+                    lastState.manual === s.manual &&
+                    lastState.skipped === s.skipped &&
+                    lastState.sent === sent &&
+                    lastState.limit === limit) {
+                    return;
+                }
+
+                lastState = { attempts: s.attempts, success: s.success, manual: s.manual, skipped: s.skipped, sent, limit };
+
+                if (statAttempts) statAttempts.textContent = s.attempts;
+                if (statSuccess) statSuccess.textContent = s.success;
+                if (statManual) statManual.textContent = s.manual;
+                if (statSkipped) statSkipped.textContent = s.skipped;
+
+                if (statProg) statProg.textContent = `${sent} / ${limit}`;
+                if (progressFill) progressFill.style.width = clamp(Math.round(sent / Math.max(1, limit) * 100), 0, 100) + '%';
 
                 // Zero-state consistency: семантические цвета только при ненулевых значениях
-                const tileAtt = document.getElementById('ar-stat-tile-attempts');
-                const tileSuc = document.getElementById('ar-stat-tile-success');
-                const tileMan = document.getElementById('ar-stat-tile-manual');
-                const tileSkp = document.getElementById('ar-stat-tile-skip');
                 if (tileSuc) tileSuc.classList.toggle('is-active-success', s.success > 0);
                 if (tileMan) tileMan.classList.toggle('is-active-manual', s.manual > 0);
                 if (tileSkp) tileSkp.classList.toggle('is-active-skip', s.skipped > 0);
                 if (tileAtt) tileAtt.classList.toggle('is-active-attempts', s.attempts > 0);
             }
-            window._applomat_renderStats = window._hh_ar_renderStats = renderStats;
-            renderStats();
-
-            timer = setInterval(() => {
-                if (!document.getElementById('ar-stat-attempts')) {
-                    clearInterval(timer);
-                    timer = null;
-                    return;
-                }
-                renderStats();
-            }, 2000);
 
             renderImpl = renderStats;
+            window._applomat_renderStats = window._hh_ar_renderStats = renderImpl;
+            renderStats();
         }
 
         function render() { renderImpl(); }
         function destroy() {
-            if (timer) { clearInterval(timer); timer = null; }
             renderImpl = () => {};
+            lastState = null;
+            try {
+                delete window._applomat_renderStats;
+                delete window._hh_ar_renderStats;
+            } catch (e) {
+                window._applomat_renderStats = undefined;
+                window._hh_ar_renderStats = undefined;
+            }
         }
         return { mount, render, destroy };
     })();
 
     const DiagnosticsView = (() => {
-        let timer = null;
         let renderImpl = () => {};
         let updateImpl = () => {};
+        let lastRenderedVersion = -1;
+        let lastRenderedLang = '';
+        const expandedGroups = new Set();
+
+        function groupConsecutive(items) {
+            const groups = [];
+            for (const item of items) {
+                const prev = groups[groups.length - 1];
+                if (prev && prev.msg === item.msg && prev.lvl === item.lvl) {
+                    prev.count++;
+                    prev.endT = item.t || Date.now();
+                    prev.items.push(item);
+                } else {
+                    groups.push({
+                        id: groups.length + '_' + (item.t || Date.now()),
+                        msg: item.msg,
+                        lvl: item.lvl,
+                        startT: item.t || Date.now(),
+                        endT: item.t || Date.now(),
+                        count: 1,
+                        items: [item]
+                    });
+                }
+            }
+            return groups;
+        }
+
+        function buildLogRow(group, isExpanded, onToggle) {
+            const row = document.createElement('div');
+            const isErr = group.lvl === 'ERR';
+            const isWarn = group.lvl === 'WARN';
+            const isOk = group.lvl === 'OK';
+            const isGrouped = group.count > 1;
+            row.className = 'ar-log-row' +
+                (isErr ? ' is-error' : '') +
+                (isWarn ? ' is-warning' : '') +
+                (isGrouped ? ' is-grouped' : '');
+
+            const time = document.createElement('span');
+            time.className = 'ar-log-time';
+            if (isGrouped && group.startT !== group.endT) {
+                time.textContent = `${I18n.formatTime(group.startT)} – ${I18n.formatTime(group.endT)}`;
+            } else {
+                time.textContent = I18n.formatTime(group.endT);
+            }
+
+            const level = document.createElement('span');
+            level.className = 'ar-log-level' +
+                (isErr ? ' ar-log-level--err' : isWarn ? ' ar-log-level--warn' : isOk ? ' ar-log-level--ok' : '');
+            level.textContent = group.lvl || 'INFO';
+
+            const msg = document.createElement('span');
+            msg.className = 'ar-log-message';
+            msg.textContent = group.msg;
+
+            row.appendChild(time);
+            row.appendChild(level);
+            row.appendChild(msg);
+
+            if (isGrouped) {
+                const actionTitle = I18n.t(isExpanded ? 'diag.repeatCollapse' : 'diag.repeatExpand');
+                row.setAttribute('role', 'button');
+                row.setAttribute('tabindex', '0');
+                row.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+                row.title = actionTitle;
+                row.onclick = () => onToggle();
+                row.onkeydown = (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onToggle();
+                    }
+                };
+
+                const badge = document.createElement('button');
+                badge.type = 'button';
+                badge.className = 'ar-log-repeat';
+                badge.textContent = `×${group.count}${isExpanded ? ' ▴' : ' ▾'}`;
+                badge.title = actionTitle;
+                badge.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+                badge.onclick = (e) => {
+                    e.stopPropagation();
+                    onToggle();
+                };
+                row.appendChild(badge);
+            }
+
+            return row;
+        }
 
         function mount({ el, uiSignal }) {
             // ---------- Экран диагностики ----------
@@ -5963,32 +6188,92 @@
                 viewMain.style.display = 'flex';
             };
 
-            function renderFullDiag() {
+            function renderFullDiag({ preserveScroll = false } = {}) {
                 const fullBox = el('ar-diag-full-box');
                 if (!fullBox) return;
-                fullBox.innerHTML = '';
+
+                const wasAtBottom = Math.abs((fullBox.scrollHeight - fullBox.scrollTop) - fullBox.clientHeight) <= 12;
+                const previousScrollTop = fullBox.scrollTop;
+
                 const all = DiagLog.getAll();
                 const filterErr = el('ar-diag-full-errors-only')?.checked;
+                const filtered = filterErr ? all.filter(item => item.lvl === 'ERR') : all;
+                const groups = groupConsecutive(filtered);
 
-                all.forEach(item => {
-                    const isErr = item.lvl === 'ERR';
-                    if (filterErr && !isErr) return;
-                    const line = document.createElement('div');
-                    line.className = 'ar-log-line' + (isErr ? ' ar-log-err' : '');
-                    const time = I18n.formatTime(item.t || Date.now());
-                    line.textContent = `[${time}] ${item.msg}`;
-                    line.dataset.error = isErr ? '1' : '0';
-                    fullBox.appendChild(line);
-                });
-                fullBox.scrollTop = fullBox.scrollHeight;
-                updateDiagCount();
+                fullBox.innerHTML = '';
+
+                if (!groups.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'ar-log-empty';
+                    const emptyTitleKey = filterErr ? 'diag.emptyNoErrorsTitle' : 'diag.emptyTitle';
+                    const emptyHintKey = filterErr ? 'diag.emptyNoErrorsHint' : 'diag.emptyHint';
+                    empty.innerHTML = `
+                        <div class="ar-log-empty-inner">
+                            <div class="ar-log-empty-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <circle cx="12" cy="12" r="9"></circle>
+                                    <line x1="9" y1="10" x2="9.01" y2="10" stroke-width="2.6" stroke-linecap="round"></line>
+                                    <line x1="15" y1="10" x2="15.01" y2="10" stroke-width="2.6" stroke-linecap="round"></line>
+                                    <path d="M8 15s1.5 2 4 2 4-2 4-2" stroke-linecap="round"></path>
+                                </svg>
+                            </div>
+                            <div class="ar-log-empty-title">${I18n.t(emptyTitleKey)}</div>
+                            <div class="ar-log-empty-hint">${I18n.t(emptyHintKey)}</div>
+                        </div>
+                    `;
+                    fullBox.appendChild(empty);
+                } else {
+                    const fragment = document.createDocumentFragment();
+                    groups.forEach(group => {
+                        const isExpanded = expandedGroups.has(group.id);
+                        const toggleGroup = () => {
+                            if (expandedGroups.has(group.id)) {
+                                expandedGroups.delete(group.id);
+                            } else {
+                                expandedGroups.add(group.id);
+                            }
+                            renderFullDiag({ preserveScroll: true });
+                        };
+
+                        const row = buildLogRow(group, isExpanded, toggleGroup);
+                        fragment.appendChild(row);
+
+                        if (isExpanded && group.count > 1) {
+                            const childContainer = document.createElement('div');
+                            childContainer.className = 'ar-log-group-children';
+                            group.items.forEach(child => {
+                                const childRow = document.createElement('div');
+                                childRow.className = 'ar-log-child';
+                                const childTime = document.createElement('span');
+                                childTime.className = 'ar-log-child-time';
+                                childTime.textContent = I18n.formatTime(child.t || Date.now());
+                                const childMsg = document.createElement('span');
+                                childMsg.className = 'ar-log-message';
+                                childMsg.textContent = child.msg;
+                                childRow.appendChild(childTime);
+                                childRow.appendChild(childMsg);
+                                childContainer.appendChild(childRow);
+                            });
+                            fragment.appendChild(childContainer);
+                        }
+                    });
+                    fullBox.appendChild(fragment);
+                }
+
+                if (preserveScroll) {
+                    fullBox.scrollTop = previousScrollTop;
+                } else if (wasAtBottom) {
+                    fullBox.scrollTop = fullBox.scrollHeight;
+                }
+
+                updateDiagCount(true);
             }
 
             const backBtn = el('ar-diag-back-btn');
             if (backBtn) backBtn.onclick = closeFullDiag;
 
             const diagFullErrChk = el('ar-diag-full-errors-only');
-            if (diagFullErrChk) diagFullErrChk.onchange = renderFullDiag;
+            if (diagFullErrChk) diagFullErrChk.onchange = () => renderFullDiag();
 
             const diagFullClearBox = el('ar-diag-full-clear-box');
             if (diagFullClearBox) diagFullClearBox.onclick = () => {
@@ -6013,12 +6298,18 @@
                 el('ar-diag-full-dropdown')?.classList.remove('is-open');
             }, { signal: uiSignal });
 
-            // Счётчик записей и ошибок в постоянном логе
-            const updateDiagCount = () => {
-                const all = DiagLog.getAll();
-                const total = all.length;
-                const errors = all.filter(e => e.lvl === 'ERR').length;
+            // Счётчик записей и ошибок в постоянном логе с проверкой версий
+            const updateDiagCount = (force = false) => {
+                const stats = DiagLog.getStats();
+                const curLang = I18n.getLanguage();
+                if (!force && stats.version === lastRenderedVersion && curLang === lastRenderedLang) {
+                    return;
+                }
+                lastRenderedVersion = stats.version;
+                lastRenderedLang = curLang;
 
+                const errors = stats.errors;
+                const total = stats.total;
                 const errText = I18n.plural(errors, 'error');
                 const recText = I18n.plural(total, 'record');
 
@@ -6045,21 +6336,24 @@
                     fullStat.textContent = I18n.t('diag.statSummary', { errText, recText });
                 }
             };
-            window._applomat_updateDiagBadge = window._hh_ar_updateDiagBadge = updateDiagCount;
-            updateDiagCount();
-            timer = setInterval(() => {
-                if (!document.getElementById('ar-main-panel')) {
-                    clearInterval(timer);
-                    timer = null;
-                    return;
+
+            const ownedUpdateBadge = (force) => updateDiagCount(force);
+            const ownedRenderDiag = () => {
+                updateDiagCount(true);
+                const diag = el('ar-view-diag');
+                if (diag && diag.style.display !== 'none') {
+                    renderFullDiag();
                 }
-                updateDiagCount();
-            }, 2000);
+            };
+
+            window._hha_updateDiagBadge = window._applomat_updateDiagBadge = window._hh_ar_updateDiagBadge = ownedUpdateBadge;
+            window._hha_renderDiagnostics = ownedRenderDiag;
+            updateDiagCount(true);
 
             // Выгрузка полного диагностического лога в файл
             const exportLogs = () => {
                 exportDiagnosticReport();
-                updateDiagCount();
+                updateDiagCount(true);
             };
             const diagFullSaveBtn = el('ar-diag-full-save');
             if (diagFullSaveBtn) diagFullSaveBtn.onclick = exportLogs;
@@ -6069,9 +6363,10 @@
                 if (confirm(I18n.t('confirm.clearDiag'))) {
                     DiagLog.clear();
                     Metrics.clear();
+                    expandedGroups.clear();
                     const fullBox = el('ar-diag-full-box');
                     if (fullBox) fullBox.innerHTML = '';
-                    updateDiagCount();
+                    updateDiagCount(true);
                     log(I18n.t('logs.diagCleared'));
                     el('ar-diag-full-dropdown')?.classList.remove('is-open');
                 }
@@ -6083,6 +6378,7 @@
             if (healthButton) healthButton.onclick = openFullDiag;
             const checkButton = el('ar-diag-full-check');
             if (checkButton) checkButton.onclick = runHealthCheck;
+
             renderImpl = renderFullDiag;
             updateImpl = updateDiagCount;
         }
@@ -6090,14 +6386,27 @@
         function render() { renderImpl(); }
         function update() { updateImpl(); }
         function refresh() {
-            updateImpl();
+            updateImpl(true);
             const diag = document.getElementById('ar-view-diag');
             if (diag && diag.style.display !== 'none') renderImpl();
         }
         function destroy() {
-            if (timer) { clearInterval(timer); timer = null; }
             renderImpl = () => {};
             updateImpl = () => {};
+            lastRenderedVersion = -1;
+            lastRenderedLang = '';
+            expandedGroups.clear();
+            try {
+                delete window._hha_renderDiagnostics;
+                delete window._hha_updateDiagBadge;
+                delete window._applomat_updateDiagBadge;
+                delete window._hh_ar_updateDiagBadge;
+            } catch (e) {
+                window._hha_renderDiagnostics = undefined;
+                window._hha_updateDiagBadge = undefined;
+                window._applomat_updateDiagBadge = undefined;
+                window._hh_ar_updateDiagBadge = undefined;
+            }
         }
         return { mount, render, update, refresh, destroy };
     })();
