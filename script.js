@@ -2010,6 +2010,8 @@
             let pollTimer = null;
             let onAbort = null;
             let observer = null;
+            let scheduledId = null;
+            let isRaf = false;
             let finished = false;
 
             const finish = (result) => {
@@ -2018,6 +2020,14 @@
                 if (timer) { clearTimeout(timer); timer = null; }
                 if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
                 if (observer) { observer.disconnect(); observer = null; }
+                if (scheduledId) {
+                    if (isRaf && typeof cancelAnimationFrame === 'function') {
+                        cancelAnimationFrame(scheduledId);
+                    } else {
+                        clearTimeout(scheduledId);
+                    }
+                    scheduledId = null;
+                }
                 if (onAbort && sig) {
                     try { sig.removeEventListener('abort', onAbort); } catch (e) {}
                 }
@@ -2031,24 +2041,9 @@
                 try { sig.addEventListener('abort', onAbort, { once: true }); } catch (e) {}
             }
 
-            if (typeof MutationObserver !== 'undefined') {
-                observer = new MutationObserver(() => {
-                    if (stopSignal || sig?.aborted) {
-                        finish(false);
-                        return;
-                    }
-                    try {
-                        const res = checkFn();
-                        if (res) finish(res);
-                    } catch (e) { /* ignore */ }
-                });
-                try {
-                    observer.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true });
-                } catch (e) {}
-            }
-
-            pollTimer = setInterval(() => {
-                if (stopSignal || sig?.aborted) {
+            const executeCheck = () => {
+                scheduledId = null;
+                if (finished || stopSignal || sig?.aborted) {
                     finish(false);
                     return;
                 }
@@ -2056,7 +2051,30 @@
                     const res = checkFn();
                     if (res) finish(res);
                 } catch (e) { /* ignore */ }
-            }, 80);
+            };
+
+            if (typeof MutationObserver !== 'undefined') {
+                observer = new MutationObserver(() => {
+                    if (finished || stopSignal || sig?.aborted) {
+                        finish(false);
+                        return;
+                    }
+                    if (!scheduledId) {
+                        if (typeof requestAnimationFrame === 'function') {
+                            isRaf = true;
+                            scheduledId = requestAnimationFrame(executeCheck);
+                        } else {
+                            isRaf = false;
+                            scheduledId = setTimeout(executeCheck, 0);
+                        }
+                    }
+                });
+                try {
+                    observer.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true });
+                } catch (e) {}
+            }
+
+            pollTimer = setInterval(executeCheck, 150);
 
             timer = setTimeout(() => finish(false), timeout);
         });
@@ -2592,6 +2610,7 @@
     // Человеческий скролл: вниз до секции Подходящие вакансии в этой компании
     // (или до 60% страницы), пауза, и возврат вверх.
     async function simulateReading(viewTime, runId = currentRunId) {
+        if (!viewTime || viewTime <= 0) return;
         try {
             await actionPause();
             if (!isRunCurrent(runId)) return;
@@ -6993,13 +7012,16 @@
     // освобождаются по TTL (TUNING.instanceLockTtl).
     window.addEventListener('beforeunload', () => {
         DiagLog.flush();
+        Metrics.flush();
         if (!State.amIRunning()) State.releaseInstanceLock(TAB_ID);
     });
     window.addEventListener('pagehide', () => {
         DiagLog.flush();
+        Metrics.flush();
     });
     window.addEventListener('unload', () => {
         DiagLog.flush();
+        Metrics.flush();
         if (!State.amIRunning()) State.releaseInstanceLock(TAB_ID);
     });
 })();
