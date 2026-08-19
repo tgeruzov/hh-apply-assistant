@@ -180,7 +180,13 @@
                 clearAll: 'Очистить сохр. лог и метрики',
                 statSummary: '{errText} · {recText}',
                 badgeTitle: '{errText} в диагностическом логе · Открыть диагностику',
-                badgeTitleClean: 'Открыть диагностику и лог'
+                badgeTitleClean: 'Открыть диагностику и лог',
+                emptyTitle: 'Записей пока нет',
+                emptyHint: 'Диагностические события появятся здесь во время работы',
+                emptyNoErrorsTitle: 'Ошибок нет',
+                emptyNoErrorsHint: 'В диагностическом логе пока нет ошибок',
+                repeatExpand: 'Развернуть группу повторов',
+                repeatCollapse: 'Свернуть группу повторов'
             },
             confirm: {
                 clearDiag: 'Очистить сохранённый диагностический лог и метрики? (выгрузите файл перед очисткой, если нужен для анализа)',
@@ -486,7 +492,13 @@
                 clearAll: 'Clear saved log & metrics',
                 statSummary: '{errText} · {recText}',
                 badgeTitle: '{errText} in diagnostic log · Open diagnostics',
-                badgeTitleClean: 'Open diagnostics and log'
+                badgeTitleClean: 'Open diagnostics and log',
+                emptyTitle: 'No entries yet',
+                emptyHint: 'Diagnostic events will appear here while the script is running',
+                emptyNoErrorsTitle: 'No errors',
+                emptyNoErrorsHint: 'There are no errors in the diagnostic log',
+                repeatExpand: 'Expand repeat group',
+                repeatCollapse: 'Collapse repeat group'
             },
             confirm: {
                 clearDiag: 'Clear saved diagnostic log and metrics? (download the log before clearing if needed for analysis)',
@@ -812,7 +824,6 @@
                     || _getNested(TRANSLATIONS[DEFAULT_LANGUAGE], `plurals.${category}`)
                     || {};
                 const word = pluralsObj[form] || pluralsObj.other || pluralsObj.many || pluralsObj.one || category;
-                const mergedParams = { count: num, ...params };
                 return `${num} ${word}`;
             },
             formatTime(dateOrTs, options = {}, lang) {
@@ -882,9 +893,14 @@
         return WORK_MODE_KEYS[Math.max(0, Math.min(WORK_MODE_KEYS.length - 1, idx))] || DEFAULT_PRESET;
     };
 
+    const getDefaultCoverText = (lang) => {
+        const target = lang || I18n.getLanguage();
+        return TRANSLATIONS[target]?.cover?.defaultText || TRANSLATIONS[DEFAULT_LANGUAGE].cover.defaultText;
+    };
+
     // Пользовательские настройки по умолчанию
     const DEFAULTS = {
-        coverText: 'Добрый день! Заинтересовала ваша вакансия. Опыт релевантен, подробности в резюме. Буду рад обратной связи!',
+        coverText: TRANSLATIONS[DEFAULT_LANGUAGE].cover.defaultText,
         useCover: true,
         applyOnRejectWarning: true,
         skipHidden: true,
@@ -914,7 +930,10 @@
         if (stopSignal || sig?.aborted || ms <= 0) return resolve();
         let timer = null;
         let onAbort = null;
+        let isDone = false;
         const cleanup = () => {
+            if (isDone) return;
+            isDone = true;
             if (timer) { clearTimeout(timer); timer = null; }
             if (onAbort && sig) {
                 try { sig.removeEventListener('abort', onAbort); } catch (e) {}
@@ -925,19 +944,23 @@
             resolve();
         };
         if (sig) {
-            if (sig.aborted) return resolve();
             try { sig.addEventListener('abort', onAbort, { once: true }); } catch (e) {}
-        }
-        const start = Date.now();
-        const check = () => {
-            if (stopSignal || (sig && sig.aborted) || (Date.now() - start >= ms)) {
+            timer = setTimeout(() => {
                 cleanup();
                 resolve();
-            } else {
-                timer = setTimeout(check, Math.min(40, ms - (Date.now() - start)));
-            }
-        };
-        timer = setTimeout(check, Math.min(40, ms));
+            }, ms);
+        } else {
+            const start = Date.now();
+            const check = () => {
+                if (stopSignal || (Date.now() - start >= ms)) {
+                    cleanup();
+                    resolve();
+                } else {
+                    timer = setTimeout(check, Math.min(40, ms - (Date.now() - start)));
+                }
+            };
+            timer = setTimeout(check, Math.min(40, ms));
+        }
     });
     const wait = interruptibleWait;
     const randBetween = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -1005,9 +1028,10 @@
         // Приводим сырые данные (в т.ч. конфиг от старых версий с ручными
         // таймингами) к актуальной схеме: пресет + несколько флагов.
         normalize(raw = {}) {
-            const merged = { ...DEFAULTS, ...(raw || {}) };
+            const defaultCover = getDefaultCoverText();
+            const merged = { ...DEFAULTS, coverText: defaultCover, ...(raw || {}) };
             return {
-                coverText: String(merged.coverText ?? DEFAULTS.coverText).slice(0, 5000),
+                coverText: String(merged.coverText ?? defaultCover).slice(0, 5000),
                 useCover: merged.useCover !== false,
                 applyOnRejectWarning: merged.applyOnRejectWarning !== false,
                 skipHidden: merged.skipHidden !== false,
@@ -1062,12 +1086,15 @@
         let _cache = null;
         let _saveTimer = null;
         let _isDirty = false;
+        let _version = 0;
+        let _errorCount = 0;
 
         function _ensureLoaded() {
             if (_cache === null) {
                 const raw = storage.localGet(KEYS.diagLog);
                 const parsed = parseJson(raw, []);
                 _cache = Array.isArray(parsed) ? parsed : [];
+                _errorCount = _cache.reduce((acc, item) => (item && item.lvl === 'ERR' ? acc + 1 : acc), 0);
             }
             return _cache;
         }
@@ -1078,11 +1105,13 @@
             try {
                 if (_cache.length > DIAG_LOG_MAX) {
                     _cache = _cache.slice(_cache.length - DIAG_LOG_MAX);
+                    _errorCount = _cache.reduce((acc, item) => (item && item.lvl === 'ERR' ? acc + 1 : acc), 0);
                 }
                 const json = JSON.stringify(_cache);
                 if (!storage.localSet(KEYS.diagLog, json)) {
                     // Переполнение квоты — агрессивно обрезаем и пробуем снова
                     _cache = _cache.slice(-300);
+                    _errorCount = _cache.reduce((acc, item) => (item && item.lvl === 'ERR' ? acc + 1 : acc), 0);
                     storage.localSet(KEYS.diagLog, JSON.stringify(_cache));
                 }
                 _isDirty = false;
@@ -1110,8 +1139,13 @@
                     tab: TAB_ID,
                     msg: String(msg).slice(0, 1000)
                 });
+                _version++;
+                if (isError) {
+                    _errorCount++;
+                }
                 if (arr.length > DIAG_LOG_MAX + 50) {
                     _cache = arr.slice(arr.length - DIAG_LOG_MAX);
+                    _errorCount = _cache.reduce((acc, item) => (item && item.lvl === 'ERR' ? acc + 1 : acc), 0);
                 }
                 _isDirty = true;
                 if (isError) {
@@ -1124,8 +1158,18 @@
             getAll() {
                 return _ensureLoaded().slice();
             },
+            getStats() {
+                const arr = _ensureLoaded();
+                return {
+                    total: arr.length,
+                    errors: _errorCount,
+                    version: _version
+                };
+            },
             clear() {
                 _cache = [];
+                _errorCount = 0;
+                _version++;
                 _isDirty = false;
                 if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
                 storage.localRemove(KEYS.diagLog);
@@ -1136,57 +1180,88 @@
         };
     })();
 
-    // Метрики: накопительная статистика для улучшения скрипта.
-    // Копим распределение сценариев, тайминги, здоровье селекторов (new vs legacy) и
-    // снимки DOM в проблемных местах - по ним видно, что и когда поменял hh.ru.
-    const Metrics = {
-        _get() {
-            const m = parseJson(storage.localGet(KEYS.metrics), null);
-            if (m && typeof m === 'object') {
-                m.counters = m.counters || {};
-                m.timings = m.timings || {};
-                m.selectors = m.selectors || {};
-                m.snapshots = Array.isArray(m.snapshots) ? m.snapshots : [];
-                return m;
+    const Metrics = (() => {
+        let _cache = null;
+        let _saveTimer = null;
+        let _isDirty = false;
+
+        function _ensureLoaded() {
+            if (_cache === null) {
+                const m = parseJson(storage.localGet(KEYS.metrics), null);
+                if (m && typeof m === 'object') {
+                    m.counters = m.counters || {};
+                    m.timings = m.timings || {};
+                    m.selectors = m.selectors || {};
+                    m.snapshots = Array.isArray(m.snapshots) ? m.snapshots : [];
+                    _cache = m;
+                } else {
+                    _cache = { startedAt: Date.now(), counters: {}, timings: {}, selectors: {}, snapshots: [] };
+                }
             }
-            return { startedAt: Date.now(), counters: {}, timings: {}, selectors: {}, snapshots: [] };
-        },
-        _save(m) {
-            if (!storage.localSet(KEYS.metrics, JSON.stringify(m))) {
-                // Переполнение - сбрасываем снимки (самое тяжёлое) и пробуем снова
-                m.snapshots = (m.snapshots || []).slice(-3);
-                storage.localSet(KEYS.metrics, JSON.stringify(m));
+            return _cache;
+        }
+
+        function _flushSync() {
+            if (!_isDirty || !_cache) return;
+            if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+            try {
+                if (!storage.localSet(KEYS.metrics, JSON.stringify(_cache))) {
+                    _cache.snapshots = (_cache.snapshots || []).slice(-3);
+                    storage.localSet(KEYS.metrics, JSON.stringify(_cache));
+                }
+                _isDirty = false;
+            } catch (e) { /* ignore */ }
+        }
+
+        function _scheduleSave() {
+            _isDirty = true;
+            if (_saveTimer) return;
+            _saveTimer = setTimeout(() => {
+                _saveTimer = null;
+                _flushSync();
+            }, 300);
+        }
+
+        return {
+            bump(key, by = 1) {
+                const m = _ensureLoaded();
+                m.counters[key] = (m.counters[key] || 0) + by;
+                _scheduleSave();
+            },
+            timing(key, ms) {
+                if (!Number.isFinite(ms)) return;
+                const m = _ensureLoaded();
+                const t = m.timings[key] || { n: 0, sum: 0, last: 0, max: 0 };
+                t.n++; t.sum += ms; t.last = ms; if (ms > t.max) t.max = ms;
+                m.timings[key] = t;
+                _scheduleSave();
+            },
+            selector(name, found) {
+                const m = _ensureLoaded();
+                const s = m.selectors[name] || { found: 0, missing: 0 };
+                if (found) s.found++; else s.missing++;
+                m.selectors[name] = s;
+                _scheduleSave();
+            },
+            snapshot(label, data) {
+                const m = _ensureLoaded();
+                m.snapshots.push({ t: Date.now(), label, ...data });
+                if (m.snapshots.length > DOM_SNAPSHOT_MAX) m.snapshots = m.snapshots.slice(-DOM_SNAPSHOT_MAX);
+                _isDirty = true;
+                _flushSync();
+            },
+            getAll() { return _ensureLoaded(); },
+            clear() {
+                _cache = { startedAt: Date.now(), counters: {}, timings: {}, selectors: {}, snapshots: [] };
+                _isDirty = false;
+                if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+                storage.localRemove(KEYS.metrics);
+            },
+            flush() {
+                _flushSync();
             }
-        },
-        bump(key, by = 1) {
-            const m = Metrics._get();
-            m.counters[key] = (m.counters[key] || 0) + by;
-            Metrics._save(m);
-        },
-        timing(key, ms) {
-            if (!Number.isFinite(ms)) return;
-            const m = Metrics._get();
-            const t = m.timings[key] || { n: 0, sum: 0, last: 0, max: 0 };
-            t.n++; t.sum += ms; t.last = ms; if (ms > t.max) t.max = ms;
-            m.timings[key] = t;
-            Metrics._save(m);
-        },
-        selector(name, found) {
-            const m = Metrics._get();
-            const s = m.selectors[name] || { found: 0, missing: 0 };
-            if (found) s.found++; else s.missing++;
-            m.selectors[name] = s;
-            Metrics._save(m);
-        },
-        snapshot(label, data) {
-            const m = Metrics._get();
-            m.snapshots.push({ t: Date.now(), label, ...data });
-            if (m.snapshots.length > DOM_SNAPSHOT_MAX) m.snapshots = m.snapshots.slice(-DOM_SNAPSHOT_MAX);
-            Metrics._save(m);
-        },
-        getAll() { return Metrics._get(); },
-        clear() { storage.localRemove(KEYS.metrics); }
-    };
+        };
+    })();
 
     // Живая статистика текущего прогона. Хранится в sessionStorage, поэтому переживает
     // навигацию скрипта между страницами (вкладка одна) и естественно сбрасывается на
@@ -1236,28 +1311,18 @@
         } catch (e) { /* ошибки storage не должны ломать UI */ }
 
         try {
-            const timeStr = I18n.formatTime(Date.now());
-            const fullText = `[${timeStr}] ${msg}`;
-
-            // 2. Выделенный полноразмерный экран диагностики
-            const fullBox = document.getElementById('ar-diag-full-box');
-            if (fullBox) {
-                const fullEntry = document.createElement('div');
-                fullEntry.className = 'ar-log-line' + (isError ? ' ar-log-err' : '');
-                fullEntry.textContent = fullText;
-                fullEntry.dataset.error = isError ? '1' : '0';
-                const fullErrorsOnly = document.getElementById('ar-diag-full-errors-only');
-                if (fullErrorsOnly && fullErrorsOnly.checked && !isError) {
-                    fullEntry.style.display = 'none';
-                }
-                fullBox.appendChild(fullEntry);
-                fullBox.scrollTop = fullBox.scrollHeight;
-            }
-
-            // 3. Обновляем счетчик / бейдж
+            // 2. Обновляем счетчик / бейдж
             try {
                 (window._applomat_updateDiagBadge || window._hh_ar_updateDiagBadge)?.();
             } catch (e) { /* ignore */ }
+
+            // 3. Выделенный полноразмерный экран диагностики (рендерим только если он активен/видим)
+            const viewDiag = document.getElementById('ar-view-diag');
+            if (viewDiag && viewDiag.style.display !== 'none') {
+                try {
+                    window._hha_renderDiagnostics?.();
+                } catch (e) { /* ignore */ }
+            }
         } catch (e) { /* UI-лог не критичен */ }
 
         console.log(`[applomat] ${msg}`);
@@ -2010,6 +2075,8 @@
             let pollTimer = null;
             let onAbort = null;
             let observer = null;
+            let scheduledId = null;
+            let isRaf = false;
             let finished = false;
 
             const finish = (result) => {
@@ -2018,6 +2085,14 @@
                 if (timer) { clearTimeout(timer); timer = null; }
                 if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
                 if (observer) { observer.disconnect(); observer = null; }
+                if (scheduledId) {
+                    if (isRaf && typeof cancelAnimationFrame === 'function') {
+                        cancelAnimationFrame(scheduledId);
+                    } else {
+                        clearTimeout(scheduledId);
+                    }
+                    scheduledId = null;
+                }
                 if (onAbort && sig) {
                     try { sig.removeEventListener('abort', onAbort); } catch (e) {}
                 }
@@ -2031,24 +2106,9 @@
                 try { sig.addEventListener('abort', onAbort, { once: true }); } catch (e) {}
             }
 
-            if (typeof MutationObserver !== 'undefined') {
-                observer = new MutationObserver(() => {
-                    if (stopSignal || sig?.aborted) {
-                        finish(false);
-                        return;
-                    }
-                    try {
-                        const res = checkFn();
-                        if (res) finish(res);
-                    } catch (e) { /* ignore */ }
-                });
-                try {
-                    observer.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true });
-                } catch (e) {}
-            }
-
-            pollTimer = setInterval(() => {
-                if (stopSignal || sig?.aborted) {
+            const executeCheck = () => {
+                scheduledId = null;
+                if (finished || stopSignal || sig?.aborted) {
                     finish(false);
                     return;
                 }
@@ -2056,7 +2116,30 @@
                     const res = checkFn();
                     if (res) finish(res);
                 } catch (e) { /* ignore */ }
-            }, 80);
+            };
+
+            if (typeof MutationObserver !== 'undefined') {
+                observer = new MutationObserver(() => {
+                    if (finished || stopSignal || sig?.aborted) {
+                        finish(false);
+                        return;
+                    }
+                    if (!scheduledId) {
+                        if (typeof requestAnimationFrame === 'function') {
+                            isRaf = true;
+                            scheduledId = requestAnimationFrame(executeCheck);
+                        } else {
+                            isRaf = false;
+                            scheduledId = setTimeout(executeCheck, 0);
+                        }
+                    }
+                });
+                try {
+                    observer.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true });
+                } catch (e) {}
+            }
+
+            pollTimer = setInterval(executeCheck, 150);
 
             timer = setTimeout(() => finish(false), timeout);
         });
@@ -2434,8 +2517,22 @@
     function resolveManualTitle(vid) {
         const meta = State.getLastVacancyMeta();
         if (meta && meta.title) {
-            if (vid && meta.vid && meta.vid === vid) return meta.title;
-            if (Date.now() - (Number(meta.ts) || 0) < 15 * 60 * 1000) return meta.title;
+            const rawVid = String(vid || '');
+            const rawMetaVid = String(meta.vid || '');
+            const numVid = rawVid.replace(/^v_/, '');
+            const numMeta = rawMetaVid.replace(/^v_/, '');
+            const isNumVid = /^\d+$/.test(numVid);
+            const isNumMeta = /^\d+$/.test(numMeta);
+
+            if (rawVid && rawMetaVid && rawVid === rawMetaVid) {
+                return meta.title;
+            } else if (isNumVid && isNumMeta) {
+                if (numVid === numMeta) return meta.title;
+                // Разные числовые ID — мета принадлежит другой вакансии, не используем
+            } else if (Date.now() - (Number(meta.ts) || 0) < 15 * 60 * 1000) {
+                // Если один из ID не числовой (например, hash карточки), а мета свежая — разрешаем fallback
+                return meta.title;
+            }
         }
         if (Page.isVacancy()) {
             const t = parseVacancyTitle();
@@ -2465,6 +2562,7 @@
                 try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
                 return true;
             } else if (res === 'EXISTS' || res === 'UPDATED') {
+                Stats.bump('manual');
                 log(I18n.t('logs.manualAlready', { note: note ? ' (' + note + ')' : '', vid }));
                 try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
                 return true;
@@ -2539,9 +2637,60 @@
     //  10. ЛОГИКА ОТКЛИКА
     // ─────────────────────────────────────────────────────────────
 
+    const EXECUTION_STATUS = Object.freeze({
+        SUCCESS: 'SUCCESS',
+        MANUAL: 'MANUAL',
+        SKIPPED: 'SKIPPED',
+        NAVIGATED: 'NAVIGATED',
+        STOPPED: 'STOPPED',
+        CAPTCHA: 'CAPTCHA',
+        RETRY: 'RETRY',
+        FATAL: 'FATAL'
+    });
+
+    const EXECUTION_REASON = Object.freeze({
+        APPLIED: 'APPLIED',
+        RETURNING_TO_LIST: 'RETURNING_TO_LIST',
+        VACANCY_PAGE: 'VACANCY_PAGE',
+        RESPONSE_PAGE: 'RESPONSE_PAGE',
+        NO_LINK: 'NO_LINK',
+        NO_HREF: 'NO_HREF',
+        UNKNOWN: 'UNKNOWN',
+        LEGACY: 'LEGACY'
+    });
+
+    const ExecutionResult = {
+        fromLegacy(code) {
+            const legacyCode = String(code || 'ERROR_UNKNOWN');
+            switch (legacyCode) {
+                case 'OK':
+                    return { status: EXECUTION_STATUS.SUCCESS, reason: EXECUTION_REASON.APPLIED, code: legacyCode };
+                case 'RETURNED':
+                    return { status: EXECUTION_STATUS.SUCCESS, reason: EXECUTION_REASON.RETURNING_TO_LIST, code: legacyCode };
+                case 'NAVIGATED':
+                    return { status: EXECUTION_STATUS.NAVIGATED, reason: EXECUTION_REASON.VACANCY_PAGE, code: legacyCode };
+                case 'REDIRECT':
+                    return { status: EXECUTION_STATUS.NAVIGATED, reason: EXECUTION_REASON.RESPONSE_PAGE, code: legacyCode };
+                case 'STOPPED':
+                    return { status: EXECUTION_STATUS.STOPPED, reason: EXECUTION_REASON.UNKNOWN, code: legacyCode };
+                case 'CAPTCHA':
+                    return { status: EXECUTION_STATUS.CAPTCHA, reason: EXECUTION_REASON.UNKNOWN, code: legacyCode };
+                case 'ERROR_NO_LINK':
+                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.NO_LINK, code: legacyCode };
+                case 'ERROR_NO_HREF':
+                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.NO_HREF, code: legacyCode };
+                case 'ERROR_UNKNOWN':
+                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.UNKNOWN, code: legacyCode };
+                default:
+                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.LEGACY, code: legacyCode };
+            }
+        }
+    };
+
     // Человеческий скролл: вниз до секции Подходящие вакансии в этой компании
     // (или до 60% страницы), пауза, и возврат вверх.
     async function simulateReading(viewTime, runId = currentRunId) {
+        if (!viewTime || viewTime <= 0) return;
         try {
             await actionPause();
             if (!isRunCurrent(runId)) return;
@@ -2739,7 +2888,6 @@
                 if (!isRunCurrent(runId)) return 'STOPPED';
                 // В модалке уход на /applicant/vacancy_response = редирект на тест; на самой странице отклика - нет.
                 if (!onPage && Page.isResponseForm()) return 'QUESTIONS';
-                if (onPage && !Page.isResponseForm()) return 'CONFIRMED';
                 if (isResponseConfirmed()) return 'CONFIRMED';
                 return false;
             }, 3500);
@@ -2837,7 +2985,7 @@
                     const ok = await waitForCondition(() => {
                         if (!isRunCurrent(runId)) return 'STOPPED';
                         if (detectCaptcha()) return 'CAPTCHA';
-                        if (!Page.isResponseForm()) return 'NAVIGATED';
+                        if (pageLooksLikeTest()) return 'QUESTIONS';
                         if (isResponseConfirmed()) return 'CONFIRMED';
                         return false;
                     }, TUNING.confirmWaitMs);
@@ -2847,8 +2995,10 @@
                         haltForCaptcha();
                         return;
                     }
-                    if (ok === 'NAVIGATED' || ok === 'CONFIRMED') {
+                    if (ok === 'CONFIRMED') {
                         confirmed = true;
+                    } else if (ok === 'QUESTIONS') {
+                        redirectedToQuestions = true;
                     } else if (isRunCurrent(runId)) {
                         const forced = await forceSubmitReject(TUNING.forceSubmitAttempts, { onResponsePage: true, runId });
                         if (forced === 'STOPPED' || !isRunCurrent(runId)) return;
@@ -3280,7 +3430,7 @@
     }
 
     // Обработка вакансии: работает и на странице вакансии, и для кнопки на листинге
-    async function processVacancy(btn, runId = currentRunId) {
+    async function processVacancyLegacy(btn, runId = currentRunId) {
         if (!isRunCurrent(runId)) return 'STOPPED';
 
         if (Page.isVacancy()) return handleVacancyPage(btn, runId);
@@ -3298,9 +3448,25 @@
         return 'ERROR_UNKNOWN';
     }
 
+    async function processVacancy(btn, runId = currentRunId) {
+        return ExecutionResult.fromLegacy(await processVacancyLegacy(btn, runId));
+    }
+
     // ─────────────────────────────────────────────────────────────
     //  11. ГЛАВНЫЙ ЦИКЛ И WATCHDOG
     // ─────────────────────────────────────────────────────────────
+
+    function finalizeRun(runId, statusKey, msg) {
+        if (runId !== currentRunId) return;
+        isLoopActive = false;
+        if (!Page.isResponseForm()) {
+            handlingResponsePage = false;
+        }
+        State.setRunning(false);
+        State.releaseInstanceLock(TAB_ID);
+        setStatus(statusKey);
+        if (msg) log(msg);
+    }
 
     async function startLoop() {
         if (isLoopActive) return;
@@ -3350,22 +3516,10 @@
             log(I18n.t('logs.newRun', { mode: presetLabel(config.preset) }));
         }
 
-        const finishRun = (statusKey, msg) => {
-            if (runId !== currentRunId) return;
-            isLoopActive = false;
-            if (!Page.isResponseForm()) {
-                handlingResponsePage = false;
-            }
-            State.setRunning(false);
-            State.releaseInstanceLock(TAB_ID);
-            setStatus(statusKey);
-            if (msg) log(msg);
-        };
-
         try {
             // Лимит уже достигнут - завершаем прогон.
             if (State.getSentCount() >= config.limit) {
-                finishRun('done', I18n.t('logs.limitReached', { limit: config.limit }));
+                finalizeRun(runId, 'done', I18n.t('logs.limitReached', { limit: config.limit }));
                 return;
             }
 
@@ -3381,32 +3535,48 @@
                 log(I18n.t('logs.onVacancyPage'));
                 const res = await processVacancy(null, runId);
                 if (runId !== currentRunId) return;
-                if (res === 'STOPPED' || stopSignal) {
-                    finishRun('stopped', I18n.t('logs.stoppedDuringVacancy'));
+                if (res.status === EXECUTION_STATUS.STOPPED || stopSignal) {
+                    finalizeRun(runId, 'stopped', I18n.t('logs.stoppedDuringVacancy'));
                     return;
                 }
                 // Капча: haltForCaptcha уже снял флаги, освободил лок и выставил статус - просто выходим.
-                if (res === 'CAPTCHA') { isLoopActive = false; return; }
-                // OK / REDIRECT / RETURNED: навигация или watchdog продолжат цикл - флаг running сохраняем.
+                if (res.status === EXECUTION_STATUS.CAPTCHA) { isLoopActive = false; return; }
+                // SUCCESS / NAVIGATED: навигация или watchdog продолжат цикл - флаг running сохраняем.
                 isLoopActive = false;
-                setStatus('running', res === 'OK' ? 'status.returningToList' : 'status.waitingToReturn');
+                setStatus('running', res.code === 'OK' ? 'status.returningToList' : 'status.waitingToReturn');
                 return;
             }
 
-            const allBtns = queryAll('applyBtn');
+            let allBtns = queryAll('applyBtn');
+            if (allBtns.length === 0 && Page.isSearch()) {
+                await waitForCondition(() => {
+                    if (stopSignal || runId !== currentRunId) return 'STOPPED';
+                    const btns = queryAll('applyBtn');
+                    if (btns.length > 0) return 'READY';
+                    if (q('[data-qa*="empty" i], [class*="empty" i]')) return 'EMPTY';
+                    return false;
+                }, 2000);
+                if (stopSignal || runId !== currentRunId) return;
+                allBtns = queryAll('applyBtn');
+            }
+
             const processed = State.getProcessedIDs();
 
-            const targets = allBtns.filter(b => {
+            let targets = allBtns.filter(b => {
                 if (config.skipHidden && !isVisible(b)) return false;
                 return !processed.has(getVacancyID(b));
             });
 
             log(I18n.t('logs.vacanciesFound', { total: allBtns.length, targets: targets.length, sent: State.getSentCount(), limit: config.limit }));
 
-            for (const btn of targets) {
+            let rescanCount = 0;
+            const MAX_RESCANS = 3;
+
+            while (targets.length > 0) {
                 if (stopSignal || runId !== currentRunId) break;
+                const btn = targets.shift();
                 if (State.getSentCount() >= config.limit) {
-                    finishRun('done', I18n.t('logs.limitReached', { limit: config.limit }));
+                    finalizeRun(runId, 'done', I18n.t('logs.limitReached', { limit: config.limit }));
                     return;
                 }
                 if (State.touchInstanceLock(TAB_ID) !== 'OWNED') {
@@ -3415,7 +3585,18 @@
                 }
                 if (!document.body.contains(btn)) {
                     log(I18n.t('logs.buttonDisappeared'), true);
-                    break;
+                    if (rescanCount < MAX_RESCANS) {
+                        rescanCount++;
+                        const currentProcessed = State.getProcessedIDs();
+                        const freshBtns = queryAll('applyBtn');
+                        targets = freshBtns.filter(b => {
+                            if (config.skipHidden && !isVisible(b)) return false;
+                            return !currentProcessed.has(getVacancyID(b));
+                        });
+                        continue;
+                    } else {
+                        break;
+                    }
                 }
 
                 await vacancyPause();
@@ -3428,39 +3609,44 @@
                 const result = await processVacancy(btn, runId);
                 if (runId !== currentRunId) return;
 
-                if (result === 'STOPPED' || stopSignal) {
-                    finishRun('stopped', I18n.t('logs.stoppedProcessing'));
+                if (result.status === EXECUTION_STATUS.STOPPED || stopSignal) {
+                    finalizeRun(runId, 'stopped', I18n.t('logs.stoppedProcessing'));
                     return;
-                } else if (result === 'CAPTCHA') {
+                } else if (result.status === EXECUTION_STATUS.CAPTCHA) {
                     // haltForCaptcha уже остановил прогон и выставил статус.
                     isLoopActive = false;
                     return;
-                } else if (result === 'NAVIGATED') {
+                } else if (result.status === EXECUTION_STATUS.NAVIGATED && result.reason === EXECUTION_REASON.VACANCY_PAGE) {
                     // Перешли на страницу вакансии - завершаем цикл, флаг running оставляем для авто-старта.
                     log(I18n.t('logs.navigatingVacancy'));
                     isLoopActive = false;
                     return;
-                } else if (result === 'REDIRECT') {
+                } else if (result.status === EXECUTION_STATUS.NAVIGATED && result.reason === EXECUTION_REASON.RESPONSE_PAGE) {
                     log(I18n.t('logs.redirectWaiting'), true);
                     isLoopActive = false;
                     setStatus('running', 'status.waitingToReturn');
                     return;
                 } else {
-                    // ERROR_NO_LINK / ERROR_NO_HREF и т.п. - пропускаем эту карточку и продолжаем.
-                    log(I18n.t('logs.skippingCode', { code: result }), true);
+                    // SKIPPED / legacy terminal codes: сохраняем прежнее логирование и продолжаем.
+                    if (result.status === EXECUTION_STATUS.SKIPPED) {
+                        if (result.code === 'ERROR_NO_LINK' || result.code === 'ERROR_NO_HREF' || result.code === 'ERROR_UNKNOWN') {
+                            Stats.bump('skipped');
+                        }
+                    }
+                    log(I18n.t('logs.skippingCode', { code: result.code }), true);
                 }
             }
 
             if (stopSignal || runId !== currentRunId) {
-                finishRun('stopped', I18n.t('logs.stoppedProcessing'));
+                finalizeRun(runId, 'stopped', I18n.t('logs.stoppedProcessing'));
                 return;
             }
             if (!Page.isResponseForm()) {
-                finishRun('done', I18n.t('logs.runCompleted', { count: State.getSentCount() }));
+                finalizeRun(runId, 'done', I18n.t('logs.runCompleted', { count: State.getSentCount() }));
             }
         } catch (e) {
             console.warn('[applomat] startLoop error', e);
-            finishRun('error', I18n.t('logs.mainLoopError', { err: (e && e.message ? e.message : e) }));
+            finalizeRun(runId, 'error', I18n.t('logs.mainLoopError', { err: (e && e.message ? e.message : e) }));
         }
     }
 
@@ -3573,7 +3759,7 @@
 
     function watchdogTick() {
         // Панель могла быть выброшена из DOM (SPA-перерисовка) - восстанавливаем.
-        if (document.body && !document.getElementById('ar-main-panel')) setupUI();
+        if (document.body && !document.getElementById('ar-main-panel')) PanelController.mount();
 
         if (!State.amIRunning()) return;
 
@@ -3640,6 +3826,7 @@
                     try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
                     saved = true;
                 } else if (res === 'EXISTS' || res === 'UPDATED') {
+                    Stats.bump('manual');
                     log(I18n.t('logs.manualAlready', { note: '', vid: entry.vid }));
                     try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
                     saved = true;
@@ -3880,6 +4067,8 @@
             --ar-work-grid-shift: -320px;
             --ar-work-move-ease: cubic-bezier(.22, .8, .3, 1);
             --ar-work-reveal-ease: cubic-bezier(.18, .82, .22, 1);
+            --thumb-source-x: 0px;
+            --thumb-center-x: 50%;
 
             /* Static Turbo matrix geometry. Shockwave runs per-cell. */
             --ar-work-grid-cell: 5px;
@@ -3977,6 +4166,9 @@
             user-select: none;
             cursor: pointer;
             isolation: isolate;
+            perspective: 800px;
+            perspective-origin: var(--thumb-center-x, 50%) 50%;
+            transform-style: preserve-3d;
             background: linear-gradient(90deg, #e7e9ed 0%, #e9ebee 55%, #eceef0 100%);
             box-shadow:
                 inset 0 1px 0 rgba(255,255,255,.68),
@@ -4031,17 +4223,17 @@
             will-change: opacity, filter;
             -webkit-mask-image: linear-gradient(
                 to right,
-                transparent 12%,
-                rgba(0,0,0,.20) 32%,
-                rgba(0,0,0,.70) 56%,
-                #000 72%
+                #000 0,
+                #000 calc(var(--thumb-source-x, 0px) - 24px),
+                transparent var(--thumb-source-x, 0px),
+                transparent 100%
             );
             mask-image: linear-gradient(
                 to right,
-                transparent 12%,
-                rgba(0,0,0,.20) 32%,
-                rgba(0,0,0,.70) 56%,
-                #000 72%
+                #000 0,
+                #000 calc(var(--thumb-source-x, 0px) - 24px),
+                transparent var(--thumb-source-x, 0px),
+                transparent 100%
             );
             transition:
                 opacity var(--ar-work-turbo-exit-duration) ease,
@@ -4171,40 +4363,57 @@
             left: var(--ar-work-track-pad);
             width: var(--ar-work-thumb-w);
             height: var(--ar-work-thumb-h);
-            border: 1px solid rgba(92,105,122,.11);
-            border-radius: var(--ar-work-thumb-radius);
-            background: linear-gradient(180deg, #ffffff 0%, #fbfcfd 100%);
-            box-shadow:
-                0 3px 7px rgba(27,35,48,.085),
-                0 1px 2px rgba(27,35,48,.065),
-                inset 0 0 0 1px rgba(255,255,255,.55);
             transform: translate3d(0, 0, 0);
-            transition:
-                transform var(--ar-work-thumb-duration) var(--ar-work-move-ease),
-                box-shadow 150ms ease,
-                border-color 170ms ease,
-                scale 100ms ease;
+            transform-style: preserve-3d;
+            transition: transform var(--ar-work-thumb-duration) var(--ar-work-move-ease);
             will-change: transform;
             pointer-events: none;
         }
 
-        .ar-work-mode-slider.is-turbo .ar-work-mode-thumb {
+        .ar-work-mode-slider.is-dragging .ar-work-mode-thumb {
+            transition: none;
+        }
+
+        .ar-work-mode-thumb__shadow {
+            position: absolute;
+            inset: 0;
+            border-radius: var(--ar-work-thumb-radius);
+            box-shadow:
+                0 3px 7px rgba(27,35,48,.085),
+                0 1px 2px rgba(27,35,48,.065);
+            pointer-events: none;
+            will-change: transform, box-shadow, opacity;
+            transition: box-shadow 150ms ease;
+        }
+
+        .ar-work-mode-slider:hover .ar-work-mode-thumb__shadow {
+            box-shadow:
+                0 4px 9px rgba(27,35,48,.095),
+                0 1px 2px rgba(27,35,48,.065);
+        }
+
+        .ar-work-mode-thumb__body {
+            position: absolute;
+            inset: 0;
+            border: 1px solid rgba(92,105,122,.11);
+            border-radius: var(--ar-work-thumb-radius);
+            background: linear-gradient(180deg, #ffffff 0%, #fbfcfd 100%);
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,.55);
+            transform: translateZ(0);
+            transform-style: preserve-3d;
+            will-change: transform;
+            transition:
+                border-color 170ms ease,
+                scale 100ms ease;
+            pointer-events: none;
+        }
+
+        .ar-work-mode-slider.is-turbo .ar-work-mode-thumb__body {
             border-color: rgba(255,35,45,.34);
         }
 
-        .ar-work-mode-slider:hover .ar-work-mode-thumb {
-            box-shadow:
-                0 4px 9px rgba(27,35,48,.095),
-                0 1px 2px rgba(27,35,48,.065),
-                inset 0 0 0 1px rgba(255,255,255,.6);
-        }
-
-        .ar-work-mode-slider.is-pressed .ar-work-mode-thumb {
+        .ar-work-mode-slider.is-pressed .ar-work-mode-thumb__body {
             scale: .985;
-        }
-
-        .ar-work-mode-slider.is-dragging .ar-work-mode-thumb {
-            transition: box-shadow 150ms ease, border-color 170ms ease, scale 100ms ease;
         }
 
         .ar-work-mode-slider:focus {
@@ -4383,6 +4592,47 @@
 
         .ar-inline-check{ display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--ink-2); cursor:pointer; user-select:none; }
         .ar-inline-check input{ cursor:pointer; }
+        .ar-diag-full-box{
+            flex:1; overflow-y:auto; overflow-x:hidden;
+            font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+            font-size:11px; line-height:1.45;
+            background:var(--bg); border:1px solid var(--line); border-radius:var(--r-md);
+            padding:6px; display:flex; flex-direction:column; gap:4px;
+        }
+        .ar-log-row{
+            display:flex; align-items:flex-start; gap:6px; padding:3px 6px;
+            border-radius:4px; transition:background .1s; color:var(--ink-2);
+        }
+        .ar-log-row:hover{ background:var(--bg-2); }
+        .ar-log-row.is-error{ background:var(--hh-red-soft); color:var(--hh-red); }
+        .ar-log-row.is-warning{ background:var(--hh-amber-soft, rgba(245,158,11,.1)); color:var(--hh-amber, #d97706); }
+        .ar-log-row.is-grouped{ cursor:pointer; }
+        .ar-log-time{ color:var(--ink-3); font-size:10px; flex:none; padding-top:1px; }
+        .ar-log-level{
+            font-size:9.5px; font-weight:700; padding:1px 4px; border-radius:3px;
+            flex:none; background:var(--line); color:var(--ink-2);
+        }
+        .ar-log-level--err{ background:var(--hh-red); color:#fff; }
+        .ar-log-level--warn{ background:var(--hh-amber, #f59e0b); color:#fff; }
+        .ar-log-level--ok{ background:var(--hh-green, #10b981); color:#fff; }
+        .ar-log-message{ flex:1 1 0; min-width:0; word-break:break-word; white-space:pre-wrap; }
+        .ar-log-repeat{
+            flex:none; font-size:10px; font-weight:600; padding:1px 5px; border-radius:3px;
+            background:var(--card); border:1px solid var(--line); color:var(--ink-2);
+            cursor:pointer; line-height:1.2;
+        }
+        .ar-log-repeat:hover{ background:var(--bg-2); }
+        .ar-log-group-children{ display:flex; flex-direction:column; gap:2px; padding-left:22px; }
+        .ar-log-child{ display:flex; align-items:flex-start; gap:6px; font-size:10.5px; opacity:.85; }
+        .ar-log-child-time{ color:var(--ink-3); font-size:9.5px; flex:none; }
+        .ar-log-empty{
+            display:flex; align-items:center; justify-content:center;
+            min-height:140px; height:100%; text-align:center; padding:20px;
+        }
+        .ar-log-empty-inner{ display:flex; flex-direction:column; align-items:center; gap:6px; }
+        .ar-log-empty-icon svg{ width:28px; height:28px; color:var(--ink-3); }
+        .ar-log-empty-title{ font-size:12.5px; font-weight:600; color:var(--ink-2); }
+        .ar-log-empty-hint{ font-size:11px; color:var(--ink-3); max-width:240px; }
         .ar-diag-full-box .ar-log-err{ color:#f87171; }
         .ar-log-line{ word-break:break-word; white-space:pre-wrap; }
 
@@ -4412,10 +4662,16 @@
 
         @media (prefers-reduced-motion: reduce){
             .ar-work-mode-thumb,
+            .ar-work-mode-thumb__body,
+            .ar-work-mode-thumb__shadow,
             .ar-work-mode-turbo-surface,
             .ar-work-mode-grid-mask,
             .ar-work-mode-title__state,
             .ar-work-mode-snap-marker { transition-duration: 1ms !important; }
+
+            .ar-work-mode-thumb__body {
+                transform: none !important;
+            }
 
             .ar-work-mode-grid-strip { animation: none !important; }
             .ar-work-mode-grid-cell {
@@ -4505,7 +4761,10 @@
                                 <span class="ar-work-mode-snap-marker"></span>
                             </div>
 
-                            <div class="ar-work-mode-thumb" id="ar-work-mode-thumb" aria-hidden="true"></div>
+                            <div class="ar-work-mode-thumb" id="ar-work-mode-thumb" aria-hidden="true">
+                                <div class="ar-work-mode-thumb__shadow" id="ar-work-mode-thumb-shadow" aria-hidden="true"></div>
+                                <div class="ar-work-mode-thumb__body" id="ar-work-mode-thumb-body" aria-hidden="true"></div>
+                            </div>
                         </div>
 
                         <div class="ar-row ar-row-limit">
@@ -4642,18 +4901,1655 @@
     //  13. UI: ПАНЕЛЬ (applomat Redesign & Lifecycle Controller)
     // ─────────────────────────────────────────────────────────────
 
+    // UI component: Work Mode slider + isolated Turbo visual controller.
+    const WorkModeSlider = (() => {
+        let resizeObserver = null;
+        let activeTurboEffects = null;
+        let onVisibilityChangeImpl = () => {};
+
+        function mount({ el, uiSignal }) {
+            // ---------- Новый селектор режима (Work Mode Slider) ----------
+            const modeCard = el('ar-mode-card');
+            const slider = el('ar-work-mode-slider');
+            const thumb = el('ar-work-mode-thumb');
+            const thumbShadow = el('ar-work-mode-thumb-shadow');
+            const thumbBody = el('ar-work-mode-thumb-body');
+            const currentModeState = el('ar-work-mode-state');
+            const gridStrip = el('ar-work-mode-grid-strip');
+            const reducedMotionQuery = typeof window.matchMedia === 'function'
+                ? window.matchMedia('(prefers-reduced-motion: reduce)')
+                : { matches: false };
+
+            // ─── Состояния и параметры физики ───
+            const STATE = {
+                REST: 'REST',
+                TRAVEL_LIFT: 'TRAVEL_LIFT',
+                TRAVEL: 'TRAVEL',
+                SETTLING: 'SETTLING',
+                TURBO_DEPTH_OUT: 'TURBO_DEPTH_OUT',
+                TURBO_DEPTH_RETURN: 'TURBO_DEPTH_RETURN',
+                IMPACT: 'IMPACT',
+                SHOCKWAVE: 'SHOCKWAVE'
+            };
+
+            let currentState = STATE.REST;
+
+            const TRAVEL_LIFT_Z = 11;
+            const TRAVEL_LIFT_DURATION = 150;
+            const TRAVEL_SETTLE_DURATION = 220;
+            const HORIZONTAL_SNAP_DURATION = 255;
+
+            const TURBO_PEAK_Z = 26;
+            const TURBO_OUT_DURATION = 420;
+            const TURBO_HOLD_DURATION = 80;
+            const TURBO_RETURN_DURATION = 280;
+            const TURBO_SETTLE_PAUSE = 400;
+
+            const EASE_PREMIUM = 'cubic-bezier(0.22, 0.8, 0.3, 1)';
+            const EASE_TURBO_OUT = 'cubic-bezier(0.16, 0.84, 0.44, 1)';
+            const EASE_TURBO_RETURN = 'cubic-bezier(0.45, 0, 0.8, 0.5)';
+
+            let currentBodyAnimation = null;
+            let currentShadowAnimation = null;
+            let turboPulseTimer = 0;
+            let turboHoldTimer = 0;
+            let travelSettleTimer = 0;
+            let isDragging = false;
+            let isSnapping = false;
+
+            let cachedMetrics = {
+                pad: 3,
+                thumbWidth: 44,
+                travel: 0,
+                sliderWidth: 1
+            };
+
+            let gridCells = [];
+            let gridMetrics = {
+                width: 1,
+                columns: 1,
+                rows: 5,
+                periodWidth: 1
+            };
+
+            const SHOCK_CYCLE_SECONDS = 5;
+            const GRID_DRIFT_SECONDS = 60;
+
+            if (modeCard) {
+                modeCard.style.setProperty('--ar-work-shock-cycle-duration', `${SHOCK_CYCLE_SECONDS}s`);
+                modeCard.style.setProperty('--ar-work-turbo-grid-duration', `${GRID_DRIFT_SECONDS}s`);
+            }
+
+            let gridDriftAnimation = null;
+            let shockCycleSeconds = SHOCK_CYCLE_SECONDS;
+            let shockStart = 0;
+            let shockTravelMs = 0;
+            let shockRafId = 0;
+            let shockActive = false;
+            let lastShockStartedAt = 0;
+            let currentThumbSourceX = 0;
+
+            function updateCachedMetrics() {
+                if (!slider || !thumb) return cachedMetrics;
+                const style = getComputedStyle(slider);
+                const pad = parseFloat(style.getPropertyValue('--ar-work-track-pad')) || 3;
+                const thumbWidth = thumb.offsetWidth || 44;
+                const sliderWidth = Math.max(1, slider.clientWidth);
+                const travel = Math.max(0, sliderWidth - (pad * 2) - thumbWidth);
+                cachedMetrics = { pad, thumbWidth, travel, sliderWidth };
+                return cachedMetrics;
+            }
+
+            function getMetrics() {
+                return cachedMetrics;
+            }
+
+            function positionForValue(val) {
+                const { travel } = cachedMetrics;
+                return (travel / 3) * val;
+            }
+
+            function setThumbX(x, animate = true) {
+                if (!slider || !thumb) return;
+                if (animate) {
+                    slider.classList.remove('is-dragging');
+                } else {
+                    slider.classList.add('is-dragging');
+                }
+                const { pad, thumbWidth } = cachedMetrics;
+                const leftEdge = Math.max(0, pad + x);
+                const centerX = leftEdge + (thumbWidth / 2);
+                currentThumbSourceX = leftEdge;
+                slider.style.setProperty('--thumb-source-x', `${leftEdge.toFixed(2)}px`);
+                slider.style.setProperty('--thumb-center-x', `${centerX.toFixed(2)}px`);
+                thumb.style.transform = `translate3d(${x.toFixed(2)}px, 0, 0)`;
+            }
+
+            function getThumbSourceX() {
+                if (Number.isFinite(currentThumbSourceX) && currentThumbSourceX > 0) {
+                    return currentThumbSourceX;
+                }
+                const { pad } = cachedMetrics;
+                const curVal = modeKeyToIndex(config.preset);
+                return pad + positionForValue(curVal);
+            }
+
+            function getCurrentBodyZ() {
+                if (!thumbBody) return 0;
+                try {
+                    const tr = getComputedStyle(thumbBody).transform;
+                    if (!tr || tr === 'none') return 0;
+                    const matrix = new DOMMatrixReadOnly(tr);
+                    return Number.isFinite(matrix.m43) ? matrix.m43 : 0;
+                } catch (e) {
+                    return 0;
+                }
+            }
+
+            function getShadowStyle(z) {
+                const clampedZ = Math.max(0, Math.min(32, z));
+                const norm = clampedZ / 26;
+                const blur1 = (7 + norm * 15).toFixed(1);
+                const y1 = (3 + norm * 8).toFixed(1);
+                const alpha1 = (0.085 + norm * 0.075).toFixed(3);
+
+                const blur2 = (2 + norm * 5).toFixed(1);
+                const y2 = (1 + norm * 3).toFixed(1);
+                const alpha2 = (0.065 + norm * 0.025).toFixed(3);
+
+                return {
+                    boxShadow: `0 ${y1}px ${blur1}px rgba(27,35,48,${alpha1}), 0 ${y2}px ${blur2}px rgba(27,35,48,${alpha2})`,
+                    transform: `scale(${1 + norm * 0.035})`
+                };
+            }
+
+            function stopDepthAnimations() {
+                if (currentBodyAnimation) {
+                    try { currentBodyAnimation.cancel(); } catch (e) { /* ignore */ }
+                    currentBodyAnimation = null;
+                }
+                if (currentShadowAnimation) {
+                    try { currentShadowAnimation.cancel(); } catch (e) { /* ignore */ }
+                    currentShadowAnimation = null;
+                }
+            }
+
+            function clearTurboTimers() {
+                if (turboPulseTimer) {
+                    clearTimeout(turboPulseTimer);
+                    turboPulseTimer = 0;
+                }
+                if (turboHoldTimer) {
+                    clearTimeout(turboHoldTimer);
+                    turboHoldTimer = 0;
+                }
+                if (travelSettleTimer) {
+                    clearTimeout(travelSettleTimer);
+                    travelSettleTimer = 0;
+                }
+            }
+
+            function animateThumbDepth(targetZ, durationMs, easing = EASE_PREMIUM, onFinish = null) {
+                if (!thumbBody) {
+                    if (onFinish) onFinish();
+                    return;
+                }
+
+                const startZ = getCurrentBodyZ();
+                stopDepthAnimations();
+
+                if (reducedMotionQuery.matches || durationMs <= 0 || Math.abs(startZ - targetZ) < 0.01) {
+                    thumbBody.style.transform = targetZ === 0 ? 'translateZ(0)' : `translateZ(${targetZ.toFixed(2)}px)`;
+                    if (thumbShadow) {
+                        const st = getShadowStyle(targetZ);
+                        thumbShadow.style.boxShadow = st.boxShadow;
+                        thumbShadow.style.transform = st.transform;
+                    }
+                    if (onFinish) onFinish();
+                    return;
+                }
+
+                const keyframes = [
+                    { transform: `translateZ(${startZ.toFixed(2)}px)` },
+                    { transform: `translateZ(${targetZ.toFixed(2)}px)` }
+                ];
+
+                try {
+                    currentBodyAnimation = thumbBody.animate(keyframes, {
+                        duration: durationMs,
+                        easing: easing,
+                        fill: 'forwards'
+                    });
+
+                    if (thumbShadow) {
+                        const fromSt = getShadowStyle(startZ);
+                        const toSt = getShadowStyle(targetZ);
+                        currentShadowAnimation = thumbShadow.animate([
+                            { boxShadow: fromSt.boxShadow, transform: fromSt.transform },
+                            { boxShadow: toSt.boxShadow, transform: toSt.transform }
+                        ], {
+                            duration: durationMs,
+                            easing: easing,
+                            fill: 'forwards'
+                        });
+
+                        currentShadowAnimation.onfinish = () => {
+                            thumbShadow.style.boxShadow = toSt.boxShadow;
+                            thumbShadow.style.transform = toSt.transform;
+                            if (currentShadowAnimation) {
+                                try { currentShadowAnimation.cancel(); } catch (e) {}
+                                currentShadowAnimation = null;
+                            }
+                        };
+                    }
+
+                    currentBodyAnimation.onfinish = () => {
+                        thumbBody.style.transform = targetZ === 0 ? 'translateZ(0)' : `translateZ(${targetZ.toFixed(2)}px)`;
+                        if (currentBodyAnimation) {
+                            try { currentBodyAnimation.cancel(); } catch (e) {}
+                            currentBodyAnimation = null;
+                        }
+                        if (onFinish) onFinish();
+                    };
+                } catch (e) {
+                    thumbBody.style.transform = targetZ === 0 ? 'translateZ(0)' : `translateZ(${targetZ.toFixed(2)}px)`;
+                    if (onFinish) onFinish();
+                }
+            }
+
+            function cancelTurboPulse({ resetToRest = false } = {}) {
+                clearTurboTimers();
+                if (currentState === STATE.TURBO_DEPTH_OUT || currentState === STATE.TURBO_DEPTH_RETURN || currentState === STATE.IMPACT) {
+                    stopDepthAnimations();
+                }
+                if (shockActive) {
+                    stopShockwave({ clearSchedule: true });
+                }
+                if (resetToRest) {
+                    currentState = STATE.REST;
+                }
+            }
+
+            function startTravelLift(onLiftComplete = null) {
+                cancelTurboPulse();
+
+                const currentZ = getCurrentBodyZ();
+                currentState = STATE.TRAVEL_LIFT;
+
+                if (Math.abs(currentZ - TRAVEL_LIFT_Z) < 0.5) {
+                    currentState = (isDragging || isSnapping) ? STATE.TRAVEL : STATE.TRAVEL_LIFT;
+                    if (onLiftComplete) onLiftComplete();
+                    return;
+                }
+
+                animateThumbDepth(TRAVEL_LIFT_Z, TRAVEL_LIFT_DURATION, EASE_PREMIUM, () => {
+                    if (currentState === STATE.TRAVEL_LIFT) {
+                        currentState = (isDragging || isSnapping) ? STATE.TRAVEL : STATE.TRAVEL_LIFT;
+                    }
+                    if (onLiftComplete) onLiftComplete();
+                });
+            }
+
+            function finishTravelAndSettle() {
+                isDragging = false;
+                isSnapping = false;
+
+                if (travelSettleTimer) {
+                    clearTimeout(travelSettleTimer);
+                    travelSettleTimer = 0;
+                }
+
+                currentState = STATE.SETTLING;
+
+                animateThumbDepth(0, TRAVEL_SETTLE_DURATION, EASE_PREMIUM, () => {
+                    currentState = STATE.REST;
+                    const curVal = modeKeyToIndex(config.preset);
+                    if (curVal === 3 && !reducedMotionQuery.matches && !isDragging && !isSnapping) {
+                        scheduleTurboPulse(TURBO_SETTLE_PAUSE);
+                    }
+                });
+            }
+
+            function scheduleTurboPulse(delayMs = 0) {
+                clearTurboTimers();
+                const curVal = modeKeyToIndex(config.preset);
+                if (curVal !== 3 || reducedMotionQuery.matches || isDragging || isSnapping || currentState !== STATE.REST) {
+                    return;
+                }
+
+                const intervalMs = Math.max(5000, shockCycleSeconds * 1000);
+                const delay = delayMs > 0
+                    ? delayMs
+                    : (lastShockStartedAt ? Math.max(600, (lastShockStartedAt + intervalMs) - performance.now()) : 600);
+
+                turboPulseTimer = setTimeout(() => {
+                    turboPulseTimer = 0;
+                    executeTurboPulse();
+                }, delay);
+            }
+
+            function executeTurboPulse() {
+                const curVal = modeKeyToIndex(config.preset);
+                if (curVal !== 3 || reducedMotionQuery.matches || isDragging || isSnapping || currentState !== STATE.REST) {
+                    return;
+                }
+
+                currentState = STATE.TURBO_DEPTH_OUT;
+
+                // Step 1: Плавный подъём к пользователю
+                animateThumbDepth(TURBO_PEAK_Z, TURBO_OUT_DURATION, EASE_TURBO_OUT, () => {
+                    if (currentState !== STATE.TURBO_DEPTH_OUT) return;
+
+                    // Step 2: Короткое удержание на пике
+                    turboHoldTimer = setTimeout(() => {
+                        turboHoldTimer = 0;
+                        if (currentState !== STATE.TURBO_DEPTH_OUT) return;
+
+                        currentState = STATE.TURBO_DEPTH_RETURN;
+
+                        // Step 3: Возврат в плоскость
+                        animateThumbDepth(0, TURBO_RETURN_DURATION, EASE_TURBO_RETURN, () => {
+                            if (currentState !== STATE.TURBO_DEPTH_RETURN) return;
+
+                            // Step 4: IMPACT -> запуск shockwave строго в момент касания Z = 0
+                            currentState = STATE.IMPACT;
+                            startShockwave();
+                            currentState = STATE.SHOCKWAVE;
+                        });
+                    }, TURBO_HOLD_DURATION);
+                });
+            }
+
+            function seededNoise(index) {
+                const x = Math.sin(index * 12.9898 + 78.233) * 43758.5453;
+                return x - Math.floor(x);
+            }
+
+            function levelFor(index) {
+                const n = seededNoise(index + 91);
+
+                // Regular geometry, irregular deterministic intensity.
+                if (n < .18) return 'l0';
+                if (n < .35) return 'l1';
+                if (n < .53) return 'l2';
+                if (n < .69) return 'l3';
+                if (n < .84) return 'l4';
+                return 'l5';
+            }
+
+            function pxVar(name, fallback) {
+                if (!modeCard && !slider) return fallback;
+                const style = getComputedStyle(modeCard || slider);
+                const n = parseFloat(style.getPropertyValue(name));
+                return Number.isFinite(n) ? n : fallback;
+            }
+
+            function gaussian(distance, width) {
+                const ratio = distance / width;
+                return Math.exp(-.5 * ratio * ratio);
+            }
+
+            function clamp01(val) {
+                return Math.max(0, Math.min(1, val));
+            }
+
+            function smoothstep(edge0, edge1, x) {
+                if (edge0 === edge1) return x < edge0 ? 0 : 1;
+                const t = clamp01((x - edge0) / (edge1 - edge0));
+                return t * t * (3 - 2 * t);
+            }
+
+            function resetShockCells() {
+                for (const cell of gridCells) {
+                    if (!cell.active && cell.lastBoost === '0' && cell.lastX === '0px' && cell.lastY === '0px' && cell.lastScale === '1') continue;
+                    const style = cell.element.style;
+                    style.setProperty('--wave-boost', '0');
+                    style.setProperty('--wave-x', '0px');
+                    style.setProperty('--wave-y', '0px');
+                    style.setProperty('--wave-scale', '1');
+                    cell.active = false;
+                    cell.lastBoost = '0';
+                    cell.lastX = '0px';
+                    cell.lastY = '0px';
+                    cell.lastScale = '1';
+                }
+            }
+
+            function rebuildGrid() {
+                if (!slider || !gridStrip) return;
+                const rows = 5;
+                const cellSize = pxVar('--ar-work-grid-cell', 5);
+                const gap = pxVar('--ar-work-grid-col-gap', 2);
+                const cadence = cellSize + gap;
+                const width = Math.max(1, slider.clientWidth);
+
+                // Two exact periods: seamless right-to-left drift.
+                const columns = Math.max(1, Math.ceil((width + gap) / cadence) + 2);
+                const periodWidth = columns * cadence;
+                const fragment = document.createDocumentFragment();
+                const metadata = [];
+
+                for (let period = 0; period < 2; period++) {
+                    for (let column = 0; column < columns; column++) {
+                        for (let row = 0; row < rows; row++) {
+                            const index = column * rows + row;
+                            const baseLevel = levelFor(index);
+                            const element = document.createElement('span');
+
+                            element.className = `ar-work-mode-grid-cell ${baseLevel}`;
+                            fragment.appendChild(element);
+
+                            metadata.push({
+                                element,
+                                column,
+                                row,
+                                period,
+
+                                // Physical center of THIS rendered cell in the two-period strip.
+                                // Shockwave uses this together with the live CSS drift offset,
+                                // so the reaction always happens where the square is actually seen.
+                                stripX:
+                                    period * periodWidth +
+                                    column * cadence +
+                                    cellSize / 2,
+
+                                phase: (seededNoise(index * 1.731 + 17.9) - .5) * .018,
+                                interferenceStatic: row * 1.27,
+                                echoStatic: row * 1.61,
+                                baseLevel,
+                                active: false,
+                                lastBoost: '0',
+                                lastX: '0px',
+                                lastY: '0px',
+                                lastScale: '1'
+                            });
+                        }
+                    }
+                }
+
+                gridStrip.replaceChildren(fragment);
+                gridStrip.style.width = `${(periodWidth * 2) - gap}px`;
+                slider.style.setProperty('--ar-work-grid-shift', `${-periodWidth}px`);
+
+                gridCells = metadata;
+                gridMetrics = {
+                    width,
+                    columns,
+                    rows,
+                    periodWidth
+                };
+
+                refreshGridDriftAnimation();
+                resetShockCells();
+            }
+
+            function refreshGridDriftAnimation() {
+                if (!gridStrip || typeof gridStrip.getAnimations !== 'function') {
+                    gridDriftAnimation = null;
+                    return;
+                }
+                const animations = gridStrip.getAnimations();
+                gridDriftAnimation = animations.length ? animations[0] : null;
+            }
+
+            function currentGridDriftOffset() {
+                if (!gridDriftAnimation) {
+                    refreshGridDriftAnimation();
+                }
+
+                if (!gridDriftAnimation) {
+                    return 0;
+                }
+
+                const timing = gridDriftAnimation.effect?.getComputedTiming?.();
+                const progress = Number.isFinite(timing?.progress)
+                    ? timing.progress
+                    : 0;
+
+                return -gridMetrics.periodWidth * progress;
+            }
+
+            function travelDurationMs(cycleSeconds = shockCycleSeconds) {
+                const normalized = clamp01((cycleSeconds - 5) / 35);
+                return 1800 + normalized * 1200;
+            }
+
+            function stopShockwave({ clearSchedule = true } = {}) {
+                if (shockRafId) {
+                    cancelAnimationFrame(shockRafId);
+                    shockRafId = 0;
+                }
+
+                if (clearSchedule) {
+                    clearTurboTimers();
+                }
+
+                shockActive = false;
+                resetShockCells();
+            }
+
+            function startShockwave() {
+                const curVal = modeKeyToIndex(config.preset);
+                if (curVal !== 3 || reducedMotionQuery.matches || !gridCells.length) return;
+
+                if (shockRafId) {
+                    cancelAnimationFrame(shockRafId);
+                    shockRafId = 0;
+                }
+
+                shockActive = true;
+                shockStart = performance.now();
+                lastShockStartedAt = shockStart;
+                shockTravelMs = travelDurationMs();
+
+                shockRafId = requestAnimationFrame(updateShockwave);
+            }
+
+            function updateShockwave(now) {
+                const curVal = modeKeyToIndex(config.preset);
+                if (!shockActive || curVal !== 3 || reducedMotionQuery.matches) {
+                    stopShockwave({ clearSchedule: false });
+                    return;
+                }
+
+                const elapsed = now - shockStart;
+                const travelProgress = clamp01(elapsed / shockTravelMs);
+
+                // Almost linear propagation with a subtle natural ease at the tail.
+                const travelEase = 1 - Math.pow(1 - travelProgress, 1.08);
+                const sliderWidth = Math.max(1, gridMetrics.width || slider?.clientWidth || 1);
+                const thumbSourceX = getThumbSourceX();
+                const originNorm = clamp01(thumbSourceX / sliderWidth);
+                const frontX = originNorm - (originNorm + 0.08) * travelEase;
+                const elapsedSeconds = elapsed / 1000;
+
+                // Main wave remains active during travel; wake/echo gets ~950ms to settle.
+                const settleMs = 950;
+                const globalDecay = elapsed <= shockTravelMs
+                    ? 1
+                    : 1 - smoothstep(shockTravelMs, shockTravelMs + settleMs, elapsed);
+
+                // Read current CSS animation phase once and convert every cell's strip-space X into slider-space X.
+                const driftOffset = currentGridDriftOffset();
+
+                for (const cell of gridCells) {
+                    const visualXPx = cell.stripX + driftOffset;
+                    const visualX = visualXPx / sliderWidth;
+                    const x = visualX + cell.phase;
+                    const distance = x - frontX;
+
+                    // Cells outside the visible/physical influence window cannot contribute
+                    // perceptibly. Skipping them avoids math + DOM writes for the duplicate
+                    // off-screen grid period while preserving the rendered wave.
+                    if (visualX < -.25 || visualX > 1.25 || distance < -.22 || distance > .50) {
+                        if (cell.active) {
+                            const style = cell.element.style;
+                            style.setProperty('--wave-boost', '0');
+                            style.setProperty('--wave-x', '0px');
+                            style.setProperty('--wave-y', '0px');
+                            style.setProperty('--wave-scale', '1');
+                            cell.active = false;
+                            cell.lastBoost = '0';
+                            cell.lastX = '0px';
+                            cell.lastY = '0px';
+                            cell.lastScale = '1';
+                        }
+                        continue;
+                    }
+
+                    // Wave moves right -> left:
+                    // negative distance = just ahead of the front,
+                    // positive distance = already passed / wake side.
+                    const core = gaussian(distance, .026) * globalDecay;
+                    const compression = gaussian(distance + .034, .030) * globalDecay;
+
+                    const wakeGate = smoothstep(-.012, .018, distance);
+                    const wake = gaussian(distance - .075, .105) * wakeGate * globalDecay;
+
+                    const echoGate = smoothstep(.035, .075, distance);
+                    const echo = gaussian(distance - .135, .040) * echoGate * globalDecay;
+
+                    const boost = core * .50 + compression * .055 + wake * .13 + echo * .08;
+                    const scale = 1 + core * .185 + wake * .035 + echo * .018 - compression * .018;
+                    const waveX = core * -1.05 + compression * -.55 + wake * .30 + echo * .10;
+                    const interference = Math.sin(visualX * 19.0 + cell.interferenceStatic + elapsedSeconds * 6.2 + cell.phase * 55);
+                    const echoInterference = Math.sin(visualX * 14.0 + cell.echoStatic + elapsedSeconds * 4.1);
+                    const waveY = interference * wake * .46 + echoInterference * echo * .16;
+
+                    // Values are already rendered to 3 decimals, so avoid redundant style
+                    // mutations when the visible value did not change between frames.
+                    const boostText = boost.toFixed(3);
+                    const xText = `${waveX.toFixed(3)}px`;
+                    const yText = `${waveY.toFixed(3)}px`;
+                    const scaleText = scale.toFixed(3);
+                    const style = cell.element.style;
+                    if (boostText !== cell.lastBoost) { style.setProperty('--wave-boost', boostText); cell.lastBoost = boostText; }
+                    if (xText !== cell.lastX) { style.setProperty('--wave-x', xText); cell.lastX = xText; }
+                    if (yText !== cell.lastY) { style.setProperty('--wave-y', yText); cell.lastY = yText; }
+                    if (scaleText !== cell.lastScale) { style.setProperty('--wave-scale', scaleText); cell.lastScale = scaleText; }
+                    cell.active = true;
+                }
+
+                if (elapsed < shockTravelMs + settleMs) {
+                    shockRafId = requestAnimationFrame(updateShockwave);
+                    return;
+                }
+
+                shockRafId = 0;
+                shockActive = false;
+                resetShockCells();
+
+                if (currentState === STATE.SHOCKWAVE) {
+                    currentState = STATE.REST;
+                }
+
+                const currentPresetVal = modeKeyToIndex(config.preset);
+                if (currentPresetVal === 3 && !reducedMotionQuery.matches && !isDragging && !isSnapping) {
+                    scheduleTurboPulse();
+                }
+            }
+
+            function enterTurbo() {
+                if (reducedMotionQuery.matches) {
+                    resetShockCells();
+                    return;
+                }
+
+                cancelTurboPulse();
+
+                // Pick up the freshly-created CSS drift animation on the next frame so shockwave shares its timeline.
+                requestAnimationFrame(() => {
+                    refreshGridDriftAnimation();
+                });
+
+                if (currentState === STATE.REST && !isDragging && !isSnapping) {
+                    scheduleTurboPulse(TURBO_SETTLE_PAUSE);
+                }
+            }
+
+            function exitTurbo() {
+                cancelTurboPulse({ resetToRest: true });
+                lastShockStartedAt = 0;
+                gridDriftAnimation = null;
+            }
+
+            // TurboEffects is an isolated visual sub-controller. WorkModeSlider owns
+            // horizontal selection; this facade owns depth/grid/shock lifecycle.
+            const TurboEffects = Object.freeze({
+                startTravelLift,
+                finishTravelAndSettle,
+                cancel: cancelTurboPulse,
+                stopDepth: stopDepthAnimations,
+                rebuildGrid,
+                refreshGrid: refreshGridDriftAnimation,
+                schedule: scheduleTurboPulse,
+                enter: enterTurbo,
+                exit: exitTurbo
+            });
+            activeTurboEffects = TurboEffects;
+
+            function syncThumb(animate = true) {
+                const currentVal = modeKeyToIndex(config.preset);
+                setThumbX(positionForValue(currentVal), animate);
+            }
+
+            function updateModeUI(val, { animateThumb = true } = {}) {
+                const key = modeIndexToKey(val);
+                const label = presetLabel(key);
+                const wasTurbo = slider?.classList.contains('is-turbo') || false;
+                const isTurbo = key === 'turbo';
+
+                if (slider) {
+                    slider.dataset.value = String(val);
+                    slider.classList.toggle('is-turbo', isTurbo);
+                    slider.setAttribute('aria-valuenow', String(val));
+                    slider.setAttribute('aria-valuetext', label);
+                }
+                if (modeCard) {
+                    modeCard.dataset.mode = key;
+                }
+                if (currentModeState) {
+                    currentModeState.textContent = label;
+                }
+                syncThumb(animateThumb);
+
+                if (!wasTurbo && isTurbo) {
+                    TurboEffects.enter();
+                } else if (wasTurbo && !isTurbo) {
+                    TurboEffects.exit();
+                }
+            }
+
+            function selectWorkMode(nextIndex, { focus = false, fromDrag = false } = {}) {
+                const clampedIndex = Math.max(0, Math.min(3, nextIndex));
+                const nextKey = modeIndexToKey(clampedIndex);
+
+                if (!fromDrag) {
+                    TurboEffects.startTravelLift();
+                }
+
+                isSnapping = true;
+
+                if (travelSettleTimer) {
+                    clearTimeout(travelSettleTimer);
+                    travelSettleTimer = 0;
+                }
+
+                if (config.preset !== nextKey) {
+                    config.preset = nextKey;
+                    Settings.save(config);
+
+                    updateModeUI(clampedIndex, { animateThumb: true });
+
+                    if (State.amIRunning()) {
+                        setStatus('running');
+                    }
+
+                    log(I18n.t('logs.modeSet', { mode: (nextKey === 'turbo' ? '↯ ' : '') + presetLabel(nextKey) }));
+                } else {
+                    updateModeUI(clampedIndex, { animateThumb: true });
+                }
+
+                travelSettleTimer = setTimeout(() => {
+                    TurboEffects.finishTravelAndSettle();
+                }, HORIZONTAL_SNAP_DURATION);
+
+                if (focus && slider) {
+                    slider.focus({ preventScroll: true });
+                }
+            }
+
+            if (slider) {
+                let pointerId = null;
+                let dragX = 0;
+                let pointerStartX = 0;
+                let pointerMoved = false;
+                let sliderRectLeft = 0;
+
+                function valueFromPointer(clientX) {
+                    const { sliderWidth } = cachedMetrics;
+                    const local = Math.max(0, Math.min(sliderWidth, clientX - sliderRectLeft));
+                    const ratio = sliderWidth ? local / sliderWidth : 0;
+                    return Math.max(0, Math.min(3, Math.floor(ratio * 4)));
+                }
+
+                function dragPositionFromPointer(clientX) {
+                    const { pad, thumbWidth, travel } = cachedMetrics;
+                    const centered = clientX - sliderRectLeft - pad - (thumbWidth / 2);
+                    return Math.max(0, Math.min(travel, centered));
+                }
+
+                function nearestValueForX(x) {
+                    const { travel } = cachedMetrics;
+                    if (travel <= 0) return 0;
+                    return Math.max(0, Math.min(3, Math.round((x / travel) * 3)));
+                }
+
+                slider.addEventListener('pointerdown', (event) => {
+                    if (event.button !== undefined && event.button !== 0) return;
+                    isDragging = true;
+                    pointerId = event.pointerId;
+                    pointerStartX = event.clientX;
+                    pointerMoved = false;
+
+                    updateCachedMetrics();
+                    sliderRectLeft = slider.getBoundingClientRect().left;
+
+                    try { slider.setPointerCapture?.(pointerId); } catch (e) { /* ignore */ }
+
+                    slider.classList.add('is-pressed', 'is-dragging');
+
+                    TurboEffects.startTravelLift();
+
+                    dragX = dragPositionFromPointer(event.clientX);
+                    setThumbX(dragX, false);
+                }, { signal: uiSignal });
+
+                slider.addEventListener('pointermove', (event) => {
+                    if (!isDragging || event.pointerId !== pointerId) return;
+                    if (Math.abs(event.clientX - pointerStartX) > 4) {
+                        pointerMoved = true;
+                    }
+                    dragX = dragPositionFromPointer(event.clientX);
+                    setThumbX(dragX, false);
+                }, { signal: uiSignal });
+
+                const finishPointer = (event) => {
+                    if (!isDragging || event.pointerId !== pointerId) return;
+                    slider.classList.remove('is-pressed', 'is-dragging');
+                    try { slider.releasePointerCapture?.(pointerId); } catch (e) { /* ignore */ }
+                    pointerId = null;
+
+                    const target = pointerMoved
+                        ? nearestValueForX(dragX)
+                        : valueFromPointer(event.clientX);
+
+                    selectWorkMode(target, { focus: true, fromDrag: true });
+                };
+
+                slider.addEventListener('pointerup', finishPointer, { signal: uiSignal });
+                slider.addEventListener('pointercancel', (event) => {
+                    if (event.pointerId !== pointerId) return;
+                    slider.classList.remove('is-pressed', 'is-dragging');
+                    pointerId = null;
+                    const currentVal = modeKeyToIndex(config.preset);
+                    selectWorkMode(currentVal, { fromDrag: true });
+                }, { signal: uiSignal });
+
+                slider.addEventListener('keydown', (event) => {
+                    const curVal = modeKeyToIndex(config.preset);
+                    let nextVal = curVal;
+                    switch (event.key) {
+                        case 'ArrowLeft':
+                        case 'ArrowDown':
+                            nextVal = Math.max(0, curVal - 1);
+                            break;
+                        case 'ArrowRight':
+                        case 'ArrowUp':
+                            nextVal = Math.min(3, curVal + 1);
+                            break;
+                        case 'Home':
+                            nextVal = 0;
+                            break;
+                        case 'End':
+                            nextVal = 3;
+                        break;
+                        default:
+                            return;
+                    }
+                    event.preventDefault();
+                    selectWorkMode(nextVal);
+                }, { signal: uiSignal });
+
+                resizeObserver = new ResizeObserver(() => {
+                    updateCachedMetrics();
+
+                    TurboEffects.cancel({ resetToRest: true });
+                    TurboEffects.stopDepth();
+                    if (thumbBody) {
+                        thumbBody.style.transform = 'translateZ(0)';
+                    }
+                    if (thumbShadow) {
+                        const st = getShadowStyle(0);
+                        thumbShadow.style.boxShadow = st.boxShadow;
+                        thumbShadow.style.transform = st.transform;
+                    }
+
+                    TurboEffects.rebuildGrid();
+                    syncThumb(false);
+                    TurboEffects.refreshGrid();
+
+                    const wasTurbo = modeKeyToIndex(config.preset) === 3;
+                    if (wasTurbo && !reducedMotionQuery.matches) {
+                        TurboEffects.schedule(TURBO_SETTLE_PAUSE);
+                    }
+
+                    requestAnimationFrame(() => {
+                        slider?.classList.remove('is-dragging');
+                    });
+                });
+                resizeObserver.observe(slider);
+
+                function handleReducedMotionChange() {
+                    if (reducedMotionQuery.matches) {
+                        TurboEffects.cancel({ resetToRest: true });
+                        TurboEffects.stopDepth();
+                        if (thumbBody) thumbBody.style.transform = 'translateZ(0)';
+                        if (thumbShadow) {
+                            const st = getShadowStyle(0);
+                            thumbShadow.style.boxShadow = st.boxShadow;
+                            thumbShadow.style.transform = st.transform;
+                        }
+                    } else if (modeKeyToIndex(config.preset) === 3) {
+                        TurboEffects.enter();
+                    }
+                }
+
+                if (typeof reducedMotionQuery.addEventListener === 'function') {
+                    try {
+                        reducedMotionQuery.addEventListener('change', handleReducedMotionChange, { signal: uiSignal });
+                    } catch (e) {
+                        reducedMotionQuery.addEventListener('change', handleReducedMotionChange);
+                    }
+                } else if (typeof reducedMotionQuery.addListener === 'function') {
+                    reducedMotionQuery.addListener(handleReducedMotionChange);
+                }
+
+                function onVisibilityChange(isOpen) {
+                    if (!isOpen || document.hidden) {
+                        TurboEffects.cancel({ resetToRest: true });
+                        TurboEffects.stopDepth();
+                    } else if (modeKeyToIndex(config.preset) === 3 && !reducedMotionQuery.matches) {
+                        TurboEffects.enter();
+                    }
+                }
+                onVisibilityChangeImpl = onVisibilityChange;
+
+                document.addEventListener('visibilitychange', () => {
+                    const panelEl = document.getElementById('ar-main-panel');
+                    const isPanelOpen = panelEl && panelEl.style.display !== 'none';
+                    onVisibilityChange(isPanelOpen && !document.hidden);
+                }, { signal: uiSignal });
+
+                function cleanupWorkModeAnimation() {
+                    TurboEffects.cancel({ resetToRest: true });
+                    TurboEffects.stopDepth();
+                    if (typeof reducedMotionQuery.removeEventListener === 'function') {
+                        try { reducedMotionQuery.removeEventListener('change', handleReducedMotionChange); } catch (e) {}
+                    } else if (typeof reducedMotionQuery.removeListener === 'function') {
+                        try { reducedMotionQuery.removeListener(handleReducedMotionChange); } catch (e) {}
+                    }
+                }
+
+                uiSignal.addEventListener('abort', cleanupWorkModeAnimation, { once: true });
+
+                updateCachedMetrics();
+                TurboEffects.rebuildGrid();
+                updateModeUI(modeKeyToIndex(config.preset), { animateThumb: false });
+                requestAnimationFrame(() => {
+                    updateCachedMetrics();
+                    syncThumb(false);
+                    requestAnimationFrame(() => {
+                        slider?.classList.remove('is-dragging');
+                        if (config.preset === 'turbo' && !reducedMotionQuery.matches) {
+                            TurboEffects.enter();
+                        }
+                    });
+                });
+            }
+
+        }
+
+        function destroy() {
+            onVisibilityChangeImpl = () => {};
+            if (activeTurboEffects) {
+                try { activeTurboEffects.cancel({ resetToRest: true }); } catch (e) { /* ignore */ }
+                try { activeTurboEffects.stopDepth(); } catch (e) { /* ignore */ }
+                activeTurboEffects = null;
+            }
+            if (resizeObserver) {
+                try { resizeObserver.disconnect(); } catch (e) { /* ignore */ }
+                resizeObserver = null;
+            }
+        }
+
+        return {
+            mount,
+            onVisibilityChange: (isOpen) => onVisibilityChangeImpl(isOpen),
+            destroy
+        };
+    })();
+
+    const ManualQueueView = (() => {
+        let renderImpl = () => {};
+
+        function mount({ el }) {
+            // ---------- Ручная очередь (без вложенного скролла) ----------
+            el('ar-clear-manual').onclick = () => {
+                if (confirm(I18n.t('confirm.clearManual'))) {
+                    State.clearManualList();
+                    renderManualList();
+                    log(I18n.t('logs.manualCleared'));
+                }
+            };
+
+            el('ar-export-manual').onclick = exportManualListHtml;
+
+            function renderManualList() {
+                const container = document.getElementById('ar-manual-list');
+                if (!container) return;
+                container.innerHTML = '';
+                const list = State.getManualList();
+                const cntEl = document.getElementById('ar-manual-count');
+                const totalCount = list?.length || 0;
+                if (cntEl) {
+                    cntEl.textContent = totalCount;
+                    cntEl.setAttribute('data-has', totalCount > 0 ? '1' : '0');
+                }
+                if (!list || !list.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'ar-empty';
+                    empty.textContent = I18n.t('panel.manualEmpty');
+                    container.appendChild(empty);
+                    return;
+                }
+
+                // Превью до 4 элементов без вложенного скролл-бокса
+                const PREVIEW_LIMIT = 4;
+                const previewItems = list.slice(0, PREVIEW_LIMIT);
+
+                previewItems.forEach(item => {
+                    const safeUrl = toSafeHhUrl(item?.url);
+                    const row = document.createElement('div');
+                    row.className = 'ar-manual-item';
+
+                    const left = document.createElement('div');
+                    left.className = 'ar-manual-main';
+                    const time = I18n.formatTime(Number(item?.ts) || Date.now(), { hour: '2-digit', minute: '2-digit' });
+
+                    const head = document.createElement('div');
+                    head.className = 'ar-manual-meta';
+                    const vid = document.createElement('span');
+                    vid.className = 'ar-vid';
+                    vid.textContent = item?.vid ? `#${item.vid}` : 'n/a';
+                    const when = document.createElement('span');
+                    when.className = 'ar-when';
+                    when.textContent = time;
+                    head.appendChild(vid);
+                    head.appendChild(document.createTextNode('·'));
+                    head.appendChild(when);
+
+                    const titleEl = document.createElement('div');
+                    titleEl.className = 'ar-manual-title';
+                    const itemTitle = prettifyTitle(item?.title);
+                    if (itemTitle && itemTitle !== 'Название недоступно' && itemTitle !== 'Title unavailable') {
+                        titleEl.textContent = itemTitle;
+                        titleEl.title = itemTitle;
+                    } else {
+                        titleEl.classList.add('is-empty');
+                        titleEl.textContent = I18n.t('panel.manualNoTitle');
+                    }
+
+                    left.appendChild(head);
+                    left.appendChild(titleEl);
+
+                    const actions = document.createElement('div');
+                    actions.className = 'ar-manual-actions';
+
+                    const openBtn = document.createElement('button');
+                    openBtn.className = 'ar-btn ar-btn-open';
+                    openBtn.innerHTML = `<span>${I18n.t('panel.manualOpen')}</span><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
+                    openBtn.disabled = !safeUrl;
+                    openBtn.title = safeUrl ? I18n.t('panel.manualOpenTitle') : I18n.t('panel.manualUnsafeUrl');
+                    openBtn.onclick = () => {
+                        if (safeUrl) window.open(safeUrl, '_blank', 'noopener,noreferrer');
+                    };
+
+                    const removeBtn = document.createElement('button');
+                    removeBtn.className = 'ar-btn ar-icon-del';
+                    removeBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+                    removeBtn.title = I18n.t('panel.manualRemoveTitle');
+                    removeBtn.onclick = () => { State.removeManualEntry(item.vid); renderManualList(); };
+
+                    actions.appendChild(openBtn);
+                    actions.appendChild(removeBtn);
+
+                    row.appendChild(left);
+                    row.appendChild(actions);
+                    container.appendChild(row);
+                });
+
+                if (totalCount > PREVIEW_LIMIT) {
+                    const moreBtn = document.createElement('button');
+                    moreBtn.className = 'ar-btn ar-btn-soft ar-queue-more-btn';
+                    moreBtn.innerHTML = `<span>${I18n.t('panel.manualMore', { count: totalCount })}</span>`;
+                    moreBtn.title = I18n.t('panel.manualMoreTitle');
+                    moreBtn.onclick = exportManualListHtml;
+                    container.appendChild(moreBtn);
+                }
+            }
+
+            renderImpl = renderManualList;
+            window._applomat_renderManualList = window._hh_ar_renderManualList = renderImpl;
+            renderImpl();
+        }
+
+        function render() { renderImpl(); }
+        function destroy() {
+            renderImpl = () => {};
+            try {
+                delete window._applomat_renderManualList;
+                delete window._hh_ar_renderManualList;
+            } catch (e) {
+                window._applomat_renderManualList = undefined;
+                window._hh_ar_renderManualList = undefined;
+            }
+        }
+        return { mount, render, destroy };
+    })();
+
+    const StatsView = (() => {
+        let renderImpl = () => {};
+        let lastState = null;
+
+        function mount() {
+            // ---------- Живая статистика прогона ----------
+            const statAttempts = document.getElementById('ar-stat-attempts');
+            const statSuccess = document.getElementById('ar-stat-success');
+            const statManual = document.getElementById('ar-stat-manual');
+            const statSkipped = document.getElementById('ar-stat-skipped');
+            const statProg = document.getElementById('ar-stat-progress');
+            const progressFill = document.getElementById('ar-progress-fill');
+            const tileAtt = document.getElementById('ar-stat-tile-attempts');
+            const tileSuc = document.getElementById('ar-stat-tile-success');
+            const tileMan = document.getElementById('ar-stat-tile-manual');
+            const tileSkp = document.getElementById('ar-stat-tile-skip');
+
+            function renderStats() {
+                const s = Stats.getAll();
+                const sent = State.getSentCount();
+                const limit = config.limit;
+
+                if (lastState &&
+                    lastState.attempts === s.attempts &&
+                    lastState.success === s.success &&
+                    lastState.manual === s.manual &&
+                    lastState.skipped === s.skipped &&
+                    lastState.sent === sent &&
+                    lastState.limit === limit) {
+                    return;
+                }
+
+                lastState = { attempts: s.attempts, success: s.success, manual: s.manual, skipped: s.skipped, sent, limit };
+
+                if (statAttempts) statAttempts.textContent = s.attempts;
+                if (statSuccess) statSuccess.textContent = s.success;
+                if (statManual) statManual.textContent = s.manual;
+                if (statSkipped) statSkipped.textContent = s.skipped;
+
+                if (statProg) statProg.textContent = `${sent} / ${limit}`;
+                if (progressFill) progressFill.style.width = clamp(Math.round(sent / Math.max(1, limit) * 100), 0, 100) + '%';
+
+                // Zero-state consistency: семантические цвета только при ненулевых значениях
+                if (tileSuc) tileSuc.classList.toggle('is-active-success', s.success > 0);
+                if (tileMan) tileMan.classList.toggle('is-active-manual', s.manual > 0);
+                if (tileSkp) tileSkp.classList.toggle('is-active-skip', s.skipped > 0);
+                if (tileAtt) tileAtt.classList.toggle('is-active-attempts', s.attempts > 0);
+            }
+
+            renderImpl = renderStats;
+            window._applomat_renderStats = window._hh_ar_renderStats = renderImpl;
+            renderStats();
+        }
+
+        function render() { renderImpl(); }
+        function destroy() {
+            renderImpl = () => {};
+            lastState = null;
+            try {
+                delete window._applomat_renderStats;
+                delete window._hh_ar_renderStats;
+            } catch (e) {
+                window._applomat_renderStats = undefined;
+                window._hh_ar_renderStats = undefined;
+            }
+        }
+        return { mount, render, destroy };
+    })();
+
+    const DiagnosticsView = (() => {
+        let renderImpl = () => {};
+        let updateImpl = () => {};
+        let lastRenderedVersion = -1;
+        let lastRenderedLang = '';
+        const expandedGroups = new Set();
+
+        function groupConsecutive(items) {
+            const groups = [];
+            for (const item of items) {
+                const prev = groups[groups.length - 1];
+                if (prev && prev.msg === item.msg && prev.lvl === item.lvl) {
+                    prev.count++;
+                    prev.endT = item.t || Date.now();
+                    prev.items.push(item);
+                } else {
+                    groups.push({
+                        id: groups.length + '_' + (item.t || Date.now()),
+                        msg: item.msg,
+                        lvl: item.lvl,
+                        startT: item.t || Date.now(),
+                        endT: item.t || Date.now(),
+                        count: 1,
+                        items: [item]
+                    });
+                }
+            }
+            return groups;
+        }
+
+        function buildLogRow(group, isExpanded, onToggle) {
+            const row = document.createElement('div');
+            const isErr = group.lvl === 'ERR';
+            const isWarn = group.lvl === 'WARN';
+            const isOk = group.lvl === 'OK';
+            const isGrouped = group.count > 1;
+            row.className = 'ar-log-row' +
+                (isErr ? ' is-error' : '') +
+                (isWarn ? ' is-warning' : '') +
+                (isGrouped ? ' is-grouped' : '');
+
+            const time = document.createElement('span');
+            time.className = 'ar-log-time';
+            if (isGrouped && group.startT !== group.endT) {
+                time.textContent = `${I18n.formatTime(group.startT)} – ${I18n.formatTime(group.endT)}`;
+            } else {
+                time.textContent = I18n.formatTime(group.endT);
+            }
+
+            const level = document.createElement('span');
+            level.className = 'ar-log-level' +
+                (isErr ? ' ar-log-level--err' : isWarn ? ' ar-log-level--warn' : isOk ? ' ar-log-level--ok' : '');
+            level.textContent = group.lvl || 'INFO';
+
+            const msg = document.createElement('span');
+            msg.className = 'ar-log-message';
+            msg.textContent = group.msg;
+
+            row.appendChild(time);
+            row.appendChild(level);
+            row.appendChild(msg);
+
+            if (isGrouped) {
+                const actionTitle = I18n.t(isExpanded ? 'diag.repeatCollapse' : 'diag.repeatExpand');
+                row.setAttribute('role', 'button');
+                row.setAttribute('tabindex', '0');
+                row.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+                row.title = actionTitle;
+                row.onclick = () => onToggle();
+                row.onkeydown = (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onToggle();
+                    }
+                };
+
+                const badge = document.createElement('button');
+                badge.type = 'button';
+                badge.className = 'ar-log-repeat';
+                badge.textContent = `×${group.count}${isExpanded ? ' ▴' : ' ▾'}`;
+                badge.title = actionTitle;
+                badge.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+                badge.onclick = (e) => {
+                    e.stopPropagation();
+                    onToggle();
+                };
+                row.appendChild(badge);
+            }
+
+            return row;
+        }
+
+        function mount({ el, uiSignal }) {
+            // ---------- Экран диагностики ----------
+            const openFullDiag = () => {
+                const viewMain = el('ar-view-main');
+                const viewDiag = el('ar-view-diag');
+                if (!viewMain || !viewDiag) return;
+                viewMain.style.display = 'none';
+                viewDiag.style.display = 'flex';
+                renderFullDiag();
+            };
+
+            const closeFullDiag = () => {
+                const viewMain = el('ar-view-main');
+                const viewDiag = el('ar-view-diag');
+                if (!viewMain || !viewDiag) return;
+                viewDiag.style.display = 'none';
+                viewMain.style.display = 'flex';
+            };
+
+            function renderFullDiag({ preserveScroll = false } = {}) {
+                const fullBox = el('ar-diag-full-box');
+                if (!fullBox) return;
+
+                const wasAtBottom = Math.abs((fullBox.scrollHeight - fullBox.scrollTop) - fullBox.clientHeight) <= 12;
+                const previousScrollTop = fullBox.scrollTop;
+
+                const all = DiagLog.getAll();
+                const filterErr = el('ar-diag-full-errors-only')?.checked;
+                const filtered = filterErr ? all.filter(item => item.lvl === 'ERR') : all;
+                const groups = groupConsecutive(filtered);
+
+                fullBox.innerHTML = '';
+
+                if (!groups.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'ar-log-empty';
+                    const emptyTitleKey = filterErr ? 'diag.emptyNoErrorsTitle' : 'diag.emptyTitle';
+                    const emptyHintKey = filterErr ? 'diag.emptyNoErrorsHint' : 'diag.emptyHint';
+                    empty.innerHTML = `
+                        <div class="ar-log-empty-inner">
+                            <div class="ar-log-empty-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <circle cx="12" cy="12" r="9"></circle>
+                                    <line x1="9" y1="10" x2="9.01" y2="10" stroke-width="2.6" stroke-linecap="round"></line>
+                                    <line x1="15" y1="10" x2="15.01" y2="10" stroke-width="2.6" stroke-linecap="round"></line>
+                                    <path d="M8 15s1.5 2 4 2 4-2 4-2" stroke-linecap="round"></path>
+                                </svg>
+                            </div>
+                            <div class="ar-log-empty-title">${I18n.t(emptyTitleKey)}</div>
+                            <div class="ar-log-empty-hint">${I18n.t(emptyHintKey)}</div>
+                        </div>
+                    `;
+                    fullBox.appendChild(empty);
+                } else {
+                    const fragment = document.createDocumentFragment();
+                    groups.forEach(group => {
+                        const isExpanded = expandedGroups.has(group.id);
+                        const toggleGroup = () => {
+                            if (expandedGroups.has(group.id)) {
+                                expandedGroups.delete(group.id);
+                            } else {
+                                expandedGroups.add(group.id);
+                            }
+                            renderFullDiag({ preserveScroll: true });
+                        };
+
+                        const row = buildLogRow(group, isExpanded, toggleGroup);
+                        fragment.appendChild(row);
+
+                        if (isExpanded && group.count > 1) {
+                            const childContainer = document.createElement('div');
+                            childContainer.className = 'ar-log-group-children';
+                            group.items.forEach(child => {
+                                const childRow = document.createElement('div');
+                                childRow.className = 'ar-log-child';
+                                const childTime = document.createElement('span');
+                                childTime.className = 'ar-log-child-time';
+                                childTime.textContent = I18n.formatTime(child.t || Date.now());
+                                const childMsg = document.createElement('span');
+                                childMsg.className = 'ar-log-message';
+                                childMsg.textContent = child.msg;
+                                childRow.appendChild(childTime);
+                                childRow.appendChild(childMsg);
+                                childContainer.appendChild(childRow);
+                            });
+                            fragment.appendChild(childContainer);
+                        }
+                    });
+                    fullBox.appendChild(fragment);
+                }
+
+                if (preserveScroll) {
+                    fullBox.scrollTop = previousScrollTop;
+                } else if (wasAtBottom) {
+                    fullBox.scrollTop = fullBox.scrollHeight;
+                }
+
+                updateDiagCount(true);
+            }
+
+            const backBtn = el('ar-diag-back-btn');
+            if (backBtn) backBtn.onclick = closeFullDiag;
+
+            const diagFullErrChk = el('ar-diag-full-errors-only');
+            if (diagFullErrChk) diagFullErrChk.onchange = () => renderFullDiag();
+
+            const diagFullClearBox = el('ar-diag-full-clear-box');
+            if (diagFullClearBox) diagFullClearBox.onclick = () => {
+                const fullBox = el('ar-diag-full-box');
+                if (fullBox) fullBox.innerHTML = '';
+                el('ar-diag-full-dropdown')?.classList.remove('is-open');
+            };
+
+            // Dropdown setup
+            const setupDropdown = (btnId, dropdownId) => {
+                const btn = el(btnId);
+                const dropdown = el(dropdownId);
+                if (!btn || !dropdown) return;
+                btn.onclick = (e) => {
+                    e.stopPropagation();
+                    dropdown.classList.toggle('is-open');
+                };
+            };
+            setupDropdown('ar-diag-full-more-btn', 'ar-diag-full-dropdown');
+
+            document.addEventListener('click', () => {
+                el('ar-diag-full-dropdown')?.classList.remove('is-open');
+            }, { signal: uiSignal });
+
+            // Счётчик записей и ошибок в постоянном логе с проверкой версий
+            const updateDiagCount = (force = false) => {
+                const stats = DiagLog.getStats();
+                const curLang = I18n.getLanguage();
+                if (!force && stats.version === lastRenderedVersion && curLang === lastRenderedLang) {
+                    return;
+                }
+                lastRenderedVersion = stats.version;
+                lastRenderedLang = curLang;
+
+                const errors = stats.errors;
+                const total = stats.total;
+                const errText = I18n.plural(errors, 'error');
+                const recText = I18n.plural(total, 'record');
+
+                const badge = el('ar-health-badge');
+                const healthBtn = el('ar-health-btn');
+                if (badge) {
+                    if (errors > 0) {
+                        badge.textContent = errors;
+                        badge.style.display = 'inline-flex';
+                        if (healthBtn) {
+                            healthBtn.title = I18n.t('diag.badgeTitle', { errText });
+                        }
+                    } else {
+                        badge.textContent = '';
+                        badge.style.display = 'none';
+                        if (healthBtn) {
+                            healthBtn.title = I18n.t('diag.badgeTitleClean');
+                        }
+                    }
+                }
+
+                const fullStat = el('ar-diag-full-stat');
+                if (fullStat) {
+                    fullStat.textContent = I18n.t('diag.statSummary', { errText, recText });
+                }
+            };
+
+            const ownedUpdateBadge = (force) => updateDiagCount(force);
+            const ownedRenderDiag = () => {
+                updateDiagCount(true);
+                const diag = el('ar-view-diag');
+                if (diag && diag.style.display !== 'none') {
+                    renderFullDiag();
+                }
+            };
+
+            window._hha_updateDiagBadge = window._applomat_updateDiagBadge = window._hh_ar_updateDiagBadge = ownedUpdateBadge;
+            window._hha_renderDiagnostics = ownedRenderDiag;
+            updateDiagCount(true);
+
+            // Выгрузка полного диагностического лога в файл
+            const exportLogs = () => {
+                exportDiagnosticReport();
+                updateDiagCount(true);
+            };
+            const diagFullSaveBtn = el('ar-diag-full-save');
+            if (diagFullSaveBtn) diagFullSaveBtn.onclick = exportLogs;
+
+            // Очистка постоянного лога
+            const handleClearAllDiag = () => {
+                if (confirm(I18n.t('confirm.clearDiag'))) {
+                    DiagLog.clear();
+                    Metrics.clear();
+                    expandedGroups.clear();
+                    const fullBox = el('ar-diag-full-box');
+                    if (fullBox) fullBox.innerHTML = '';
+                    updateDiagCount(true);
+                    log(I18n.t('logs.diagCleared'));
+                    el('ar-diag-full-dropdown')?.classList.remove('is-open');
+                }
+            };
+            const diagFullClearAll = el('ar-diag-full-clear-all');
+            if (diagFullClearAll) diagFullClearAll.onclick = handleClearAllDiag;
+
+            const healthButton = el('ar-health-btn');
+            if (healthButton) healthButton.onclick = openFullDiag;
+            const checkButton = el('ar-diag-full-check');
+            if (checkButton) checkButton.onclick = runHealthCheck;
+
+            renderImpl = renderFullDiag;
+            updateImpl = updateDiagCount;
+        }
+
+        function render() { renderImpl(); }
+        function update() { updateImpl(); }
+        function refresh() {
+            updateImpl(true);
+            const diag = document.getElementById('ar-view-diag');
+            if (diag && diag.style.display !== 'none') renderImpl();
+        }
+        function destroy() {
+            renderImpl = () => {};
+            updateImpl = () => {};
+            lastRenderedVersion = -1;
+            lastRenderedLang = '';
+            expandedGroups.clear();
+            try {
+                delete window._hha_renderDiagnostics;
+                delete window._hha_updateDiagBadge;
+                delete window._applomat_updateDiagBadge;
+                delete window._hh_ar_updateDiagBadge;
+            } catch (e) {
+                window._hha_renderDiagnostics = undefined;
+                window._hha_updateDiagBadge = undefined;
+                window._applomat_updateDiagBadge = undefined;
+                window._hh_ar_updateDiagBadge = undefined;
+            }
+        }
+        return { mount, render, update, refresh, destroy };
+    })();
+
+    const LocalizationBinder = (() => {
+        let el = null;
+        let panel = null;
+
+        const textBindings = [
+            ['ar-work-mode-label', 'panel.modeTitle'],
+            ['ar-limit-label', 'panel.limitLabel'],
+            ['ar-cover-card-title', 'cover.title'],
+            ['ar-apply-reject-label', 'cover.rejectWarningLabel'],
+            ['ar-start-btn-text', 'panel.startBtn'],
+            ['ar-stop-btn-text', 'panel.stopBtn'],
+            ['ar-reset-history-text', 'panel.resetHistory'],
+            ['ar-health-btn-text', 'panel.diagnostics'],
+            ['ar-stats-card-title', 'panel.statsTitle'],
+            ['ar-stat-cap-attempts', 'panel.statAttempts'],
+            ['ar-stat-cap-success', 'panel.statSuccess'],
+            ['ar-stat-cap-manual', 'panel.statManual'],
+            ['ar-stat-cap-skipped', 'panel.statSkipped'],
+            ['ar-manual-card-title', 'panel.manualTitle'],
+            ['ar-export-manual', 'panel.manualExport'],
+            ['ar-clear-manual', 'panel.manualClear'],
+            ['ar-diag-back-text', 'diag.backBtn'],
+            ['ar-diag-view-title', 'diag.title'],
+            ['ar-diag-full-save', 'diag.downloadLog'],
+            ['ar-diag-full-check', 'diag.checkSelectors'],
+            ['ar-diag-errors-only-text', 'diag.errorsOnly'],
+            ['ar-diag-more-text', 'diag.moreBtn'],
+            ['ar-diag-full-clear-box', 'diag.clearView'],
+            ['ar-diag-full-clear-all', 'diag.clearAll']
+        ];
+
+        const titleBindings = [
+            ['ar-reset-history', 'panel.resetHistoryTitle'],
+            ['ar-health-btn', 'panel.diagnosticsTitle'],
+            ['ar-stat-progress', 'panel.statsProgressTitle'],
+            ['ar-manual-count', 'panel.manualCountTitle'],
+            ['ar-diag-back-btn', 'diag.backTitle'],
+            ['ar-diag-full-save', 'diag.downloadLogTitle'],
+            ['ar-diag-full-check', 'diag.checkSelectors'],
+            ['ar-diag-full-more-btn', 'diag.moreTitle'],
+            ['ar-apply-reject-wrap', 'cover.rejectWarningTitle']
+        ];
+
+        function refresh() {
+            if (!el) return;
+            const currentLang = I18n.getLanguage();
+            const mainPanel = el('ar-main-panel');
+            if (mainPanel) mainPanel.setAttribute('lang', currentLang);
+
+            const toggle = el('ar-toggle-btn');
+            if (toggle) {
+                toggle.setAttribute('lang', currentLang);
+                toggle.title = I18n.t('panel.expandTitle');
+                toggle.setAttribute('aria-label', I18n.t('panel.expandTitle'));
+            }
+
+            qa('.ar-lang-btn', mainPanel).forEach(btn => {
+                const active = btn.dataset.lang === currentLang;
+                btn.classList.toggle('is-active', active);
+                btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+            });
+
+            for (const [id, key] of textBindings) {
+                const node = el(id);
+                if (node) node.textContent = I18n.t(key);
+            }
+            for (const [id, key] of titleBindings) {
+                const node = el(id);
+                if (node) node.title = I18n.t(key);
+            }
+
+            const minimizeTitle = I18n.t('panel.minimizeTitle');
+            for (const id of ['ar-minimize-btn', 'ar-minimize-diag-btn']) {
+                const node = el(id);
+                if (node) {
+                    node.title = minimizeTitle;
+                    node.setAttribute('aria-label', minimizeTitle);
+                }
+            }
+
+            const currentPresetKey = PRESETS[config.preset] ? config.preset : DEFAULT_PRESET;
+            const modeLabel = presetLabel(currentPresetKey);
+            const modeState = el('ar-work-mode-state');
+            if (modeState) modeState.textContent = modeLabel;
+            const safeLabel = el('ar-work-mode-lbl-safe');
+            if (safeLabel) safeLabel.textContent = presetLabel('safe');
+            const turboLabel = el('ar-work-mode-lbl-turbo');
+            if (turboLabel) turboLabel.textContent = presetLabel('turbo');
+
+            const slider = el('ar-work-mode-slider');
+            if (slider) {
+                slider.setAttribute('aria-label', I18n.t('panel.modeTitle'));
+                slider.setAttribute('aria-valuetext', modeLabel);
+            }
+            const help = el('ar-work-mode-help-btn');
+            if (help) {
+                help.title = I18n.t('panel.modeHelpTitle');
+                help.setAttribute('aria-label', I18n.t('panel.modeHelpAria'));
+            }
+            const cover = el('ar-cover-text');
+            if (cover) cover.placeholder = I18n.t('cover.placeholder');
+
+            setStatus(currentStatusState.statusKey, currentStatusState.customKeyOrText, currentStatusState.params);
+            StatsView.render();
+            ManualQueueView.render();
+            DiagnosticsView.refresh();
+        }
+
+        function mount({ el: getEl, panel: rootPanel, uiSignal }) {
+            el = getEl;
+            panel = rootPanel;
+            qa('.ar-lang-btn', panel).forEach(btn => {
+                btn.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    const targetLang = btn.dataset.lang;
+                    if (!targetLang || targetLang === I18n.getLanguage()) return;
+                    I18n.setLanguage(targetLang);
+                    refresh();
+                    log(I18n.t('logs.modeSet', { mode: (config.preset === 'turbo' ? '↯ ' : '') + presetLabel(config.preset) }));
+                }, { signal: uiSignal });
+            });
+        }
+
+        function destroy() {
+            el = null;
+            panel = null;
+        }
+
+        return { mount, refresh, destroy };
+    })();
+
     let uiAbortController = null;
-    let uiDiagTimer = null;
-    let uiStatsTimer = null;
-    let uiWorkModeResizeObserver = null;
 
     function cleanupUI() {
-        if (uiDiagTimer) { clearInterval(uiDiagTimer); uiDiagTimer = null; }
-        if (uiStatsTimer) { clearInterval(uiStatsTimer); uiStatsTimer = null; }
-        if (uiWorkModeResizeObserver) {
-            try { uiWorkModeResizeObserver.disconnect(); } catch (e) { /* ignore */ }
-            uiWorkModeResizeObserver = null;
-        }
+        WorkModeSlider.destroy();
+        LocalizationBinder.destroy();
+        DiagnosticsView.destroy();
+        StatsView.destroy();
+        ManualQueueView.destroy();
         if (uiAbortController) {
             try { uiAbortController.abort(); } catch (e) { /* ignore */ }
             uiAbortController = null;
@@ -4662,6 +6558,7 @@
         if (oldToggle) oldToggle.remove();
         const oldPanel = document.getElementById('ar-main-panel');
         if (oldPanel) oldPanel.remove();
+        document.documentElement.classList.remove('hh-ar-open', 'hh-ar-anim');
     }
 
     function setupUI() {
@@ -4718,626 +6615,11 @@
                 coverCounter.classList.toggle('is-off', !on);
             }
         };
-        coverArea.addEventListener('input', renderCoverState);
-        el('ar-use-cover-check').addEventListener('change', renderCoverState);
+        coverArea.addEventListener('input', renderCoverState, { signal: uiSignal });
+        el('ar-use-cover-check').addEventListener('change', renderCoverState, { signal: uiSignal });
         renderCoverState();
 
-        // ---------- Новый селектор режима (Work Mode Slider) ----------
-        const modeCard = el('ar-mode-card');
-        const slider = el('ar-work-mode-slider');
-        const thumb = el('ar-work-mode-thumb');
-        const currentModeState = el('ar-work-mode-state');
-        const gridStrip = el('ar-work-mode-grid-strip');
-        const reducedMotionQuery = typeof window.matchMedia === 'function'
-            ? window.matchMedia('(prefers-reduced-motion: reduce)')
-            : { matches: false };
-
-        let gridCells = [];
-        let gridMetrics = {
-            width: 1,
-            columns: 1,
-            rows: 5,
-            periodWidth: 1
-        };
-
-        const SHOCK_CYCLE_SECONDS = 5;
-        const GRID_DRIFT_SECONDS = 60;
-
-        if (modeCard) {
-            modeCard.style.setProperty('--ar-work-shock-cycle-duration', `${SHOCK_CYCLE_SECONDS}s`);
-            modeCard.style.setProperty('--ar-work-turbo-grid-duration', `${GRID_DRIFT_SECONDS}s`);
-        }
-
-        let gridDriftAnimation = null;
-        let shockCycleSeconds = SHOCK_CYCLE_SECONDS;
-        let shockStart = 0;
-        let shockTravelMs = 0;
-        let shockRafId = 0;
-        let shockCycleTimer = 0;
-        let shockEntryTimer = 0;
-        let shockActive = false;
-        let lastShockStartedAt = 0;
-
-        function seededNoise(index) {
-            const x = Math.sin(index * 12.9898 + 78.233) * 43758.5453;
-            return x - Math.floor(x);
-        }
-
-        function levelFor(index) {
-            const n = seededNoise(index + 91);
-
-            // Regular geometry, irregular deterministic intensity.
-            if (n < .18) return 'l0';
-            if (n < .35) return 'l1';
-            if (n < .53) return 'l2';
-            if (n < .69) return 'l3';
-            if (n < .84) return 'l4';
-            return 'l5';
-        }
-
-        function pxVar(name, fallback) {
-            if (!modeCard && !slider) return fallback;
-            const style = getComputedStyle(modeCard || slider);
-            const n = parseFloat(style.getPropertyValue(name));
-            return Number.isFinite(n) ? n : fallback;
-        }
-
-        function gaussian(distance, width) {
-            const ratio = distance / width;
-            return Math.exp(-.5 * ratio * ratio);
-        }
-
-        function clamp01(val) {
-            return Math.max(0, Math.min(1, val));
-        }
-
-        function smoothstep(edge0, edge1, x) {
-            if (edge0 === edge1) return x < edge0 ? 0 : 1;
-            const t = clamp01((x - edge0) / (edge1 - edge0));
-            return t * t * (3 - 2 * t);
-        }
-
-        function resetShockCells() {
-            for (const cell of gridCells) {
-                const style = cell.element.style;
-                style.setProperty('--wave-boost', '0');
-                style.setProperty('--wave-x', '0px');
-                style.setProperty('--wave-y', '0px');
-                style.setProperty('--wave-scale', '1');
-            }
-        }
-
-        function rebuildGrid() {
-            if (!slider || !gridStrip) return;
-            const rows = 5;
-            const cellSize = pxVar('--ar-work-grid-cell', 5);
-            const gap = pxVar('--ar-work-grid-col-gap', 2);
-            const cadence = cellSize + gap;
-            const width = Math.max(1, slider.clientWidth);
-
-            // Two exact periods: seamless right-to-left drift.
-            const columns = Math.max(1, Math.ceil((width + gap) / cadence) + 2);
-            const periodWidth = columns * cadence;
-            const fragment = document.createDocumentFragment();
-            const metadata = [];
-
-            for (let period = 0; period < 2; period++) {
-                for (let column = 0; column < columns; column++) {
-                    for (let row = 0; row < rows; row++) {
-                        const index = column * rows + row;
-                        const baseLevel = levelFor(index);
-                        const element = document.createElement('span');
-
-                        element.className = `ar-work-mode-grid-cell ${baseLevel}`;
-                        fragment.appendChild(element);
-
-                        metadata.push({
-                            element,
-                            column,
-                            row,
-                            period,
-
-                            // Physical center of THIS rendered cell in the two-period strip.
-                            // Shockwave uses this together with the live CSS drift offset,
-                            // so the reaction always happens where the square is actually seen.
-                            stripX:
-                                period * periodWidth +
-                                column * cadence +
-                                cellSize / 2,
-
-                            phase: (seededNoise(index * 1.731 + 17.9) - .5) * .018,
-                            baseLevel
-                        });
-                    }
-                }
-            }
-
-            gridStrip.replaceChildren(fragment);
-            gridStrip.style.width = `${(periodWidth * 2) - gap}px`;
-            slider.style.setProperty('--ar-work-grid-shift', `${-periodWidth}px`);
-
-            gridCells = metadata;
-            gridMetrics = {
-                width,
-                columns,
-                rows,
-                periodWidth
-            };
-
-            refreshGridDriftAnimation();
-            resetShockCells();
-        }
-
-        function refreshGridDriftAnimation() {
-            if (!gridStrip || typeof gridStrip.getAnimations !== 'function') {
-                gridDriftAnimation = null;
-                return;
-            }
-            const animations = gridStrip.getAnimations();
-            gridDriftAnimation = animations.length ? animations[0] : null;
-        }
-
-        function currentGridDriftOffset() {
-            if (!gridDriftAnimation) {
-                refreshGridDriftAnimation();
-            }
-
-            if (!gridDriftAnimation) {
-                return 0;
-            }
-
-            const timing = gridDriftAnimation.effect?.getComputedTiming?.();
-            const progress = Number.isFinite(timing?.progress)
-                ? timing.progress
-                : 0;
-
-            return -gridMetrics.periodWidth * progress;
-        }
-
-        function travelDurationMs(cycleSeconds = shockCycleSeconds) {
-            const normalized = clamp01((cycleSeconds - 5) / 35);
-            return 1800 + normalized * 1200;
-        }
-
-        function clearShockTimers() {
-            if (shockCycleTimer) {
-                clearTimeout(shockCycleTimer);
-                shockCycleTimer = 0;
-            }
-
-            if (shockEntryTimer) {
-                clearTimeout(shockEntryTimer);
-                shockEntryTimer = 0;
-            }
-        }
-
-        function stopShockwave({ clearSchedule = true } = {}) {
-            if (shockRafId) {
-                cancelAnimationFrame(shockRafId);
-                shockRafId = 0;
-            }
-
-            if (clearSchedule) {
-                clearShockTimers();
-            }
-
-            shockActive = false;
-            resetShockCells();
-        }
-
-        function scheduleNextShockwave() {
-            const curVal = modeKeyToIndex(config.preset);
-            if (curVal !== 3 || reducedMotionQuery.matches) return;
-
-            if (shockCycleTimer) {
-                clearTimeout(shockCycleTimer);
-            }
-
-            const intervalMs = Math.max(5000, shockCycleSeconds * 1000);
-            const targetTime = lastShockStartedAt
-                ? lastShockStartedAt + intervalMs
-                : performance.now() + intervalMs;
-            const delay = Math.max(300, targetTime - performance.now());
-
-            shockCycleTimer = setTimeout(() => {
-                shockCycleTimer = 0;
-                startShockwave();
-            }, delay);
-        }
-
-        function startShockwave() {
-            const curVal = modeKeyToIndex(config.preset);
-            if (curVal !== 3 || reducedMotionQuery.matches || !gridCells.length) return;
-
-            if (shockRafId) {
-                cancelAnimationFrame(shockRafId);
-                shockRafId = 0;
-            }
-
-            if (shockCycleTimer) {
-                clearTimeout(shockCycleTimer);
-                shockCycleTimer = 0;
-            }
-
-            shockActive = true;
-            shockStart = performance.now();
-            lastShockStartedAt = shockStart;
-            shockTravelMs = travelDurationMs();
-
-            shockRafId = requestAnimationFrame(updateShockwave);
-        }
-
-        function updateShockwave(now) {
-            const curVal = modeKeyToIndex(config.preset);
-            if (!shockActive || curVal !== 3 || reducedMotionQuery.matches) {
-                stopShockwave({ clearSchedule: false });
-                return;
-            }
-
-            const elapsed = now - shockStart;
-            const travelProgress = clamp01(elapsed / shockTravelMs);
-
-            // Almost linear propagation with a subtle natural ease at the tail.
-            const travelEase = 1 - Math.pow(1 - travelProgress, 1.08);
-            const frontX = 1.08 - 1.16 * travelEase;
-            const elapsedSeconds = elapsed / 1000;
-
-            // Main wave remains active during travel; wake/echo gets ~950ms to settle.
-            const settleMs = 950;
-            const globalDecay = elapsed <= shockTravelMs
-                ? 1
-                : 1 - smoothstep(shockTravelMs, shockTravelMs + settleMs, elapsed);
-
-            // Read current CSS animation phase once and convert every cell's strip-space X into slider-space X.
-            const driftOffset = currentGridDriftOffset();
-            const sliderWidth = gridMetrics.width;
-
-            for (const cell of gridCells) {
-                const visualXPx = cell.stripX + driftOffset;
-                const visualX = visualXPx / sliderWidth;
-                const x = visualX + cell.phase;
-                const distance = x - frontX;
-
-                // Wave moves right -> left:
-                // negative distance = just ahead of the front,
-                // positive distance = already passed / wake side.
-                const core = gaussian(distance, .026) * globalDecay;
-                const compression = gaussian(distance + .034, .030) * globalDecay;
-
-                const wakeGate = smoothstep(-.012, .018, distance);
-                const wake = gaussian(distance - .075, .105) * wakeGate * globalDecay;
-
-                const echoGate = smoothstep(.035, .075, distance);
-                const echo = gaussian(distance - .135, .040) * echoGate * globalDecay;
-
-                // Preserve base l0-l5 opacity and only add a temporary response.
-                const boost =
-                    core * .50 +
-                    compression * .055 +
-                    wake * .13 +
-                    echo * .08;
-
-                const scale =
-                    1 +
-                    core * .185 +
-                    wake * .035 +
-                    echo * .018 -
-                    compression * .018;
-
-                // Micro compression/recoil only — no layout-scale displacement.
-                const waveX =
-                    core * -1.05 +
-                    compression * -.55 +
-                    wake * .30 +
-                    echo * .10;
-
-                const interference =
-                    Math.sin(
-                        visualX * 19.0 +
-                        cell.row * 1.27 +
-                        elapsedSeconds * 6.2 +
-                        cell.phase * 55
-                    );
-
-                const echoInterference =
-                    Math.sin(
-                        visualX * 14.0 +
-                        cell.row * 1.61 +
-                        elapsedSeconds * 4.1
-                    );
-
-                const waveY =
-                    interference * wake * .46 +
-                    echoInterference * echo * .16;
-
-                const style = cell.element.style;
-                style.setProperty('--wave-boost', boost.toFixed(3));
-                style.setProperty('--wave-x', `${waveX.toFixed(3)}px`);
-                style.setProperty('--wave-y', `${waveY.toFixed(3)}px`);
-                style.setProperty('--wave-scale', scale.toFixed(3));
-            }
-
-            if (elapsed < shockTravelMs + settleMs) {
-                shockRafId = requestAnimationFrame(updateShockwave);
-                return;
-            }
-
-            shockRafId = 0;
-            shockActive = false;
-            resetShockCells();
-            scheduleNextShockwave();
-        }
-
-        function enterTurbo() {
-            if (reducedMotionQuery.matches) {
-                resetShockCells();
-                return;
-            }
-
-            clearShockTimers();
-
-            // Pick up the freshly-created CSS drift animation on the next frame so shockwave shares its timeline.
-            requestAnimationFrame(() => {
-                refreshGridDriftAnimation();
-            });
-
-            // Let the thumb/surface start their transition, then fire wave.
-            shockEntryTimer = setTimeout(() => {
-                shockEntryTimer = 0;
-                startShockwave();
-            }, 150);
-        }
-
-        function exitTurbo() {
-            stopShockwave({ clearSchedule: true });
-            lastShockStartedAt = 0;
-            gridDriftAnimation = null;
-        }
-
-        function getMetrics() {
-            if (!slider || !thumb) return { pad: 3, thumbWidth: 44, travel: 0 };
-            const style = getComputedStyle(slider);
-            const pad = parseFloat(style.getPropertyValue('--ar-work-track-pad')) || 3;
-            const thumbWidth = thumb.getBoundingClientRect().width || 44;
-            const travel = Math.max(0, slider.clientWidth - (pad * 2) - thumbWidth);
-            return { pad, thumbWidth, travel };
-        }
-
-        function positionForValue(val) {
-            const { travel } = getMetrics();
-            return (travel / 3) * val;
-        }
-
-        function setThumbX(x, animate = true) {
-            if (!slider || !thumb) return;
-            if (animate) {
-                slider.classList.remove('is-dragging');
-            } else {
-                slider.classList.add('is-dragging');
-            }
-            thumb.style.transform = `translate3d(${x}px, 0, 0)`;
-        }
-
-        function syncThumb(animate = true) {
-            const currentVal = modeKeyToIndex(config.preset);
-            setThumbX(positionForValue(currentVal), animate);
-        }
-
-        function updateModeUI(val, { animateThumb = true } = {}) {
-            const key = modeIndexToKey(val);
-            const label = presetLabel(key);
-            const wasTurbo = slider?.classList.contains('is-turbo') || false;
-            const isTurbo = key === 'turbo';
-
-            if (slider) {
-                slider.dataset.value = String(val);
-                slider.classList.toggle('is-turbo', isTurbo);
-                slider.setAttribute('aria-valuenow', String(val));
-                slider.setAttribute('aria-valuetext', label);
-            }
-            if (modeCard) {
-                modeCard.dataset.mode = key;
-            }
-            if (currentModeState) {
-                currentModeState.textContent = label;
-            }
-            syncThumb(animateThumb);
-
-            if (!wasTurbo && isTurbo) {
-                enterTurbo();
-            } else if (wasTurbo && !isTurbo) {
-                exitTurbo();
-            }
-        }
-
-        function selectWorkMode(nextIndex, { focus = false } = {}) {
-            const clampedIndex = Math.max(0, Math.min(3, nextIndex));
-            const nextKey = modeIndexToKey(clampedIndex);
-
-            if (config.preset !== nextKey) {
-                config.preset = nextKey;
-                Settings.save(config);
-
-                updateModeUI(clampedIndex, { animateThumb: true });
-
-                if (State.amIRunning()) {
-                    setStatus('running');
-                }
-
-                log(I18n.t('logs.modeSet', { mode: (nextKey === 'turbo' ? '↯ ' : '') + presetLabel(nextKey) }));
-            } else {
-                updateModeUI(clampedIndex, { animateThumb: true });
-            }
-
-            if (focus && slider) {
-                slider.focus({ preventScroll: true });
-            }
-        }
-
-        if (slider) {
-            let dragging = false;
-            let pointerId = null;
-            let dragX = 0;
-            let pointerStartX = 0;
-            let pointerMoved = false;
-
-            function valueFromPointer(clientX) {
-                const rect = slider.getBoundingClientRect();
-                const local = Math.max(0, Math.min(rect.width, clientX - rect.left));
-                const ratio = rect.width ? local / rect.width : 0;
-                return Math.max(0, Math.min(3, Math.floor(ratio * 4)));
-            }
-
-            function dragPositionFromPointer(clientX) {
-                const rect = slider.getBoundingClientRect();
-                const { pad, thumbWidth, travel } = getMetrics();
-                const centered = clientX - rect.left - pad - (thumbWidth / 2);
-                return Math.max(0, Math.min(travel, centered));
-            }
-
-            function nearestValueForX(x) {
-                const { travel } = getMetrics();
-                if (travel <= 0) return 0;
-                return Math.max(0, Math.min(3, Math.round((x / travel) * 3)));
-            }
-
-            slider.addEventListener('pointerdown', (event) => {
-                if (event.button !== undefined && event.button !== 0) return;
-                dragging = true;
-                pointerId = event.pointerId;
-                pointerStartX = event.clientX;
-                pointerMoved = false;
-                try { slider.setPointerCapture?.(pointerId); } catch (e) { /* ignore */ }
-
-                slider.classList.add('is-pressed', 'is-dragging');
-                dragX = dragPositionFromPointer(event.clientX);
-                setThumbX(dragX, false);
-            }, { signal: uiSignal });
-
-            slider.addEventListener('pointermove', (event) => {
-                if (!dragging || event.pointerId !== pointerId) return;
-                if (Math.abs(event.clientX - pointerStartX) > 4) {
-                    pointerMoved = true;
-                }
-                dragX = dragPositionFromPointer(event.clientX);
-                setThumbX(dragX, false);
-            }, { signal: uiSignal });
-
-            const finishPointer = (event) => {
-                if (!dragging || event.pointerId !== pointerId) return;
-                dragging = false;
-                slider.classList.remove('is-pressed', 'is-dragging');
-                try { slider.releasePointerCapture?.(pointerId); } catch (e) { /* ignore */ }
-                pointerId = null;
-
-                const target = pointerMoved
-                    ? nearestValueForX(dragX)
-                    : valueFromPointer(event.clientX);
-
-                selectWorkMode(target, { focus: true });
-            };
-
-            slider.addEventListener('pointerup', finishPointer, { signal: uiSignal });
-            slider.addEventListener('pointercancel', (event) => {
-                if (event.pointerId !== pointerId) return;
-                dragging = false;
-                pointerId = null;
-                slider.classList.remove('is-pressed', 'is-dragging');
-                syncThumb(true);
-            }, { signal: uiSignal });
-
-            slider.addEventListener('keydown', (event) => {
-                const curVal = modeKeyToIndex(config.preset);
-                let nextVal = curVal;
-                switch (event.key) {
-                    case 'ArrowLeft':
-                    case 'ArrowDown':
-                        nextVal = Math.max(0, curVal - 1);
-                        break;
-                    case 'ArrowRight':
-                    case 'ArrowUp':
-                        nextVal = Math.min(3, curVal + 1);
-                        break;
-                    case 'Home':
-                        nextVal = 0;
-                        break;
-                    case 'End':
-                        nextVal = 3;
-                        break;
-                    default:
-                        return;
-                    }
-                event.preventDefault();
-                selectWorkMode(nextVal);
-            }, { signal: uiSignal });
-
-            uiWorkModeResizeObserver = new ResizeObserver(() => {
-                const wasTurbo = modeKeyToIndex(config.preset) === 3;
-
-                if (shockActive) {
-                    stopShockwave({ clearSchedule: true });
-                }
-
-                rebuildGrid();
-                syncThumb(false);
-                refreshGridDriftAnimation();
-
-                if (wasTurbo && !reducedMotionQuery.matches) {
-                    clearShockTimers();
-                    shockEntryTimer = setTimeout(() => {
-                        shockEntryTimer = 0;
-                        startShockwave();
-                    }, 120);
-                }
-
-                requestAnimationFrame(() => {
-                    slider?.classList.remove('is-dragging');
-                });
-            });
-            uiWorkModeResizeObserver.observe(slider);
-
-            function handleReducedMotionChange() {
-                if (reducedMotionQuery.matches) {
-                    stopShockwave({ clearSchedule: true });
-                } else if (modeKeyToIndex(config.preset) === 3) {
-                    enterTurbo();
-                }
-            }
-
-            if (typeof reducedMotionQuery.addEventListener === 'function') {
-                try {
-                    reducedMotionQuery.addEventListener('change', handleReducedMotionChange, { signal: uiSignal });
-                } catch (e) {
-                    reducedMotionQuery.addEventListener('change', handleReducedMotionChange);
-                }
-            } else if (typeof reducedMotionQuery.addListener === 'function') {
-                reducedMotionQuery.addListener(handleReducedMotionChange);
-            }
-
-            function cleanupWorkModeAnimation() {
-                stopShockwave({ clearSchedule: true });
-                clearShockTimers();
-                if (typeof reducedMotionQuery.removeEventListener === 'function') {
-                    try { reducedMotionQuery.removeEventListener('change', handleReducedMotionChange); } catch (e) {}
-                } else if (typeof reducedMotionQuery.removeListener === 'function') {
-                    try { reducedMotionQuery.removeListener(handleReducedMotionChange); } catch (e) {}
-                }
-            }
-
-            uiSignal.addEventListener('abort', cleanupWorkModeAnimation, { once: true });
-
-            rebuildGrid();
-            updateModeUI(modeKeyToIndex(config.preset), { animateThumb: false });
-            requestAnimationFrame(() => {
-                syncThumb(false);
-                requestAnimationFrame(() => {
-                    slider?.classList.remove('is-dragging');
-                    if (config.preset === 'turbo' && !reducedMotionQuery.matches) {
-                        enterTurbo();
-                    }
-                });
-            });
-        }
+        WorkModeSlider.mount({ el, uiSignal });
 
         // ---------- Сохранение настроек ----------
         const saveSettings = () => {
@@ -5353,290 +6635,13 @@
             log(I18n.t('logs.settingsSaved'));
         };
         ['ar-cover-text', 'ar-use-cover-check', 'ar-apply-reject-check', 'ar-limit-input']
-            .forEach(id => { const node = el(id); if (node) node.addEventListener('change', saveSettings); });
+            .forEach(id => { const node = el(id); if (node) node.addEventListener('change', saveSettings, { signal: uiSignal }); });
 
-        // ---------- Переключение языка (RU / EN) ----------
-        function refreshLocalizedUI() {
-            const currentLang = I18n.getLanguage();
-            const mainPanel = el('ar-main-panel');
-            if (mainPanel) mainPanel.setAttribute('lang', currentLang);
-            const toggle = el('ar-toggle-btn');
-            if (toggle) {
-                toggle.setAttribute('lang', currentLang);
-                toggle.title = I18n.t('panel.expandTitle');
-                toggle.setAttribute('aria-label', I18n.t('panel.expandTitle'));
-            }
+        DiagnosticsView.mount({ el, uiSignal });
+        ManualQueueView.mount({ el });
+        StatsView.mount();
+        LocalizationBinder.mount({ el, panel, uiSignal });
 
-            qa('.ar-lang-btn', mainPanel).forEach(b => {
-                const isActive = b.dataset.lang === currentLang;
-                b.classList.toggle('is-active', isActive);
-                b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-            });
-
-            const minBtn = el('ar-minimize-btn');
-            if (minBtn) {
-                minBtn.title = I18n.t('panel.minimizeTitle');
-                minBtn.setAttribute('aria-label', I18n.t('panel.minimizeTitle'));
-            }
-            const minDiagBtn = el('ar-minimize-diag-btn');
-            if (minDiagBtn) {
-                minDiagBtn.title = I18n.t('panel.minimizeTitle');
-                minDiagBtn.setAttribute('aria-label', I18n.t('panel.minimizeTitle'));
-            }
-
-            const currentPresetKey = PRESETS[config.preset] ? config.preset : DEFAULT_PRESET;
-            const modeLabel = presetLabel(currentPresetKey);
-
-            const workModeLabel = el('ar-work-mode-label');
-            if (workModeLabel) workModeLabel.textContent = I18n.t('panel.modeTitle');
-
-            const workModeState = el('ar-work-mode-state');
-            if (workModeState) workModeState.textContent = modeLabel;
-
-            const helpBtn = el('ar-work-mode-help-btn');
-            if (helpBtn) {
-                helpBtn.setAttribute('aria-label', I18n.t('panel.modeHelpAria'));
-                helpBtn.title = I18n.t('panel.modeHelpTitle');
-            }
-
-            const safeLbl = el('ar-work-mode-lbl-safe');
-            if (safeLbl) safeLbl.textContent = presetLabel('safe');
-
-            const turboLbl = el('ar-work-mode-lbl-turbo');
-            if (turboLbl) turboLbl.textContent = presetLabel('turbo');
-
-            const modeSlider = el('ar-work-mode-slider');
-            if (modeSlider) {
-                modeSlider.setAttribute('aria-label', I18n.t('panel.modeTitle'));
-                modeSlider.setAttribute('aria-valuetext', modeLabel);
-            }
-            const limitLabel = el('ar-limit-label');
-            if (limitLabel) limitLabel.textContent = I18n.t('panel.limitLabel');
-
-            const coverTitle = el('ar-cover-card-title');
-            if (coverTitle) coverTitle.textContent = I18n.t('cover.title');
-            const coverInput = el('ar-cover-text');
-            if (coverInput) coverInput.placeholder = I18n.t('cover.placeholder');
-            const rejectWrap = el('ar-apply-reject-wrap');
-            if (rejectWrap) rejectWrap.title = I18n.t('cover.rejectWarningTitle');
-            const rejectLabel = el('ar-apply-reject-label');
-            if (rejectLabel) rejectLabel.textContent = I18n.t('cover.rejectWarningLabel');
-
-            const startText = el('ar-start-btn-text');
-            if (startText) startText.textContent = I18n.t('panel.startBtn');
-            const stopText = el('ar-stop-btn-text');
-            if (stopText) stopText.textContent = I18n.t('panel.stopBtn');
-            const resetBtn = el('ar-reset-history');
-            if (resetBtn) resetBtn.title = I18n.t('panel.resetHistoryTitle');
-            const resetText = el('ar-reset-history-text');
-            if (resetText) resetText.textContent = I18n.t('panel.resetHistory');
-            const healthBtn = el('ar-health-btn');
-            if (healthBtn) healthBtn.title = I18n.t('panel.diagnosticsTitle');
-            const healthText = el('ar-health-btn-text');
-            if (healthText) healthText.textContent = I18n.t('panel.diagnostics');
-
-            const statsTitle = el('ar-stats-card-title');
-            if (statsTitle) statsTitle.textContent = I18n.t('panel.statsTitle');
-            const statProg = el('ar-stat-progress');
-            if (statProg) statProg.title = I18n.t('panel.statsProgressTitle');
-            const capAttempts = el('ar-stat-cap-attempts');
-            if (capAttempts) capAttempts.textContent = I18n.t('panel.statAttempts');
-            const capSuccess = el('ar-stat-cap-success');
-            if (capSuccess) capSuccess.textContent = I18n.t('panel.statSuccess');
-            const capManual = el('ar-stat-cap-manual');
-            if (capManual) capManual.textContent = I18n.t('panel.statManual');
-            const capSkip = el('ar-stat-cap-skipped');
-            if (capSkip) capSkip.textContent = I18n.t('panel.statSkipped');
-
-            const manualTitle = el('ar-manual-card-title');
-            if (manualTitle) manualTitle.textContent = I18n.t('panel.manualTitle');
-            const manualCount = el('ar-manual-count');
-            if (manualCount) manualCount.title = I18n.t('panel.manualCountTitle');
-            const exportBtn = el('ar-export-manual');
-            if (exportBtn) exportBtn.textContent = I18n.t('panel.manualExport');
-            const clearManualBtn = el('ar-clear-manual');
-            if (clearManualBtn) clearManualBtn.textContent = I18n.t('panel.manualClear');
-
-            const backBtn = el('ar-diag-back-btn');
-            if (backBtn) backBtn.title = I18n.t('diag.backTitle');
-            const backText = el('ar-diag-back-text');
-            if (backText) backText.textContent = I18n.t('diag.backBtn');
-            const diagViewTitle = el('ar-diag-view-title');
-            if (diagViewTitle) diagViewTitle.textContent = I18n.t('diag.title');
-            const diagSaveBtn = el('ar-diag-full-save');
-            if (diagSaveBtn) {
-                diagSaveBtn.title = I18n.t('diag.downloadLogTitle');
-                diagSaveBtn.textContent = I18n.t('diag.downloadLog');
-            }
-            const diagCheckBtn = el('ar-diag-full-check');
-            if (diagCheckBtn) {
-                diagCheckBtn.title = I18n.t('diag.checkSelectors');
-                diagCheckBtn.textContent = I18n.t('diag.checkSelectors');
-            }
-            const errorsOnlyText = el('ar-diag-errors-only-text');
-            if (errorsOnlyText) errorsOnlyText.textContent = I18n.t('diag.errorsOnly');
-            const diagMoreBtn = el('ar-diag-full-more-btn');
-            if (diagMoreBtn) diagMoreBtn.title = I18n.t('diag.moreTitle');
-            const diagMoreText = el('ar-diag-more-text');
-            if (diagMoreText) diagMoreText.textContent = I18n.t('diag.moreBtn');
-            const diagClearBox = el('ar-diag-full-clear-box');
-            if (diagClearBox) diagClearBox.textContent = I18n.t('diag.clearView');
-            const diagClearAll = el('ar-diag-full-clear-all');
-            if (diagClearAll) diagClearAll.textContent = I18n.t('diag.clearAll');
-
-            setStatus(currentStatusState.statusKey, currentStatusState.customKeyOrText, currentStatusState.params);
-            renderStats();
-            renderManualList();
-            updateDiagCount();
-            if (el('ar-view-diag')?.style.display !== 'none') {
-                renderFullDiag();
-            }
-        }
-
-        qa('.ar-lang-btn', panel).forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const targetLang = btn.dataset.lang;
-                if (!targetLang || targetLang === I18n.getLanguage()) return;
-                I18n.setLanguage(targetLang);
-                refreshLocalizedUI();
-                log(I18n.t('logs.modeSet', { mode: (config.preset === 'turbo' ? '↯ ' : '') + presetLabel(config.preset) }));
-            });
-        });
-
-        // ---------- Экран диагностики ----------
-        const openFullDiag = () => {
-            const viewMain = el('ar-view-main');
-            const viewDiag = el('ar-view-diag');
-            if (!viewMain || !viewDiag) return;
-            viewMain.style.display = 'none';
-            viewDiag.style.display = 'flex';
-            renderFullDiag();
-        };
-
-        const closeFullDiag = () => {
-            const viewMain = el('ar-view-main');
-            const viewDiag = el('ar-view-diag');
-            if (!viewMain || !viewDiag) return;
-            viewDiag.style.display = 'none';
-            viewMain.style.display = 'flex';
-        };
-
-        function renderFullDiag() {
-            const fullBox = el('ar-diag-full-box');
-            if (!fullBox) return;
-            fullBox.innerHTML = '';
-            const all = DiagLog.getAll();
-            const filterErr = el('ar-diag-full-errors-only')?.checked;
-
-            all.forEach(item => {
-                const isErr = item.lvl === 'ERR';
-                if (filterErr && !isErr) return;
-                const line = document.createElement('div');
-                line.className = 'ar-log-line' + (isErr ? ' ar-log-err' : '');
-                const time = I18n.formatTime(item.t || Date.now());
-                line.textContent = `[${time}] ${item.msg}`;
-                line.dataset.error = isErr ? '1' : '0';
-                fullBox.appendChild(line);
-            });
-            fullBox.scrollTop = fullBox.scrollHeight;
-            updateDiagCount();
-        }
-
-        const backBtn = el('ar-diag-back-btn');
-        if (backBtn) backBtn.onclick = closeFullDiag;
-
-        const diagFullErrChk = el('ar-diag-full-errors-only');
-        if (diagFullErrChk) diagFullErrChk.onchange = renderFullDiag;
-
-        const diagFullClearBox = el('ar-diag-full-clear-box');
-        if (diagFullClearBox) diagFullClearBox.onclick = () => {
-            const fullBox = el('ar-diag-full-box');
-            if (fullBox) fullBox.innerHTML = '';
-            el('ar-diag-full-dropdown')?.classList.remove('is-open');
-        };
-
-        // Dropdown setup
-        const setupDropdown = (btnId, dropdownId) => {
-            const btn = el(btnId);
-            const dropdown = el(dropdownId);
-            if (!btn || !dropdown) return;
-            btn.onclick = (e) => {
-                e.stopPropagation();
-                dropdown.classList.toggle('is-open');
-            };
-        };
-        setupDropdown('ar-diag-full-more-btn', 'ar-diag-full-dropdown');
-
-        document.addEventListener('click', () => {
-            el('ar-diag-full-dropdown')?.classList.remove('is-open');
-        }, { signal: uiSignal });
-
-        // Счётчик записей и ошибок в постоянном логе
-        const updateDiagCount = () => {
-            const all = DiagLog.getAll();
-            const total = all.length;
-            const errors = all.filter(e => e.lvl === 'ERR').length;
-
-            const errText = I18n.plural(errors, 'error');
-            const recText = I18n.plural(total, 'record');
-
-            const badge = el('ar-health-badge');
-            const healthBtn = el('ar-health-btn');
-            if (badge) {
-                if (errors > 0) {
-                    badge.textContent = errors;
-                    badge.style.display = 'inline-flex';
-                    if (healthBtn) {
-                        healthBtn.title = I18n.t('diag.badgeTitle', { errText });
-                    }
-                } else {
-                    badge.textContent = '';
-                    badge.style.display = 'none';
-                    if (healthBtn) {
-                        healthBtn.title = I18n.t('diag.badgeTitleClean');
-                    }
-                }
-            }
-
-            const fullStat = el('ar-diag-full-stat');
-            if (fullStat) {
-                fullStat.textContent = I18n.t('diag.statSummary', { errText, recText });
-            }
-        };
-        window._applomat_updateDiagBadge = window._hh_ar_updateDiagBadge = updateDiagCount;
-        updateDiagCount();
-        uiDiagTimer = setInterval(() => {
-            if (!document.getElementById('ar-main-panel')) {
-                clearInterval(uiDiagTimer);
-                uiDiagTimer = null;
-                return;
-            }
-            updateDiagCount();
-        }, 2000);
-
-        // Выгрузка полного диагностического лога в файл
-        const exportLogs = () => {
-            exportDiagnosticReport();
-            updateDiagCount();
-        };
-        const diagFullSaveBtn = el('ar-diag-full-save');
-        if (diagFullSaveBtn) diagFullSaveBtn.onclick = exportLogs;
-
-        // Очистка постоянного лога
-        const handleClearAllDiag = () => {
-            if (confirm(I18n.t('confirm.clearDiag'))) {
-                DiagLog.clear();
-                Metrics.clear();
-                const fullBox = el('ar-diag-full-box');
-                if (fullBox) fullBox.innerHTML = '';
-                updateDiagCount();
-                log(I18n.t('logs.diagCleared'));
-                el('ar-diag-full-dropdown')?.classList.remove('is-open');
-            }
-        };
-        const diagFullClearAll = el('ar-diag-full-clear-all');
-        if (diagFullClearAll) diagFullClearAll.onclick = handleClearAllDiag;
 
         // ---------- Управление ----------
         el('ar-start-btn').onclick = startLoop;
@@ -5647,155 +6652,10 @@
                 State.clearProcessedIDs();
                 State.resetSentCount();
                 Stats.reset();
-                renderStats();
+                StatsView.render();
                 log(I18n.t('logs.historyReset'));
             }
         };
-
-        el('ar-health-btn').onclick = openFullDiag;
-        const diagFullCheckBtn = el('ar-diag-full-check');
-        if (diagFullCheckBtn) diagFullCheckBtn.onclick = runHealthCheck;
-
-        // ---------- Ручная очередь (без вложенного скролла) ----------
-        el('ar-clear-manual').onclick = () => {
-            if (confirm(I18n.t('confirm.clearManual'))) {
-                State.clearManualList();
-                renderManualList();
-                log(I18n.t('logs.manualCleared'));
-            }
-        };
-
-        el('ar-export-manual').onclick = exportManualListHtml;
-
-        function renderManualList() {
-            const container = document.getElementById('ar-manual-list');
-            if (!container) return;
-            container.innerHTML = '';
-            const list = State.getManualList();
-            const cntEl = document.getElementById('ar-manual-count');
-            const totalCount = list?.length || 0;
-            if (cntEl) {
-                cntEl.textContent = totalCount;
-                cntEl.setAttribute('data-has', totalCount > 0 ? '1' : '0');
-            }
-            if (!list || !list.length) {
-                const empty = document.createElement('div');
-                empty.className = 'ar-empty';
-                empty.textContent = I18n.t('panel.manualEmpty');
-                container.appendChild(empty);
-                return;
-            }
-
-            // Превью до 4 элементов без вложенного скролл-бокса
-            const PREVIEW_LIMIT = 4;
-            const previewItems = list.slice(0, PREVIEW_LIMIT);
-
-            previewItems.forEach(item => {
-                const safeUrl = toSafeHhUrl(item?.url);
-                const row = document.createElement('div');
-                row.className = 'ar-manual-item';
-
-                const left = document.createElement('div');
-                left.className = 'ar-manual-main';
-                const time = I18n.formatTime(Number(item?.ts) || Date.now(), { hour: '2-digit', minute: '2-digit' });
-
-                const head = document.createElement('div');
-                head.className = 'ar-manual-meta';
-                const vid = document.createElement('span');
-                vid.className = 'ar-vid';
-                vid.textContent = item?.vid ? `#${item.vid}` : 'n/a';
-                const when = document.createElement('span');
-                when.className = 'ar-when';
-                when.textContent = time;
-                head.appendChild(vid);
-                head.appendChild(document.createTextNode('·'));
-                head.appendChild(when);
-
-                const titleEl = document.createElement('div');
-                titleEl.className = 'ar-manual-title';
-                const itemTitle = prettifyTitle(item?.title);
-                if (itemTitle && itemTitle !== 'Название недоступно' && itemTitle !== 'Title unavailable') {
-                    titleEl.textContent = itemTitle;
-                    titleEl.title = itemTitle;
-                } else {
-                    titleEl.classList.add('is-empty');
-                    titleEl.textContent = I18n.t('panel.manualNoTitle');
-                }
-
-                left.appendChild(head);
-                left.appendChild(titleEl);
-
-                const actions = document.createElement('div');
-                actions.className = 'ar-manual-actions';
-
-                const openBtn = document.createElement('button');
-                openBtn.className = 'ar-btn ar-btn-open';
-                openBtn.innerHTML = `<span>${I18n.t('panel.manualOpen')}</span><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
-                openBtn.disabled = !safeUrl;
-                openBtn.title = safeUrl ? I18n.t('panel.manualOpenTitle') : I18n.t('panel.manualUnsafeUrl');
-                openBtn.onclick = () => {
-                    if (safeUrl) window.open(safeUrl, '_blank', 'noopener,noreferrer');
-                };
-
-                const removeBtn = document.createElement('button');
-                removeBtn.className = 'ar-btn ar-icon-del';
-                removeBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
-                removeBtn.title = I18n.t('panel.manualRemoveTitle');
-                removeBtn.onclick = () => { State.removeManualEntry(item.vid); renderManualList(); };
-
-                actions.appendChild(openBtn);
-                actions.appendChild(removeBtn);
-
-                row.appendChild(left);
-                row.appendChild(actions);
-                container.appendChild(row);
-            });
-
-            if (totalCount > PREVIEW_LIMIT) {
-                const moreBtn = document.createElement('button');
-                moreBtn.className = 'ar-btn ar-btn-soft ar-queue-more-btn';
-                moreBtn.innerHTML = `<span>${I18n.t('panel.manualMore', { count: totalCount })}</span>`;
-                moreBtn.title = I18n.t('panel.manualMoreTitle');
-                moreBtn.onclick = exportManualListHtml;
-                container.appendChild(moreBtn);
-            }
-        }
-
-        // ---------- Живая статистика прогона ----------
-        function renderStats() {
-            const s = Stats.getAll();
-            const setNum = (id, v) => { const n = document.getElementById(id); if (n) n.textContent = v; };
-            setNum('ar-stat-attempts', s.attempts);
-            setNum('ar-stat-success', s.success);
-            setNum('ar-stat-manual', s.manual);
-            setNum('ar-stat-skipped', s.skipped);
-            const sent = State.getSentCount();
-            const prog = document.getElementById('ar-stat-progress');
-            if (prog) prog.textContent = `${sent} / ${config.limit}`;
-            const fill = document.getElementById('ar-progress-fill');
-            if (fill) fill.style.width = clamp(Math.round(sent / Math.max(1, config.limit) * 100), 0, 100) + '%';
-
-            // Zero-state consistency: семантические цвета только при ненулевых значениях
-            const tileAtt = document.getElementById('ar-stat-tile-attempts');
-            const tileSuc = document.getElementById('ar-stat-tile-success');
-            const tileMan = document.getElementById('ar-stat-tile-manual');
-            const tileSkp = document.getElementById('ar-stat-tile-skip');
-            if (tileSuc) tileSuc.classList.toggle('is-active-success', s.success > 0);
-            if (tileMan) tileMan.classList.toggle('is-active-manual', s.manual > 0);
-            if (tileSkp) tileSkp.classList.toggle('is-active-skip', s.skipped > 0);
-            if (tileAtt) tileAtt.classList.toggle('is-active-attempts', s.attempts > 0);
-        }
-        window._applomat_renderStats = window._hh_ar_renderStats = renderStats;
-        renderStats();
-
-        uiStatsTimer = setInterval(() => {
-            if (!document.getElementById('ar-stat-attempts')) {
-                clearInterval(uiStatsTimer);
-                uiStatsTimer = null;
-                return;
-            }
-            renderStats();
-        }, 2000);
 
         // ---------- Сворачивание панели ----------
         const rootEl = document.documentElement;
@@ -5804,6 +6664,7 @@
             toggleBtn.style.display = isOpen ? 'none' : 'flex';
             rootEl.classList.toggle('hh-ar-open', isOpen);
             storage.localSet(KEYS.uiOpen, isOpen ? '1' : '0');
+            WorkModeSlider.onVisibilityChange(isOpen);
         };
         el('ar-minimize-btn').onclick = () => toggleVisibility(false);
         const minDiagBtn = el('ar-minimize-diag-btn');
@@ -5813,11 +6674,12 @@
         toggleVisibility(storage.localGet(KEYS.uiOpen) !== '0');
         setTimeout(() => rootEl.classList.add('hh-ar-anim'), 60);
 
-        // initial render
-        renderManualList();
-
-        window._applomat_renderManualList = window._hh_ar_renderManualList = renderManualList;
     }
+
+    const PanelController = {
+        mount: setupUI,
+        destroy: cleanupUI
+    };
 
     // Пробегает по ключевым селекторам с учетом контекста страницы
     function runHealthCheck() {
@@ -6430,7 +7292,7 @@
         const applomatMarkers = [
             'applomat', 'hh_ar_', 'startLoop', 'processVacancy', 'applyToVacancy',
             'realisticClick', 'fillCoverLetter', 'checkResponseTrap', 'watchdogTick',
-            'setupUI', 'DiagLog', 'interruptibleWait', 'fnv1a32', 'buildPanelHtml',
+            'setupUI', 'PanelController', 'WorkModeSlider', 'DiagnosticsView', 'DiagLog', 'interruptibleWait', 'fnv1a32', 'buildPanelHtml',
             'exportManualListHtml', 'runHealthCheck'
         ];
         return applomatMarkers.some(m => combined.includes(m));
@@ -6478,7 +7340,7 @@
 
     function bootstrap() {
         I18n.init();
-        setupUI();
+        PanelController.mount();
         if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
         // Авто-возобновление, если скрипт был в работе перед перезагрузкой.
         // Условие перепроверяется В МОМЕНТ срабатывания таймера: если пользователь успел
@@ -6526,13 +7388,16 @@
     // освобождаются по TTL (TUNING.instanceLockTtl).
     window.addEventListener('beforeunload', () => {
         DiagLog.flush();
+        Metrics.flush();
         if (!State.amIRunning()) State.releaseInstanceLock(TAB_ID);
     });
     window.addEventListener('pagehide', () => {
         DiagLog.flush();
+        Metrics.flush();
     });
     window.addEventListener('unload', () => {
         DiagLog.flush();
+        Metrics.flush();
         if (!State.amIRunning()) State.releaseInstanceLock(TAB_ID);
     });
 })();
