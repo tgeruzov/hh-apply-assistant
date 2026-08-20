@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         applomat v4.0.0
+// @name         HH Apply Assistant v4.0.0
 // @namespace    http://tampermonkey.net/
 // @version      v4.0.0
-// @description  applomat — инструмент автоматизации откликов на вакансии hh.ru (HeadHunter)
+// @description  HH Apply Assistant — инструмент автоматизации откликов на вакансии hh.ru (HeadHunter)
 // @author       Timur Geruzov
 // @license      GPL-3.0-only
 // @match        *://*.hh.ru/search/vacancy*
@@ -21,24 +21,23 @@
 
     const VERSION = '4.0.0';
 
-    // Префикс сохраняем от v2, чтобы при обновлении не потерять
-    // накопленные данные (ручной список, диагностический лог, метрики).
-    const STORAGE_PREFIX = 'hh_ar_v2_';
+    // Чистая v4-схема. Данные предыдущих namespace намеренно не мигрируются.
+    const STORAGE_PREFIX = 'hh_apply_assistant_v4_';
     const KEYS = {
-        settings: STORAGE_PREFIX + 'cfg_data',
+        settings: STORAGE_PREFIX + 'settings',
         language: STORAGE_PREFIX + 'language',
         isRunning: STORAGE_PREFIX + 'is_active',
-        returnUrl: STORAGE_PREFIX + 'list_url',
+        returnUrl: STORAGE_PREFIX + 'return_url',
         history: STORAGE_PREFIX + 'processed_ids',
         needF5: STORAGE_PREFIX + 'reload_flag',
-        trapLock: STORAGE_PREFIX + 'ar_trap_lock',
+        trapLock: STORAGE_PREFIX + 'trap_lock',
         instanceLock: STORAGE_PREFIX + 'instance_lock',
         lastAttempt: STORAGE_PREFIX + 'last_attempt_id',
-        manualList: STORAGE_PREFIX + 'manual_list',
+        manualList: STORAGE_PREFIX + 'manual_queue',
         lastVacancyMeta: STORAGE_PREFIX + 'last_vacancy_meta',
         tabId: STORAGE_PREFIX + 'tab_id',
         sentCount: STORAGE_PREFIX + 'sent_count',
-        diagLog: STORAGE_PREFIX + 'diag_log',
+        diagLog: STORAGE_PREFIX + 'diagnostic_log',
         metrics: STORAGE_PREFIX + 'metrics',
         uiOpen: STORAGE_PREFIX + 'ui_open',
         stats: STORAGE_PREFIX + 'run_stats'
@@ -135,7 +134,7 @@
             },
             panel: {
                 minimizeTitle: 'Свернуть панель',
-                expandTitle: 'Развернуть applomat',
+                expandTitle: 'Развернуть HH Apply Assistant',
                 langSwitchLabel: 'Язык интерфейса',
                 modeTitle: 'Режим работы',
                 modeHelpAria: 'О режимах работы',
@@ -252,7 +251,7 @@
                 diagExported: 'Диагностический лог выгружен в файл.',
                 diagExportFailed: 'Не удалось выгрузить лог: {err}',
                 htmlExported: 'HTML экспорт выполнен.',
-                trapTimeout: 'Очистил ar_trap_lock по таймауту.',
+                trapTimeout: 'Очистил trap_lock по таймауту.',
                 tabBusy: 'Запуск отменён: в другой вкладке уже запущен процесс (instance lock).',
                 onResponsePage: 'На странице отклика - управление у обработчика формы.',
                 onVacancyPage: 'На странице вакансии - продолжаю обработку тут.',
@@ -320,11 +319,11 @@
                 domSnapshot: 'Снимок DOM ({label}): data-qa={dataQa}, textarea={textareas}, taskFields={taskFields}, modalBtns={modalButtons}.',
                 heuristicFallback: '[Heuristics] Резервный поиск для "{key}": обнаружен <{tag}>',
                 heuristicFallbackAll: '[Heuristics] Резервный поиск всех элементов для "{key}": найдено {count}',
-                jsError: 'JS-ошибка [applomat]: {msg}{where}',
-                unhandledRejection: 'Unhandled rejection [applomat]: {msg}'
+                jsError: 'JS-ошибка [HH Apply Assistant]: {msg}{where}',
+                unhandledRejection: 'Unhandled rejection [HH Apply Assistant]: {msg}'
             },
             report: {
-                headerTitle: '===== applomat - Diagnostic Log =====',
+                headerTitle: '===== HH Apply Assistant - Diagnostic Log =====',
                 scriptVersion: 'Версия скрипта : v{version}',
                 exportedAt: 'Выгружено      : {time}',
                 currentUrl: 'URL сейчас     : {url}',
@@ -364,8 +363,8 @@
                 taskFieldsHeading: '  taskFields (вопросы работодателя):'
             },
             export: {
-                docTitle: 'applomat · сохранённые вакансии',
-                brandWordmark: 'applomat',
+                docTitle: 'HH Apply Assistant · сохранённые вакансии',
+                brandWordmark: 'HH Apply Assistant',
                 brandSub: 'сохранённые вакансии',
                 metaText: 'Экспорт ручной очереди от {date} · дубликатов удалено: {duplicates}',
                 searchPlaceholder: 'Поиск по названию или ссылке...',
@@ -447,7 +446,7 @@
             },
             panel: {
                 minimizeTitle: 'Collapse panel',
-                expandTitle: 'Expand applomat',
+                expandTitle: 'Expand HH Apply Assistant',
                 langSwitchLabel: 'Interface language',
                 modeTitle: 'Work mode',
                 modeHelpAria: 'About work modes',
@@ -564,7 +563,7 @@
                 diagExported: 'Diagnostic log exported to file.',
                 diagExportFailed: 'Failed to export log: {err}',
                 htmlExported: 'HTML export completed.',
-                trapTimeout: 'Cleared ar_trap_lock on timeout.',
+                trapTimeout: 'Cleared trap_lock on timeout.',
                 tabBusy: 'Start canceled: process already active in another tab (instance lock).',
                 onResponsePage: 'On response page — handing over to form handler.',
                 onVacancyPage: 'On vacancy page — continuing processing here.',
@@ -632,11 +631,11 @@
                 domSnapshot: 'DOM snapshot ({label}): data-qa={dataQa}, textarea={textareas}, taskFields={taskFields}, modalBtns={modalButtons}.',
                 heuristicFallback: '[Heuristics] Fallback search for "{key}": found <{tag}>',
                 heuristicFallbackAll: '[Heuristics] Fallback search for all items "{key}": found {count}',
-                jsError: 'JS-error [applomat]: {msg}{where}',
-                unhandledRejection: 'Unhandled rejection [applomat]: {msg}'
+                jsError: 'JS-error [HH Apply Assistant]: {msg}{where}',
+                unhandledRejection: 'Unhandled rejection [HH Apply Assistant]: {msg}'
             },
             report: {
-                headerTitle: '===== applomat - Diagnostic Log =====',
+                headerTitle: '===== HH Apply Assistant - Diagnostic Log =====',
                 scriptVersion: 'Script version : v{version}',
                 exportedAt: 'Exported at    : {time}',
                 currentUrl: 'Current URL    : {url}',
@@ -676,8 +675,8 @@
                 taskFieldsHeading: '  taskFields (employer questions):'
             },
             export: {
-                docTitle: 'applomat · saved vacancies',
-                brandWordmark: 'applomat',
+                docTitle: 'HH Apply Assistant · saved vacancies',
+                brandWordmark: 'HH Apply Assistant',
                 brandSub: 'saved vacancies',
                 metaText: 'Manual queue export from {date} · duplicates removed: {duplicates}',
                 searchPlaceholder: 'Search by title or URL...',
@@ -1014,10 +1013,10 @@
     const storage = {
         localGet: (key) => { try { return localStorage.getItem(key); } catch (e) { return null; } },
         localSet: (key, value) => { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } },
-        localRemove: (key) => { try { localStorage.removeItem(key); } catch (e) { /* ignore */ } },
+        localRemove: (key) => { try { localStorage.removeItem(key); return true; } catch (e) { return false; } },
         sessionGet: (key) => { try { return sessionStorage.getItem(key); } catch (e) { return null; } },
         sessionSet: (key, value) => { try { sessionStorage.setItem(key, value); return true; } catch (e) { return false; } },
-        sessionRemove: (key) => { try { sessionStorage.removeItem(key); } catch (e) { /* ignore */ } }
+        sessionRemove: (key) => { try { sessionStorage.removeItem(key); return true; } catch (e) { return false; } }
     };
 
     // ─────────────────────────────────────────────────────────────
@@ -1025,8 +1024,7 @@
     // ─────────────────────────────────────────────────────────────
 
     const Settings = {
-        // Приводим сырые данные (в т.ч. конфиг от старых версий с ручными
-        // таймингами) к актуальной схеме: пресет + несколько флагов.
+        // Defensive validation актуальной v4-схемы: defaults, типы и диапазоны.
         normalize(raw = {}) {
             const defaultCover = getDefaultCoverText();
             const merged = { ...DEFAULTS, coverText: defaultCover, ...(raw || {}) };
@@ -1043,16 +1041,33 @@
             return Settings.normalize(parseJson(storage.localGet(KEYS.settings), {}));
         },
         save(cfg) {
-            storage.localSet(KEYS.settings, JSON.stringify(cfg));
+            try {
+                return storage.localSet(KEYS.settings, JSON.stringify(cfg));
+            } catch (e) {
+                return false;
+            }
         }
     };
 
     let config = Settings.load();
+    function persistSettings(nextConfig) {
+        const normalized = Settings.normalize(nextConfig);
+        if (!Settings.save(normalized)) {
+            handleSettingsPersistenceFailure();
+            return false;
+        }
+        config = normalized;
+        return true;
+    }
     let isLoopActive = false;
     let stopSignal = false;
     let currentRunId = 0;
     let resumeTimer = null;
     let activeAbortController = null;
+    let trapLockTimer = null;
+    let currentInstanceLeaseId = null;
+    let instanceLeaseVerified = false;
+    let pendingInstanceLeaseId = null;
     // Флаг: уже обрабатываем полностраничную форму отклика (защита от повторного входа из watchdog).
     // Сбрасывается сам при загрузке новой страницы (новый экземпляр скрипта).
     let handlingResponsePage = false;
@@ -1282,7 +1297,7 @@
             if (!s.startedAt) s.startedAt = Date.now();
             s[key] = (s[key] || 0) + by;
             Stats._save(s);
-            try { window._hh_ar_renderStats?.(); } catch (e) { /* ignore */ }
+            try { window._hhApplyAssistantRenderStats?.(); } catch (e) { /* ignore */ }
         },
         // Попытка отклика = один терминальный исход по вакансии (успех + ручной + пропуск).
         attempts() {
@@ -1295,7 +1310,7 @@
         },
         reset() {
             storage.sessionRemove(KEYS.stats);
-            try { window._hh_ar_renderStats?.(); } catch (e) { /* ignore */ }
+            try { window._hhApplyAssistantRenderStats?.(); } catch (e) { /* ignore */ }
         }
     };
 
@@ -1313,19 +1328,19 @@
         try {
             // 2. Обновляем счетчик / бейдж
             try {
-                (window._applomat_updateDiagBadge || window._hh_ar_updateDiagBadge)?.();
+                window._hhApplyAssistantUpdateDiagBadge?.();
             } catch (e) { /* ignore */ }
 
             // 3. Выделенный полноразмерный экран диагностики (рендерим только если он активен/видим)
             const viewDiag = document.getElementById('ar-view-diag');
             if (viewDiag && viewDiag.style.display !== 'none') {
                 try {
-                    window._hha_renderDiagnostics?.();
+                    window._hhApplyAssistantRenderDiagnostics?.();
                 } catch (e) { /* ignore */ }
             }
         } catch (e) { /* UI-лог не критичен */ }
 
-        console.log(`[applomat] ${msg}`);
+        console.log(`[HH Apply Assistant] ${msg}`);
     };
 
     // Снимок связанного с откликом DOM - чтобы по нему обновлять селекторы, когда детект не сработал.
@@ -1386,8 +1401,12 @@
 
     // Фиксируем, какой вариант селектора реально сработал: новый или legacy-фоллбек.
     // Если legacy начинает преобладать - значит hh.ru вернул старую вёрстку (или наоборот).
-    function recordSelectorVariant(name, newSel, legacySel) {
+    function recordSelectorVariant(name, newSel, legacySel, knownVariant) {
         try {
+            if (knownVariant) {
+                Metrics.bump(`sel.${name}.${knownVariant}`);
+                return;
+            }
             const hasNew = !!document.querySelector(newSel);
             const hasLegacy = legacySel ? !!document.querySelector(legacySel) : false;
             const variant = hasNew ? 'new' : (hasLegacy ? 'legacy' : 'none');
@@ -1524,7 +1543,7 @@
         try {
             const report = buildDiagnosticReport();
             const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            downloadFile(`applomat_log_${stamp}.txt`, report, 'text/plain;charset=utf-8');
+            downloadFile(`hh_apply_assistant_log_${stamp}.txt`, report, 'text/plain;charset=utf-8');
             log(I18n.t('logs.diagExported'));
         } catch (e) {
             log(I18n.t('logs.diagExportFailed', { err: (e && e.message ? e.message : e) }), true);
@@ -1548,16 +1567,62 @@
     //  6. СОСТОЯНИЕ ПРОГОНА (local/session storage)
     // ─────────────────────────────────────────────────────────────
 
+    function clearTrapLockTimer() {
+        if (trapLockTimer) {
+            clearTimeout(trapLockTimer);
+            trapLockTimer = null;
+        }
+    }
+
+    function getActiveTrapLock() {
+        const raw = storage.sessionGet(KEYS.trapLock);
+        if (!raw) return null;
+        const lock = parseJson(raw, null);
+        const expiresAt = Number(lock?.expiresAt);
+        if (!lock || typeof lock !== 'object' || typeof lock.token !== 'string' || !lock.token || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+            storage.sessionRemove(KEYS.trapLock);
+            clearTrapLockTimer();
+            return null;
+        }
+        return {
+            token: lock.token,
+            expiresAt,
+            runId: Number.isFinite(Number(lock.runId)) ? Number(lock.runId) : null
+        };
+    }
+
+    function readInstanceLock() {
+        try {
+            const raw = localStorage.getItem(KEYS.instanceLock);
+            return { ok: true, lock: parseJson(raw, null) };
+        } catch (e) {
+            return { ok: false, lock: null };
+        }
+    }
+
+    function sameInstanceLease(lock, tabId, leaseId) {
+        return !!(lock && lock.tabId === tabId && typeof leaseId === 'string' && leaseId && lock.leaseId === leaseId);
+    }
+
+    function isLiveInstanceLease(lock, now = Date.now()) {
+        const ts = Number(lock?.ts);
+        return Number.isFinite(ts) && now - ts < TUNING.instanceLockTtl;
+    }
+
+    function newInstanceLeaseId(tabId) {
+        return `${tabId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    }
+
     const State = {
         getProcessedIDs: () => {
             const arr = parseJson(storage.sessionGet(KEYS.history), []);
             return new Set(Array.isArray(arr) ? arr : []);
         },
         addProcessedID: (id) => {
-            if (!id) return;
+            if (!id) return true;
             const s = State.getProcessedIDs();
             s.add(id);
-            storage.sessionSet(KEYS.history, JSON.stringify([...s]));
+            return storage.sessionSet(KEYS.history, JSON.stringify([...s]));
         },
         clearProcessedIDs: () => storage.sessionRemove(KEYS.history),
 
@@ -1569,7 +1634,7 @@
         },
         incSentCount: () => {
             const next = State.getSentCount() + 1;
-            storage.sessionSet(KEYS.sentCount, String(next));
+            if (!storage.sessionSet(KEYS.sentCount, String(next))) return null;
             Stats.bump('success');
             return next;
         },
@@ -1590,28 +1655,33 @@
         // не мог снять блокировку у нового активного обработчика.
         setTrapLock: (ttlMs = 45000) => {
             const token = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
-            storage.sessionSet(KEYS.trapLock, token);
-            setTimeout(() => {
-                if (storage.sessionGet(KEYS.trapLock) === token) {
+            const ttl = Math.max(0, Number(ttlMs) || 0);
+            const lock = { token, runId: currentRunId, expiresAt: Date.now() + ttl };
+            if (!storage.sessionSet(KEYS.trapLock, JSON.stringify(lock))) return null;
+            clearTrapLockTimer();
+            trapLockTimer = setTimeout(() => {
+                const current = parseJson(storage.sessionGet(KEYS.trapLock), null);
+                if (current && current.token === token) {
                     storage.sessionRemove(KEYS.trapLock);
+                    trapLockTimer = null;
                     log(I18n.t('logs.trapTimeout'));
                 }
-            }, ttlMs);
+            }, ttl);
             return token;
         },
         clearTrapLock: (token) => {
             if (token) {
-                if (storage.sessionGet(KEYS.trapLock) === token) {
-                    storage.sessionRemove(KEYS.trapLock);
-                }
-            } else {
-                storage.sessionRemove(KEYS.trapLock);
+                const current = getActiveTrapLock();
+                if (!current || current.token !== token) return false;
             }
+            const removed = storage.sessionRemove(KEYS.trapLock);
+            if (removed) clearTrapLockTimer();
+            return removed;
         },
-        hasTrapLock: () => !!storage.sessionGet(KEYS.trapLock),
+        hasTrapLock: () => !!getActiveTrapLock(),
 
         // Запоминаем последнюю попытку отклика - пригодится при редиректах
-        setLastAttemptID: (id) => { if (id) storage.sessionSet(KEYS.lastAttempt, id); },
+        setLastAttemptID: (id) => id ? storage.sessionSet(KEYS.lastAttempt, id) : true,
         getLastAttemptID: () => storage.sessionGet(KEYS.lastAttempt),
         clearLastAttemptID: () => storage.sessionRemove(KEYS.lastAttempt),
 
@@ -1627,34 +1697,91 @@
         },
         getLastVacancyMeta: () => parseJson(storage.sessionGet(KEYS.lastVacancyMeta), null),
 
-        // Простая кросс-вкладочная блокировка (instance lock).
-        // Асинхронная: localStorage не даёт атомарного compare-and-set, поэтому после
-        // записи перечитываем ключ с небольшой задержкой - если другая вкладка успела
-        // перезаписать лок в этом окне, признаём поражение (лок уже не наш).
+        // Кросс-вкладочный lease: TAB_ID задаёт вкладку, leaseId — конкретное поколение.
+        // После записи обязательно перечитываем ключ: localStorage не даёт атомарного CAS,
+        // поэтому ownership появляется только после точного read-back совпадения.
         acquireInstanceLock: async (tabId) => {
             const now = Date.now();
-            const obj = parseJson(storage.localGet(KEYS.instanceLock), null);
-            if (obj && Number.isFinite(Number(obj.ts)) && now - obj.ts < TUNING.instanceLockTtl && obj.tabId !== tabId) {
+            const current = readInstanceLock();
+            if (!current.ok) {
+                instanceLeaseVerified = false;
                 return false;
             }
-            storage.localSet(KEYS.instanceLock, JSON.stringify({ tabId, ts: now }));
-            await sleep(60);
-            const check = parseJson(storage.localGet(KEYS.instanceLock), null);
-            return !!(check && check.tabId === tabId);
-        },
-        releaseInstanceLock: (tabId) => {
-            const obj = parseJson(storage.localGet(KEYS.instanceLock), null);
-            if (obj && obj.tabId === tabId) storage.localRemove(KEYS.instanceLock);
-        },
-        // Обновляем timestamp блокировки, если она принадлежит нашей вкладке.
-        // Возвращает статус: 'OWNED' (лок успешно продлён) | 'LOST' (лок принадлежит другой вкладке или отсутствует).
-        touchInstanceLock: (tabId) => {
-            const obj = parseJson(storage.localGet(KEYS.instanceLock), null);
-            if (obj && obj.tabId === tabId) {
-                storage.localSet(KEYS.instanceLock, JSON.stringify({ tabId, ts: Date.now() }));
-                return 'OWNED';
+            const obj = current.lock;
+            if (obj && isLiveInstanceLease(obj, now) && obj.tabId !== tabId) {
+                instanceLeaseVerified = false;
+                return false;
             }
-            return 'LOST';
+
+            const leaseId = newInstanceLeaseId(tabId);
+            const candidate = { tabId, leaseId, ts: now };
+            currentInstanceLeaseId = leaseId;
+            instanceLeaseVerified = false;
+            pendingInstanceLeaseId = leaseId;
+            if (!storage.localSet(KEYS.instanceLock, JSON.stringify(candidate))) {
+                if (pendingInstanceLeaseId === leaseId) pendingInstanceLeaseId = null;
+                return false;
+            }
+
+            await sleep(60);
+            const check = readInstanceLock();
+            const owned = !!(
+                check.ok
+                && currentInstanceLeaseId === leaseId
+                && sameInstanceLease(check.lock, tabId, leaseId)
+                && Number(check.lock.ts) === now
+                && isLiveInstanceLease(check.lock)
+            );
+            if (pendingInstanceLeaseId === leaseId) pendingInstanceLeaseId = null;
+            if (currentInstanceLeaseId === leaseId) instanceLeaseVerified = owned;
+            return owned;
+        },
+        verifyInstanceLock: (tabId, leaseId = currentInstanceLeaseId) => {
+            if (!leaseId || leaseId !== currentInstanceLeaseId || !instanceLeaseVerified) return 'LOST';
+            const current = readInstanceLock();
+            const owned = current.ok
+                && sameInstanceLease(current.lock, tabId, leaseId)
+                && isLiveInstanceLease(current.lock);
+            if (!owned && leaseId === currentInstanceLeaseId) instanceLeaseVerified = false;
+            return owned ? 'OWNED' : 'LOST';
+        },
+        releaseInstanceLock: (tabId, leaseId = currentInstanceLeaseId) => {
+            let removed = false;
+            const current = readInstanceLock();
+            if (current.ok && sameInstanceLease(current.lock, tabId, leaseId)) {
+                removed = storage.localRemove(KEYS.instanceLock);
+            }
+            if (leaseId && leaseId === currentInstanceLeaseId) {
+                currentInstanceLeaseId = null;
+                instanceLeaseVerified = false;
+            }
+            if (leaseId && leaseId === pendingInstanceLeaseId) pendingInstanceLeaseId = null;
+            return removed;
+        },
+        // Продлеваем только текущее подтверждённое поколение и проверяем результат записи.
+        // Любая неопределённость storage означает LOST: UNKNOWN никогда не трактуется как OWNED.
+        touchInstanceLock: (tabId, leaseId = currentInstanceLeaseId) => {
+            if (!leaseId || leaseId !== currentInstanceLeaseId || !instanceLeaseVerified) return 'LOST';
+            const current = readInstanceLock();
+            if (!current.ok || !sameInstanceLease(current.lock, tabId, leaseId) || !isLiveInstanceLease(current.lock)) {
+                instanceLeaseVerified = false;
+                return 'LOST';
+            }
+
+            // Значение должно отличаться даже у двух guards в одну миллисекунду,
+            // иначе проигнорированную запись нельзя отличить от старого timestamp.
+            const now = Math.max(Date.now(), Number(current.lock.ts) + 1);
+            const renewed = { tabId, leaseId, ts: now };
+            if (!storage.localSet(KEYS.instanceLock, JSON.stringify(renewed))) {
+                instanceLeaseVerified = false;
+                return 'LOST';
+            }
+            const check = readInstanceLock();
+            const owned = check.ok
+                && sameInstanceLease(check.lock, tabId, leaseId)
+                && Number(check.lock.ts) === now;
+            instanceLeaseVerified = !!owned;
+            return owned ? 'OWNED' : 'LOST';
         },
 
         // --- Ручной список (вакансии с вопросами/блокировками для ручного отклика) ---
@@ -1695,7 +1822,7 @@
                 }
                 return 'EXISTS';
             } catch (e) {
-                console.warn('[applomat] addManualEntry error', e);
+                console.warn('[HH Apply Assistant] addManualEntry error', e);
                 return 'FAILED';
             }
         },
@@ -1704,7 +1831,7 @@
                 const list = State.getManualList().filter(e => e.vid !== vid);
                 return storage.localSet(KEYS.manualList, JSON.stringify(list));
             } catch (e) {
-                console.warn('[applomat] removeManualEntry error', e);
+                console.warn('[HH Apply Assistant] removeManualEntry error', e);
                 return false;
             }
         },
@@ -1713,17 +1840,26 @@
                 storage.localRemove(KEYS.manualList);
                 return true;
             } catch (e) {
-                console.warn('[applomat] clearManualList error', e);
+                console.warn('[HH Apply Assistant] clearManualList error', e);
                 return false;
             }
         }
     };
 
+    // Fencing guard только для safety-critical commit points. Он не подменяет runId:
+    // сначала отсекаем старое внутривкладочное поколение, затем renew+read-back текущего lease.
+    function guardOwnedCommit(runId = currentRunId) {
+        if (!isRunCurrent(runId)) return false;
+        if (State.touchInstanceLock(TAB_ID) === 'OWNED') return true;
+        haltForLostInstanceLock();
+        return false;
+    }
+
     // При авто-возобновлении сразу проверяем lock (запись в localStorage происходит
     // синхронно при вызове, пост-верификация - асинхронно)
     if (State.amIRunning()) {
         State.acquireInstanceLock(TAB_ID).then((ok) => {
-            if (!ok) console.warn('[applomat] Обнаружен активный процесс в другой вкладке.');
+            if (!ok) console.warn('[HH Apply Assistant] Обнаружен активный процесс в другой вкладке.');
         });
     }
 
@@ -1759,6 +1895,23 @@
         return false;
     }
 
+    function queryExact(key, root) {
+        const selector = SELECTORS[key];
+        if (!selector) return null;
+        const el = q(selector, root);
+        if (!el || isAutoResponderUI(el)) return null;
+        recordSelectorVariant(key, selector, null, 'new');
+        return el;
+    }
+
+    function queryHeuristic(key, root) {
+        const found = runHeuristic(key, root || document);
+        if (!found || isAutoResponderUI(found)) return null;
+        Metrics.bump(`heuristic.fallback.${key}`);
+        log(I18n.t('logs.heuristicFallback', { key, tag: found.tagName.toLowerCase() }));
+        return found;
+    }
+
     // Интеллектуальный поиск элементов с эвристиками на случай изменения верстки
     function query(keyOrSelector, root) {
         const selector = SELECTORS[keyOrSelector];
@@ -1771,19 +1924,10 @@
             const el = q(keyOrSelector, root);
             return isAutoResponderUI(el) ? null : el;
         }
-        const el = q(selector, root);
-        if (el && !isAutoResponderUI(el)) {
-            recordSelectorVariant(keyOrSelector, selector, null);
-            return el;
-        }
+        const el = queryExact(keyOrSelector, root);
+        if (el) return el;
         // Запуск эвристического поиска
-        const found = runHeuristic(keyOrSelector, root || document);
-        if (found && !isAutoResponderUI(found)) {
-            Metrics.bump(`heuristic.fallback.${keyOrSelector}`);
-            log(I18n.t('logs.heuristicFallback', { key: keyOrSelector, tag: found.tagName.toLowerCase() }));
-            return found;
-        }
-        return null;
+        return queryHeuristic(keyOrSelector, root);
     }
 
     function queryAll(keyOrSelector, root) {
@@ -1816,7 +1960,7 @@
                     const elements = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     const matchText = /откликнуться|отклик без резюме|перейти к отклику|apply|respond|no resume necessary|apply now/i;
                     for (const el of elements) {
-                        if (isVisible(el) && matchText.test((el.textContent || '').trim())) {
+                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             return el;
                         }
                     }
@@ -1838,14 +1982,14 @@
                     // Сначала ищем среди интерактивных элементов
                     const activeEls = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     for (const el of activeEls) {
-                        if (isVisible(el) && matchText.test((el.textContent || '').trim())) {
+                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             return el;
                         }
                     }
                     // Если не нашли, ищем среди span и div (как фоллбек)
                     const staticEls = Array.from(root.querySelectorAll('span, div'));
                     for (const el of staticEls) {
-                        if (isVisible(el) && matchText.test((el.textContent || '').trim())) {
+                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             // Исключаем контейнеры, если внутри них есть другие интерактивные элементы или textarea
                             if (el.querySelector('button, a, textarea, input, select')) continue;
                             return el;
@@ -1871,11 +2015,10 @@
                     const elements = Array.from(root.querySelectorAll('button, input[type="submit"], [role="button"]'));
                     const matchText = /отправить|откликнуться|готово|send|submit|done|apply/i;
                     for (const el of elements) {
-                        if (isVisible(el) && matchText.test((el.textContent || '').trim())) {
-                            const qaAttr = el.getAttribute('data-qa') || '';
-                            if (qaAttr.includes('vacancy-response-link') || qaAttr.includes('vacancy-serp__vacancy_response')) continue;
-                            return el;
-                        }
+                        if (!matchText.test((el.textContent || '').trim())) continue;
+                        const qaAttr = el.getAttribute('data-qa') || '';
+                        if (qaAttr.includes('vacancy-response-link') || qaAttr.includes('vacancy-serp__vacancy_response')) continue;
+                        if (isVisible(el)) return el;
                     }
                     const submitBtn = root.querySelector('button[type="submit"], input[type="submit"]');
                     if (submitBtn && isVisible(submitBtn)) {
@@ -1893,7 +2036,8 @@
                     // ищем строго в его контейнере. Раньше поиск шёл по всей странице с матчем
                     // подстроки /да/, и за кнопку подтверждения принимались Задать вопрос,
                     // ...Дальнего Востока и любой текст с да внутри.
-                    const scope = root.querySelector('[data-qa*="relocation" i], [role="dialog"], [data-qa*="modal" i], [class*="modal" i]');
+                    const scopeSelector = '[data-qa*="relocation" i], [role="dialog"], [data-qa*="modal" i], [class*="modal" i]';
+                    const scope = root.matches?.(scopeSelector) ? root : root.querySelector(scopeSelector);
                     if (!scope) break;
                     const elements = Array.from(scope.querySelectorAll('button, a, [role="button"]'));
                     const exact = /^(да|yes|ok|хорошо)[.!]?$/i;
@@ -1909,7 +2053,7 @@
                     const elements = Array.from(root.querySelectorAll('div, span, p, h1, h2, h3'));
                     const matchText = /отказ|не подходит|будет отказ|reject|unsuitable|decline|likely to get a rejection/i;
                     for (const el of elements) {
-                        if (isVisible(el) && matchText.test((el.textContent || '').trim())) {
+                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             return el;
                         }
                     }
@@ -1919,7 +2063,7 @@
                     const elements = Array.from(root.querySelectorAll('a, button'));
                     const matchText = /сообщение|чат|переписке|перейти к|message|chat|topic/i;
                     for (const el of elements) {
-                        if (isVisible(el) && matchText.test((el.textContent || '').trim())) {
+                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             return el;
                         }
                     }
@@ -1943,7 +2087,7 @@
                 }
             }
         } catch (e) {
-            console.warn('[applomat] Ошибка в эвристике для ' + key, e);
+            console.warn('[HH Apply Assistant] Ошибка в эвристике для ' + key, e);
         }
         return null;
     }
@@ -1954,21 +2098,21 @@
                 case 'applyBtn': {
                     const buttons = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     const matchText = /откликнуться|отклик без резюме|apply|respond|no resume necessary/i;
-                    const results = buttons.filter(el => isVisible(el) && matchText.test((el.textContent || '').trim()));
+                    const results = buttons.filter(el => matchText.test((el.textContent || '').trim()) && isVisible(el));
                     if (results.length > 0) return results;
                     // Только интерактивные элементы и без служебных data-qa (см. runHeuristic)
                     const notApply = /status|success|view-topic|error|chat/i;
                     const hrefs = Array.from(root.querySelectorAll('a[href*="/applicant/vacancy_response"], a[data-qa*="response"], button[data-qa*="response"], a[data-qa*="apply"], button[data-qa*="apply"]'));
-                    return hrefs.filter(el => isVisible(el) && !notApply.test(el.getAttribute('data-qa') || ''));
+                    return hrefs.filter(el => !notApply.test(el.getAttribute('data-qa') || '') && isVisible(el));
                 }
                 case 'vacancyApply': {
                     const buttons = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     const matchText = /откликнуться|respond|apply/i;
-                    return buttons.filter(el => isVisible(el) && matchText.test((el.textContent || '').trim()));
+                    return buttons.filter(el => matchText.test((el.textContent || '').trim()) && isVisible(el));
                 }
             }
         } catch (e) {
-            console.warn('[applomat] Ошибка в групповой эвристике для ' + key, e);
+            console.warn('[HH Apply Assistant] Ошибка в групповой эвристике для ' + key, e);
         }
         return [];
     }
@@ -2159,7 +2303,7 @@
             const wrapper = getNativeWrapper(el);
             const clone = wrapper ? q('pre', wrapper) : null;
             if (clone) clone.textContent = value || '​';
-        } catch (e) { console.warn('[applomat] fillTextarea error', e); }
+        } catch (e) { console.warn('[HH Apply Assistant] fillTextarea error', e); }
     }
 
     // Отслеживаем реальные координаты мыши пользователя, чтобы траектория начиналась оттуда
@@ -2251,7 +2395,7 @@
             fire(PointerCtor, 'pointerup', { ...base, buttons: 0 });
             fire(MouseEvent, 'mouseup', { ...base, buttons: 0 });
 
-            if (!isRunCurrent(runId)) return false;
+            if (!guardOwnedCommit(runId)) return false;
 
             // Строгая single-action семантика: вызываем el.click() ровно один раз
             let clicked = false;
@@ -2338,24 +2482,43 @@
         return false;
     }
 
-    // Признак успешно отправленного отклика: появилась ссылка на чат или текст "резюме доставлено".
-    function isResponseConfirmed() {
-        const chat = query('responseChat');
-        if (chat && isVisible(chat)) {
-            return true;
-        }
-        const success = q('[data-qa="vacancy-response-success"], .vacancy-response-success');
-        if (success && isVisible(success)) {
-            return true;
-        }
+    function getResponseDetectionScope() {
+        const scopeSelector = '[data-qa="modal-content-scroll-container"], [data-qa="modal-content"], [role="dialog"], form[action*="vacancy_response"], form[id^="cover-letter-"], [data-qa*="modal" i], [class*="modal" i]';
+        return qa(scopeSelector).find(el => !isAutoResponderUI(el) && isVisible(el)) || null;
+    }
+
+    function hasResponseTextConfirmation(root) {
         try {
-            const nodes = document.querySelectorAll('h1,h2,h3,p,div,span');
+            const nodes = (root || document).querySelectorAll('h1,h2,h3,p,div,span');
             for (const el of nodes) {
                 const t = el.childElementCount === 0 ? (el.textContent || '') : '';
                 if (t && /(?:резюме доставлено|resume delivered|application sent|response sent)/i.test(t.trim()) && isVisible(el)) return true;
             }
         } catch (e) { /* ignore */ }
         return false;
+    }
+
+    function hasExactResponseConfirmation(root) {
+        const chat = queryExact('responseChat', root);
+        if (chat && isVisible(chat)) return true;
+        const success = q('[data-qa="vacancy-response-success"], .vacancy-response-success', root);
+        return !!(success && !isAutoResponderUI(success) && isVisible(success));
+    }
+
+    // Признак успешно отправленного отклика: появилась ссылка на чат или текст "резюме доставлено".
+    function isResponseConfirmed() {
+        if (hasExactResponseConfirmation(document)) return true;
+
+        const scope = getResponseDetectionScope();
+        if (scope) {
+            const scopedChat = queryHeuristic('responseChat', scope);
+            if (scopedChat && isVisible(scopedChat)) return true;
+            if (hasResponseTextConfirmation(scope)) return true;
+        }
+
+        const chat = queryHeuristic('responseChat', document);
+        if (chat && isVisible(chat)) return true;
+        return hasResponseTextConfirmation(document);
     }
 
     // На эту вакансию уже откликались ранее (не ошибка - ничего делать не нужно, просто пропускаем).
@@ -2547,7 +2710,8 @@
     // Сохраняем текущую вакансию в список для ручного отклика, чтобы заблокированные/неподтверждённые
     // отклики не терялись - пользователь сможет обработать их вручную.
     // Возвращает true, если вакансия гарантированно сохранена (или уже есть) в ручном списке.
-    function saveCurrentForManual(vid, note) {
+    function saveCurrentForManual(vid, note, runId) {
+        if (runId && !guardOwnedCommit(runId)) return false;
         try {
             const res = State.addManualEntry({
                 vid: vid,
@@ -2559,19 +2723,18 @@
             if (res === 'ADDED') {
                 Stats.bump('manual');
                 log(I18n.t('logs.manualSaved', { note: note ? ' (' + note + ')' : '', vid }));
-                try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
+                try { window._hhApplyAssistantRenderManualQueue?.(); } catch (e) { /* ignore */ }
                 return true;
             } else if (res === 'EXISTS' || res === 'UPDATED') {
-                Stats.bump('manual');
                 log(I18n.t('logs.manualAlready', { note: note ? ' (' + note + ')' : '', vid }));
-                try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
+                try { window._hhApplyAssistantRenderManualQueue?.(); } catch (e) { /* ignore */ }
                 return true;
             } else {
                 log(I18n.t('logs.manualSaveFailed', { note: note ? ' [' + note + ']' : '', vid }), true);
                 return false;
             }
         } catch (e) {
-            console.warn('[applomat] saveCurrentForManual error', e);
+            console.warn('[HH Apply Assistant] saveCurrentForManual error', e);
             log(I18n.t('logs.manualSaveFailed', { note: '', vid }), true);
             return false;
         }
@@ -2656,33 +2819,33 @@
         NO_LINK: 'NO_LINK',
         NO_HREF: 'NO_HREF',
         UNKNOWN: 'UNKNOWN',
-        LEGACY: 'LEGACY'
+        UNRECOGNIZED_CODE: 'UNRECOGNIZED_CODE'
     });
 
     const ExecutionResult = {
-        fromLegacy(code) {
-            const legacyCode = String(code || 'ERROR_UNKNOWN');
-            switch (legacyCode) {
+        fromTerminalCode(code) {
+            const terminalCode = String(code || 'ERROR_UNKNOWN');
+            switch (terminalCode) {
                 case 'OK':
-                    return { status: EXECUTION_STATUS.SUCCESS, reason: EXECUTION_REASON.APPLIED, code: legacyCode };
+                    return { status: EXECUTION_STATUS.SUCCESS, reason: EXECUTION_REASON.APPLIED, code: terminalCode };
                 case 'RETURNED':
-                    return { status: EXECUTION_STATUS.SUCCESS, reason: EXECUTION_REASON.RETURNING_TO_LIST, code: legacyCode };
+                    return { status: EXECUTION_STATUS.SUCCESS, reason: EXECUTION_REASON.RETURNING_TO_LIST, code: terminalCode };
                 case 'NAVIGATED':
-                    return { status: EXECUTION_STATUS.NAVIGATED, reason: EXECUTION_REASON.VACANCY_PAGE, code: legacyCode };
+                    return { status: EXECUTION_STATUS.NAVIGATED, reason: EXECUTION_REASON.VACANCY_PAGE, code: terminalCode };
                 case 'REDIRECT':
-                    return { status: EXECUTION_STATUS.NAVIGATED, reason: EXECUTION_REASON.RESPONSE_PAGE, code: legacyCode };
+                    return { status: EXECUTION_STATUS.NAVIGATED, reason: EXECUTION_REASON.RESPONSE_PAGE, code: terminalCode };
                 case 'STOPPED':
-                    return { status: EXECUTION_STATUS.STOPPED, reason: EXECUTION_REASON.UNKNOWN, code: legacyCode };
+                    return { status: EXECUTION_STATUS.STOPPED, reason: EXECUTION_REASON.UNKNOWN, code: terminalCode };
                 case 'CAPTCHA':
-                    return { status: EXECUTION_STATUS.CAPTCHA, reason: EXECUTION_REASON.UNKNOWN, code: legacyCode };
+                    return { status: EXECUTION_STATUS.CAPTCHA, reason: EXECUTION_REASON.UNKNOWN, code: terminalCode };
                 case 'ERROR_NO_LINK':
-                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.NO_LINK, code: legacyCode };
+                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.NO_LINK, code: terminalCode };
                 case 'ERROR_NO_HREF':
-                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.NO_HREF, code: legacyCode };
+                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.NO_HREF, code: terminalCode };
                 case 'ERROR_UNKNOWN':
-                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.UNKNOWN, code: legacyCode };
+                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.UNKNOWN, code: terminalCode };
                 default:
-                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.LEGACY, code: legacyCode };
+                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.UNRECOGNIZED_CODE, code: terminalCode };
             }
         }
     };
@@ -2702,13 +2865,25 @@
 
             const needleRx = /(?:подходящие вакансии в этой компании|similar vacancies|vacancies at this company)/i;
             let sectionEl = null;
-            for (const el of qa('h1,h2,h3,h4,div,section')) {
+            // Чаще всего секция обозначена заголовком: дешёвый semantic path до широкого scan.
+            for (const el of qa('h1,h2,h3,h4')) {
                 try {
                     if (el.innerText && needleRx.test(el.innerText.trim())) {
                         sectionEl = el;
                         break;
                     }
                 } catch (e) { continue; }
+            }
+            // Старый широкий поиск сохраняем как compatibility fallback.
+            if (!sectionEl) {
+                for (const el of qa('h1,h2,h3,h4,div,section')) {
+                    try {
+                        if (el.innerText && needleRx.test(el.innerText.trim())) {
+                            sectionEl = el;
+                            break;
+                        }
+                    } catch (e) { continue; }
+                }
             }
 
             let targetY;
@@ -2756,35 +2931,57 @@
             if (!isRunCurrent(runId)) return;
             await actionPause();
         } catch (e) {
-            console.warn('[applomat] simulateReading error', e);
+            console.warn('[HH Apply Assistant] simulateReading error', e);
         }
+    }
+
+    function detectResponseOutcomeInRoot(root, includeExactSelectors) {
+        if (includeExactSelectors) {
+            if (isVisible(queryExact('relocationBtn', root))) return 'RELOCATION';
+            // Сценарий Б проверяется РАНЬШЕ сценария А: внутри ещё не отправленной модалки
+            // есть кнопка прикрепить сопроводительное, которую нельзя считать успехом.
+            if (isVisible(queryExact('letterSubmit', root))) return 'SCENARIO_B';
+            if (isVisible(queryExact('attachCoverBtn', root))) return 'SCENARIO_A';
+            if (hasExactResponseConfirmation(root)) return 'SCENARIO_C';
+        }
+
+        // Compatibility fallback: те же эвристики, но сначала только в активной форме/модалке.
+        if (queryHeuristic('relocationBtn', root)) return 'RELOCATION';
+        if (queryHeuristic('letterSubmit', root)) return 'SCENARIO_B';
+        if (queryHeuristic('attachCoverBtn', root)) return 'SCENARIO_A';
+        if (queryHeuristic('responseChat', root) || hasResponseTextConfirmation(root)) return 'SCENARIO_C';
+        return false;
+    }
+
+    function detectResponseOutcomeOnce(runId = currentRunId) {
+        if (!isRunCurrent(runId)) return 'STOPPED';
+        // Капча/анти-бот появилась прямо в ответ на клик - ловим сразу (не дожидаясь
+        // тика watchdog), пока оверлей ещё на экране и до навигации назад к списку.
+        if (detectCaptcha()) return 'CAPTCHA';
+        // HH перебросил на страницу тестов/вопросов.
+        if (Page.isResponseForm()) return 'QUESTIONS';
+
+        // Fast path: известные data-qa/селекторы без широкого сканирования DOM.
+        if (isVisible(queryExact('relocationBtn'))) return 'RELOCATION';
+        if (isVisible(queryExact('letterSubmit'))) return 'SCENARIO_B';
+        if (isVisible(queryExact('attachCoverBtn'))) return 'SCENARIO_A';
+        if (hasExactResponseConfirmation(document)) return 'SCENARIO_C';
+
+        // Scoped fallback: ограничиваем эвристики активной формой или модальным окном.
+        const scope = getResponseDetectionScope();
+        if (scope) {
+            const scopedOutcome = detectResponseOutcomeInRoot(scope, true);
+            if (scopedOutcome) return scopedOutcome;
+        }
+
+        // Expensive compatibility fallback: широкий поиск остаётся последним уровнем.
+        return detectResponseOutcomeInRoot(document, false);
     }
 
     // Динамически определяем, что произошло после клика "Откликнуться".
     // Возвращает: 'STOPPED' | 'QUESTIONS' | 'RELOCATION' | 'SCENARIO_A' | 'SCENARIO_B' | 'SCENARIO_C' | 'TIMEOUT'
     async function resolveResponseOutcome(timeout, runId = currentRunId) {
-        const outcome = await waitForCondition(() => {
-            if (!isRunCurrent(runId)) return 'STOPPED';
-            // Капча/анти-бот появилась прямо в ответ на клик - ловим сразу (не дожидаясь
-            // тика watchdog), пока оверлей ещё на экране и до навигации назад к списку.
-            if (detectCaptcha()) return 'CAPTCHA';
-            // HH перебросил на страницу тестов/вопросов
-            if (Page.isResponseForm()) return 'QUESTIONS';
-            // Окно подтверждения переезда
-            if (isVisible(query('relocationBtn'))) return 'RELOCATION';
-            // Сценарий Б проверяется РАНЬШЕ сценария А: внутри ещё не отправленной модалки
-            // есть кнопка прикрепить сопроводительное, которую эвристика сценария А
-            // принимала за пост-отправочное предложение письма - и при выключенном письме
-            // скрипт засчитывал успех, не отправив отклик вовсе.
-            // Поле письма может быть ещё скрыто за кнопкой "прикрепить сопроводительное" -
-            // поэтому ориентируемся именно на видимую кнопку отправки, а не на textarea.
-            if (isVisible(query('letterSubmit'))) return 'SCENARIO_B';
-            // Сценарий А: резюме отправлено, предлагают прикрепить письмо (пост-отправка)
-            if (isVisible(query('attachCoverBtn'))) return 'SCENARIO_A';
-            // Сценарий В: прямой отклик - есть признак успешной отправки
-            if (isResponseConfirmed()) return 'SCENARIO_C';
-            return false;
-        }, timeout);
+        const outcome = await waitForCondition(() => detectResponseOutcomeOnce(runId), timeout);
         if (!isRunCurrent(runId)) return 'STOPPED';
         return outcome || 'TIMEOUT';
     }
@@ -2802,6 +2999,7 @@
             if (reloc) {
                 await actionPause();
                 if (!isRunCurrent(runId)) return 'STOPPED';
+                if (!guardOwnedCommit(runId)) return 'STOPPED';
                 safeClick(reloc);
             }
             await actionPause();
@@ -2851,9 +3049,9 @@
             if (form) {
                 submitButton = q('button[type="submit"], input[type="submit"]', form);
                 if (!submitButton) {
-                    if (!isRunCurrent(runId)) return false;
+                    if (!guardOwnedCommit(runId)) return false;
                     try { form.submit(); log(I18n.t('logs.formSubmitFallback')); return true; }
-                    catch (e) { console.warn('[applomat] form.submit fallback failed', e); }
+                    catch (e) { console.warn('[HH Apply Assistant] form.submit fallback failed', e); }
                 }
             }
         }
@@ -2912,26 +3110,47 @@
     // иначе та же карточка выбиралась бы из списка заново - бесконечно.
     function markAliasProcessed(vid) {
         const last = State.getLastAttemptID();
-        if (last && last !== vid) State.addProcessedID(last);
+        if (last && last !== vid) return State.addProcessedID(last);
+        return true;
+    }
+
+    function persistProcessedVacancy(vid, runId) {
+        if (runId && !guardOwnedCommit(runId)) return false;
+        if (!vid) return true;
+        if (State.addProcessedID(vid) && markAliasProcessed(vid)) return true;
+        haltForPersistenceFailure(vid, 'history');
+        return false;
+    }
+
+    function persistSentCount(vid, runId) {
+        if (runId && !guardOwnedCommit(runId)) return false;
+        if (State.incSentCount() !== null) return true;
+        haltForPersistenceFailure(vid, 'sentCount');
+        return false;
     }
 
     // Подготовка к переходу на страницу отклика/тестов: отдаём управление watchdog'у.
     // ВАЖНО: REDIRECT !== PROCESSED. Вакансия не помечается processed, пока исход
     // не подтверждён (успешная отправка или гарантированное сохранение в Manual Queue).
     function markRedirect(vid) {
-        if (vid && !State.getLastAttemptID()) State.setLastAttemptID(vid);
+        if (vid && !State.getLastAttemptID() && !State.setLastAttemptID(vid)) {
+            haltForPersistenceFailure(vid, 'lastAttempt');
+            return 'STOPPED';
+        }
         return 'REDIRECT';
     }
 
     // Возврат к списку вакансий после обработки одной вакансии.
     // Помечаем вакансию обработанной (чтобы не зациклиться) и уходим на сохранённый список.
     function returnToList(vid, { markProcessed = true, runId = currentRunId } = {}) {
-        if (runId && !isRunCurrent(runId)) return;
-        if (markProcessed && vid) {
-            State.addProcessedID(vid);
-            markAliasProcessed(vid);
+        if (runId && !guardOwnedCommit(runId)) return false;
+        if (markProcessed && vid && !persistProcessedVacancy(vid)) {
+            return false;
         }
-        State.clearLastAttemptID();
+        if (!State.clearLastAttemptID()) {
+            haltForPersistenceFailure(vid, 'lastAttempt');
+            return false;
+        }
         const returnUrl = State.getReturnUrl() || '/search/vacancy';
         if (returnUrl && returnUrl.includes('/search/vacancy')) {
             // Полная навигация на список - страница загрузится свежей, F5 не требуется.
@@ -2943,11 +3162,12 @@
             // Страховка: если возврат не сработал - форс-редирект на список.
             const timerRunId = runId || currentRunId;
             setTimeout(() => {
-                if (isRunCurrent(timerRunId) && !Page.isSearchList()) {
+                if (isRunCurrent(timerRunId) && !Page.isSearchList() && guardOwnedCommit(timerRunId)) {
                     window.location.href = '/search/vacancy';
                 }
             }, 1500);
         }
+        return true;
     }
 
     // Отправка отклика с полностраничной формы /applicant/vacancy_response (не тест).
@@ -2968,7 +3188,7 @@
                 if (!isRunCurrent(runId)) return;
                 log(I18n.t('logs.responsePageRejectSkip'), true);
                 Metrics.bump('page.reject.skipped');
-                savedForManual = saveCurrentForManual(vid, 'reject-warning');
+                savedForManual = saveCurrentForManual(vid, 'reject-warning', runId);
             } else {
                 log(I18n.t('logs.responsePageFilling', { reject: reject ? I18n.t('logs.responsePageRejectNote') : '' }));
                 captureResponseDom('response-page-form');
@@ -2977,7 +3197,7 @@
                 if (!submitted) {
                     Metrics.bump('page.response.fail');
                     captureResponseDom('response-page-no-submit');
-                    savedForManual = saveCurrentForManual(vid, reject ? 'reject-warning' : 'page-no-submit');
+                    savedForManual = saveCurrentForManual(vid, reject ? 'reject-warning' : 'page-no-submit', runId);
                     log(I18n.t('logs.responsePageSubmitFail'), true);
                 } else {
                     let redirectedToQuestions = false;
@@ -3013,24 +3233,24 @@
 
                     if (confirmed) {
                         Metrics.bump('page.response.ok' + (reject ? '.reject' : ''));
-                        State.incSentCount();
+                        if (!persistSentCount(vid, runId)) return;
                         log(I18n.t('logs.responsePageSent'));
                     } else if (redirectedToQuestions) {
                         Metrics.bump('scenario.questions.responsePage');
-                        savedForManual = saveCurrentForManual(vid, 'questions');
+                        savedForManual = saveCurrentForManual(vid, 'questions', runId);
                         log(I18n.t('logs.responsePageQuestions'), true);
                     } else {
                         Metrics.bump('page.response.fail');
                         captureResponseDom('response-page-no-confirm');
-                        savedForManual = saveCurrentForManual(vid, reject ? 'reject-warning' : 'page-no-confirm');
+                        savedForManual = saveCurrentForManual(vid, reject ? 'reject-warning' : 'page-no-confirm', runId);
                         log(I18n.t('logs.responsePageNoConfirm'), true);
                     }
                 }
             }
         } catch (e) {
             if (!isRunCurrent(runId)) return;
-            console.warn('[applomat] submitResponsePage error', e);
-            try { savedForManual = saveCurrentForManual(vid, 'page-error'); } catch (_) { /* ignore */ }
+            console.warn('[HH Apply Assistant] submitResponsePage error', e);
+            try { savedForManual = saveCurrentForManual(vid, 'page-error', runId); } catch (_) { /* ignore */ }
         } finally {
             if (runId === currentRunId) {
                 handlingResponsePage = false;
@@ -3039,11 +3259,11 @@
         }
         if (!isRunCurrent(runId)) return;
         if (confirmed || savedForManual) {
-            if (vid) {
-                State.addProcessedID(vid);
-                markAliasProcessed(vid);
+            if (!persistProcessedVacancy(vid, runId)) return;
+            if (!State.clearLastAttemptID()) {
+                haltForPersistenceFailure(vid, 'lastAttempt');
+                return;
             }
-            State.clearLastAttemptID();
             State.setF5Needed();
             // Возврат к списку (если submit ещё не увёл нас туда сам).
             if (!Page.isSearchList()) {
@@ -3083,7 +3303,11 @@
         log(I18n.t('logs.openingVacancy', { vid }));
         await actionPause();
         if (!isRunCurrent(runId)) return 'STOPPED';
-        State.setLastAttemptID(vid); // запомним, на какую вакансию кликаем
+        if (!State.setLastAttemptID(vid)) {
+            haltForPersistenceFailure(vid, 'lastAttempt');
+            return 'STOPPED';
+        }
+        if (!guardOwnedCommit(runId)) return 'STOPPED';
         window.location.href = href;
         return 'NAVIGATED';
     }
@@ -3143,7 +3367,7 @@
             log(I18n.t('logs.coverOff'));
         }
         if (!isRunCurrent(runId)) return 'STOPPED';
-        State.incSentCount();
+        if (!persistSentCount(vid, runId)) return 'STOPPED';
         log(I18n.t('logs.scenarioASent'));
         returnToList(vid, { markProcessed: true, runId });
         return 'OK';
@@ -3164,8 +3388,9 @@
         if (rejectSeen && !config.applyOnRejectWarning) {
             Metrics.bump('reject.skipped.modal');
             log(I18n.t('logs.scenarioBRejectSkip'));
-            const saved = saveCurrentForManual(vid, 'reject-warning');
+            const saved = saveCurrentForManual(vid, 'reject-warning', runId);
             if (!saved) {
+                if (!isRunCurrent(runId)) return 'STOPPED';
                 haltForPersistenceFailure(vid);
                 return 'STOPPED';
             }
@@ -3178,8 +3403,9 @@
         if (!submitted) {
             log(I18n.t('logs.scenarioBSubmitFail'), true);
             captureResponseDom('scenarioB-no-submit');
-            const saved = saveCurrentForManual(vid, rejectSeen ? 'reject-warning' : 'no-submit');
+            const saved = saveCurrentForManual(vid, rejectSeen ? 'reject-warning' : 'no-submit', runId);
             if (!saved) {
+                if (!isRunCurrent(runId)) return 'STOPPED';
                 haltForPersistenceFailure(vid);
                 return 'STOPPED';
             }
@@ -3192,7 +3418,7 @@
         if (conf === 'CONFIRMED' || conf === true) {
             if (rejectSeen) Metrics.bump('reject.sent.modal');
             if (!isRunCurrent(runId)) return 'STOPPED';
-            State.incSentCount();
+            if (!persistSentCount(vid, runId)) return 'STOPPED';
             log(I18n.t('logs.scenarioBSent', { reject: rejectSeen ? I18n.t('logs.scenarioBSentRejectNote') : '' }));
             returnToList(vid, { markProcessed: true, runId });
             return 'OK';
@@ -3209,7 +3435,7 @@
             if (forced === 'OK') {
                 if (!isRunCurrent(runId)) return 'STOPPED';
                 Metrics.bump('scenario.B.rejectForced.ok');
-                State.incSentCount();
+                if (!persistSentCount(vid, runId)) return 'STOPPED';
                 log(I18n.t('logs.scenarioBForcedSent'));
                 returnToList(vid, { markProcessed: true, runId });
                 return 'OK';
@@ -3227,8 +3453,9 @@
             log(I18n.t('logs.letterSentNoConfirm'), true);
         }
         // Не теряем такие вакансии - сохраняем для ручной обработки.
-        const saved = saveCurrentForManual(vid, reason || 'no-confirm');
+        const saved = saveCurrentForManual(vid, reason || 'no-confirm', runId);
         if (!saved) {
+            if (!isRunCurrent(runId)) return 'STOPPED';
             haltForPersistenceFailure(vid);
             return 'STOPPED';
         }
@@ -3245,7 +3472,7 @@
             if (!isRunCurrent(runId)) return 'STOPPED';
             Metrics.bump('scenario.timeout.confirmed');
             log(I18n.t('logs.responseConfirmed'));
-            State.incSentCount();
+            if (!persistSentCount(vid, runId)) return 'STOPPED';
             returnToList(vid, { markProcessed: true, runId });
             return 'OK';
         }
@@ -3276,7 +3503,7 @@
                 if (!isRunCurrent(runId)) return 'STOPPED';
                 Metrics.bump('scenario.timeout.confirmed');
                 log(I18n.t('logs.responseConfirmedExtra'));
-                State.incSentCount();
+                if (!persistSentCount(vid, runId)) return 'STOPPED';
                 returnToList(vid, { markProcessed: true, runId });
                 return 'OK';
             }
@@ -3301,8 +3528,9 @@
             captureResponseDom('timeout-button-disappeared');
             log(I18n.t('logs.btnDisappearedUnconfirmed'), true);
             const blockReason = detectModalBlockReason();
-            const saved = saveCurrentForManual(vid, blockReason || 'button-disappeared-unconfirmed');
+            const saved = saveCurrentForManual(vid, blockReason || 'button-disappeared-unconfirmed', runId);
             if (!saved) {
+                if (!isRunCurrent(runId)) return 'STOPPED';
                 haltForPersistenceFailure(vid);
                 return 'STOPPED';
             }
@@ -3327,7 +3555,7 @@
         if (retryOutcome === 'SCENARIO_C') {
             if (!isRunCurrent(runId)) return 'STOPPED';
             Metrics.bump('scenario.retryClick.ok');
-            State.incSentCount();
+            if (!persistSentCount(vid, runId)) return 'STOPPED';
             log(I18n.t('logs.retryClickSent'));
             returnToList(vid, { markProcessed: true, runId });
             return 'OK';
@@ -3337,8 +3565,9 @@
         Metrics.bump('scenario.timeout.unresolved');
         captureResponseDom('timeout-unresolved');
         log(I18n.t('logs.timeoutUnresolved'), true);
-        const saved = saveCurrentForManual(vid, 'timeout');
+        const saved = saveCurrentForManual(vid, 'timeout', runId);
         if (!saved) {
+            if (!isRunCurrent(runId)) return 'STOPPED';
             haltForPersistenceFailure(vid);
             return 'STOPPED';
         }
@@ -3382,7 +3611,10 @@
         }
 
         // Пометим, что сейчас пытаемся откликнуться на эту вакансию (если не было ID карточки).
-        if (!State.getLastAttemptID()) State.setLastAttemptID(vid);
+        if (!State.getLastAttemptID() && !State.setLastAttemptID(vid)) {
+            haltForPersistenceFailure(vid, 'lastAttempt');
+            return 'STOPPED';
+        }
 
         window.scrollTo({ top: 0, behavior: 'auto' });
         await actionPause();
@@ -3421,7 +3653,7 @@
             case 'SCENARIO_C':
                 if (!isRunCurrent(runId)) return 'STOPPED';
                 log(I18n.t('logs.scenarioC'));
-                State.incSentCount();
+                if (!persistSentCount(vid, runId)) return 'STOPPED';
                 returnToList(vid, { markProcessed: true, runId });
                 return 'OK';
             default:
@@ -3430,7 +3662,7 @@
     }
 
     // Обработка вакансии: работает и на странице вакансии, и для кнопки на листинге
-    async function processVacancyLegacy(btn, runId = currentRunId) {
+    async function processVacancyCode(btn, runId = currentRunId) {
         if (!isRunCurrent(runId)) return 'STOPPED';
 
         if (Page.isVacancy()) return handleVacancyPage(btn, runId);
@@ -3449,7 +3681,7 @@
     }
 
     async function processVacancy(btn, runId = currentRunId) {
-        return ExecutionResult.fromLegacy(await processVacancyLegacy(btn, runId));
+        return ExecutionResult.fromTerminalCode(await processVacancyCode(btn, runId));
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -3627,7 +3859,7 @@
                     setStatus('running', 'status.waitingToReturn');
                     return;
                 } else {
-                    // SKIPPED / legacy terminal codes: сохраняем прежнее логирование и продолжаем.
+                    // SKIPPED / неизвестные terminal codes: сохраняем прежнее логирование и продолжаем.
                     if (result.status === EXECUTION_STATUS.SKIPPED) {
                         if (result.code === 'ERROR_NO_LINK' || result.code === 'ERROR_NO_HREF' || result.code === 'ERROR_UNKNOWN') {
                             Stats.bump('skipped');
@@ -3645,7 +3877,7 @@
                 finalizeRun(runId, 'done', I18n.t('logs.runCompleted', { count: State.getSentCount() }));
             }
         } catch (e) {
-            console.warn('[applomat] startLoop error', e);
+            console.warn('[HH Apply Assistant] startLoop error', e);
             finalizeRun(runId, 'error', I18n.t('logs.mainLoopError', { err: (e && e.message ? e.message : e) }));
         }
     }
@@ -3725,11 +3957,21 @@
         log(I18n.t('logs.instanceLockLost'), true);
     }
 
-    // Остановка из-за сбоя сохранения в список для ручного отклика (Manual Queue).
-    // Вакансию нельзя терять: останавливаем прогон, НЕ помечаем processed и сохраняем контекст.
-    function haltForPersistenceFailure(vid) {
+    function handleSettingsPersistenceFailure() {
+        if (State.amIRunning()) {
+            haltForPersistenceFailure('config', 'settings');
+            return;
+        }
+        Metrics.bump('storage.settings.failed');
+        setStatus('error');
+        log('[CRITICAL_STORAGE_WRITE_FAILED] settings: config', true);
+    }
+
+    // Остановка из-за сбоя критической записи. Для Manual Queue сохраняем прежний статус/текст;
+    // для внутренних terminal-state ключей используем нейтральный error status и диагностический marker.
+    function haltForPersistenceFailure(vid, storageArea = 'manual') {
         currentRunId++;
-        Metrics.bump('storage.manual.failed');
+        Metrics.bump(`storage.${storageArea}.failed`);
         stopSignal = true;
         if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
         handlingResponsePage = false;
@@ -3741,8 +3983,13 @@
         isLoopActive = false;
         State.setRunning(false);
         State.releaseInstanceLock(TAB_ID);
-        setStatus('error', 'status.storageFailed');
-        log(I18n.t('logs.persistenceFailure', { vid: vid || '' }), true);
+        if (storageArea === 'manual') {
+            setStatus('error', 'status.storageFailed');
+            log(I18n.t('logs.persistenceFailure', { vid: vid || '' }), true);
+        } else {
+            setStatus('error');
+            log(`[CRITICAL_STORAGE_WRITE_FAILED] ${storageArea}: ${vid || 'n/a'}`, true);
+        }
     }
 
     // Watchdog: следит за URL. Если попали на страницу отклика/теста - обрабатываем её;
@@ -3752,7 +3999,7 @@
             try {
                 watchdogTick();
             } catch (e) {
-                console.warn('[applomat] watchdog error', e);
+                console.warn('[HH Apply Assistant] watchdog error', e);
             }
         }, 1000);
     }
@@ -3762,6 +4009,10 @@
         if (document.body && !document.getElementById('ar-main-panel')) PanelController.mount();
 
         if (!State.amIRunning()) return;
+
+        // acquire уже выполняет собственный read-back; до его завершения ownership ещё
+        // не существует и watchdog не должен ошибочно классифицировать 60ms race window.
+        if (pendingInstanceLeaseId) return;
 
         // Обновляем timestamp instance lock и проверяем, что ownership всё ещё наш
         const lockStatus = State.touchInstanceLock(TAB_ID);
@@ -3778,7 +4029,12 @@
         if (Page.isResponseForm()) {
             if (handlingResponsePage) return; // уже обрабатываем эту страницу
             if (State.hasTrapLock()) return;
+            if (currentRunId === 0) currentRunId = 1;
             const trapToken = State.setTrapLock();
+            if (!trapToken) {
+                haltForPersistenceFailure(State.getLastAttemptID(), 'trapLock');
+                return;
+            }
 
             // Определяем ID вакансии (для пометки обработанной и сохранения).
             let vid = null;
@@ -3800,7 +4056,6 @@
                 handlingResponsePage = true;
                 Metrics.bump('page.response.detected');
                 log(I18n.t('logs.onResponsePage'));
-                if (currentRunId === 0) currentRunId = 1;
                 submitResponsePage(vid, backUrl, currentRunId, trapToken); // async: сам заполнит/отправит и вернёт к списку
                 return;
             }
@@ -3823,28 +4078,29 @@
                 if (res === 'ADDED') {
                     Stats.bump('manual');
                     log(I18n.t('logs.manualSaved', { note: '', vid: entry.vid }));
-                    try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
+                    try { window._hhApplyAssistantRenderManualQueue?.(); } catch (e) { /* ignore */ }
                     saved = true;
                 } else if (res === 'EXISTS' || res === 'UPDATED') {
-                    Stats.bump('manual');
                     log(I18n.t('logs.manualAlready', { note: '', vid: entry.vid }));
-                    try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
+                    try { window._hhApplyAssistantRenderManualQueue?.(); } catch (e) { /* ignore */ }
                     saved = true;
                 } else {
                     log(I18n.t('logs.manualSaveFailed', { note: '', vid: entry.vid }), true);
                     saved = false;
                 }
             } catch (e) {
-                console.warn('[applomat] save manual entry error', e);
+                console.warn('[HH Apply Assistant] save manual entry error', e);
                 log(I18n.t('logs.manualSaveFailed', { note: '', vid }), true);
                 saved = false;
             }
 
             if (saved) {
                 if (vid) {
-                    State.addProcessedID(vid);
-                    markAliasProcessed(vid);
-                    State.clearLastAttemptID();
+                    if (!persistProcessedVacancy(vid, currentRunId)) return;
+                    if (!State.clearLastAttemptID()) {
+                        haltForPersistenceFailure(vid, 'lastAttempt');
+                        return;
+                    }
                 } else {
                     log(I18n.t('logs.noVidOnQuestions'), true);
                 }
@@ -3857,7 +4113,7 @@
                 // Если через 1.2 сек всё ещё на странице с тестом - форсим переход на список
                 const timerRunId = currentRunId;
                 setTimeout(() => {
-                    if (isRunCurrent(timerRunId) && Page.isResponseForm()) {
+                    if (isRunCurrent(timerRunId) && Page.isResponseForm() && guardOwnedCommit(timerRunId)) {
                         log(I18n.t('logs.twoStepBackFailed'), true);
                         window.location.href = backUrl;
                     }
@@ -3893,7 +4149,7 @@
         style.textContent = `
         #ar-main-panel, #ar-main-panel *, #ar-toggle-btn, #ar-toggle-btn *{ box-sizing:border-box; }
         #ar-main-panel, #ar-toggle-btn{
-            /* Палитра applomat: фирменный красный, синий основной CTA, зелёный статус успеха */
+            /* Палитра HH Apply Assistant: фирменный красный, синий основной CTA, зелёный статус успеха */
             --ap-brand:#d6001c; --ap-brand-hover:#b80018; --ap-brand-soft:#ffebee;
             --hh-red:#d6001c; --hh-red-hover:#b80018; --hh-red-soft:#ffebee;
             --hh-green:#059669; --hh-green-hover:#047857; --hh-green-soft:#ecfdf5;
@@ -3911,7 +4167,7 @@
         html.hh-ar-open{ margin-right:410px !important; }
         html.hh-ar-anim{ transition:margin-right .2s ease; }
 
-        /* Свёрнутое состояние - вертикальная вкладка applomat */
+        /* Свёрнутое состояние - вертикальная вкладка HH Apply Assistant */
         #ar-toggle-btn{
             position:fixed; top:50%; right:0; transform:translateY(-50%);
             width:34px; height:104px; border:none; padding:10px 0;
@@ -4686,7 +4942,7 @@
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  13. UI: ПАНЕЛЬ (applomat Redesign)
+    //  13. UI: ПАНЕЛЬ HH Apply Assistant
     // ─────────────────────────────────────────────────────────────
 
     function buildPanelHtml() {
@@ -4699,7 +4955,7 @@
             <div id="ar-view-main" class="ar-view ar-view--main">
                 <div class="ar-header">
                     <div class="ar-brand">
-                        <span class="ar-title">applomat</span>
+                        <span class="ar-title">HH Apply Assistant</span>
                         <span class="ar-sub">v${VERSION}</span>
                     </div>
                     <div class="ar-header-right">
@@ -4898,7 +5154,7 @@
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  13. UI: ПАНЕЛЬ (applomat Redesign & Lifecycle Controller)
+    //  13. UI: ПАНЕЛЬ HH Apply Assistant (Lifecycle Controller)
     // ─────────────────────────────────────────────────────────────
 
     // UI component: Work Mode slider + isolated Turbo visual controller.
@@ -4919,6 +5175,17 @@
             const reducedMotionQuery = typeof window.matchMedia === 'function'
                 ? window.matchMedia('(prefers-reduced-motion: reduce)')
                 : { matches: false };
+
+            function canRunTurboEffects() {
+                if (uiSignal?.aborted || document.hidden || reducedMotionQuery.matches) return false;
+                if (modeKeyToIndex(config.preset) !== 3 || !slider) return false;
+                const panelEl = document.getElementById('ar-main-panel');
+                const mainView = document.getElementById('ar-view-main');
+                if (!panelEl || panelEl.style.display === 'none') return false;
+                if (mainView && mainView.style.display === 'none') return false;
+                if (typeof panelEl.contains === 'function' && !panelEl.contains(slider)) return false;
+                return true;
+            }
 
             // ─── Состояния и параметры физики ───
             const STATE = {
@@ -5203,8 +5470,7 @@
 
                 animateThumbDepth(0, TRAVEL_SETTLE_DURATION, EASE_PREMIUM, () => {
                     currentState = STATE.REST;
-                    const curVal = modeKeyToIndex(config.preset);
-                    if (curVal === 3 && !reducedMotionQuery.matches && !isDragging && !isSnapping) {
+                    if (canRunTurboEffects() && !isDragging && !isSnapping) {
                         scheduleTurboPulse(TURBO_SETTLE_PAUSE);
                     }
                 });
@@ -5212,8 +5478,7 @@
 
             function scheduleTurboPulse(delayMs = 0) {
                 clearTurboTimers();
-                const curVal = modeKeyToIndex(config.preset);
-                if (curVal !== 3 || reducedMotionQuery.matches || isDragging || isSnapping || currentState !== STATE.REST) {
+                if (!canRunTurboEffects() || isDragging || isSnapping || currentState !== STATE.REST) {
                     return;
                 }
 
@@ -5224,13 +5489,13 @@
 
                 turboPulseTimer = setTimeout(() => {
                     turboPulseTimer = 0;
+                    if (!canRunTurboEffects()) return;
                     executeTurboPulse();
                 }, delay);
             }
 
             function executeTurboPulse() {
-                const curVal = modeKeyToIndex(config.preset);
-                if (curVal !== 3 || reducedMotionQuery.matches || isDragging || isSnapping || currentState !== STATE.REST) {
+                if (!canRunTurboEffects() || isDragging || isSnapping || currentState !== STATE.REST) {
                     return;
                 }
 
@@ -5429,8 +5694,7 @@
             }
 
             function startShockwave() {
-                const curVal = modeKeyToIndex(config.preset);
-                if (curVal !== 3 || reducedMotionQuery.matches || !gridCells.length) return;
+                if (!canRunTurboEffects() || !gridCells.length) return;
 
                 if (shockRafId) {
                     cancelAnimationFrame(shockRafId);
@@ -5446,8 +5710,7 @@
             }
 
             function updateShockwave(now) {
-                const curVal = modeKeyToIndex(config.preset);
-                if (!shockActive || curVal !== 3 || reducedMotionQuery.matches) {
+                if (!shockActive || !canRunTurboEffects()) {
                     stopShockwave({ clearSchedule: false });
                     return;
                 }
@@ -5543,14 +5806,15 @@
                     currentState = STATE.REST;
                 }
 
-                const currentPresetVal = modeKeyToIndex(config.preset);
-                if (currentPresetVal === 3 && !reducedMotionQuery.matches && !isDragging && !isSnapping) {
+                if (canRunTurboEffects() && !isDragging && !isSnapping) {
                     scheduleTurboPulse();
                 }
             }
 
             function enterTurbo() {
-                if (reducedMotionQuery.matches) {
+                if (!canRunTurboEffects()) {
+                    cancelTurboPulse({ resetToRest: true });
+                    stopDepthAnimations();
                     resetShockCells();
                     return;
                 }
@@ -5559,7 +5823,7 @@
 
                 // Pick up the freshly-created CSS drift animation on the next frame so shockwave shares its timeline.
                 requestAnimationFrame(() => {
-                    refreshGridDriftAnimation();
+                    if (canRunTurboEffects()) refreshGridDriftAnimation();
                 });
 
                 if (currentState === STATE.REST && !isDragging && !isSnapping) {
@@ -5636,16 +5900,18 @@
                 }
 
                 if (config.preset !== nextKey) {
-                    config.preset = nextKey;
-                    Settings.save(config);
+                    const previousIndex = modeKeyToIndex(config.preset);
+                    if (persistSettings({ ...config, preset: nextKey })) {
+                        updateModeUI(clampedIndex, { animateThumb: true });
 
-                    updateModeUI(clampedIndex, { animateThumb: true });
+                        if (State.amIRunning()) {
+                            setStatus('running');
+                        }
 
-                    if (State.amIRunning()) {
-                        setStatus('running');
+                        log(I18n.t('logs.modeSet', { mode: (nextKey === 'turbo' ? '↯ ' : '') + presetLabel(nextKey) }));
+                    } else {
+                        updateModeUI(previousIndex, { animateThumb: true });
                     }
-
-                    log(I18n.t('logs.modeSet', { mode: (nextKey === 'turbo' ? '↯ ' : '') + presetLabel(nextKey) }));
                 } else {
                     updateModeUI(clampedIndex, { animateThumb: true });
                 }
@@ -5762,6 +6028,11 @@
                 }, { signal: uiSignal });
 
                 resizeObserver = new ResizeObserver(() => {
+                    if (modeKeyToIndex(config.preset) === 3 && !canRunTurboEffects()) {
+                        TurboEffects.cancel({ resetToRest: true });
+                        TurboEffects.stopDepth();
+                        return;
+                    }
                     updateCachedMetrics();
 
                     TurboEffects.cancel({ resetToRest: true });
@@ -5779,8 +6050,7 @@
                     syncThumb(false);
                     TurboEffects.refreshGrid();
 
-                    const wasTurbo = modeKeyToIndex(config.preset) === 3;
-                    if (wasTurbo && !reducedMotionQuery.matches) {
+                    if (canRunTurboEffects()) {
                         TurboEffects.schedule(TURBO_SETTLE_PAUSE);
                     }
 
@@ -5800,7 +6070,7 @@
                             thumbShadow.style.boxShadow = st.boxShadow;
                             thumbShadow.style.transform = st.transform;
                         }
-                    } else if (modeKeyToIndex(config.preset) === 3) {
+                    } else if (canRunTurboEffects()) {
                         TurboEffects.enter();
                     }
                 }
@@ -5816,10 +6086,10 @@
                 }
 
                 function onVisibilityChange(isOpen) {
-                    if (!isOpen || document.hidden) {
+                    if (!isOpen || !canRunTurboEffects()) {
                         TurboEffects.cancel({ resetToRest: true });
                         TurboEffects.stopDepth();
-                    } else if (modeKeyToIndex(config.preset) === 3 && !reducedMotionQuery.matches) {
+                    } else {
                         TurboEffects.enter();
                     }
                 }
@@ -5847,11 +6117,12 @@
                 TurboEffects.rebuildGrid();
                 updateModeUI(modeKeyToIndex(config.preset), { animateThumb: false });
                 requestAnimationFrame(() => {
+                    if (config.preset === 'turbo' && !canRunTurboEffects()) return;
                     updateCachedMetrics();
                     syncThumb(false);
                     requestAnimationFrame(() => {
                         slider?.classList.remove('is-dragging');
-                        if (config.preset === 'turbo' && !reducedMotionQuery.matches) {
+                        if (canRunTurboEffects()) {
                             TurboEffects.enter();
                         }
                     });
@@ -5990,7 +6261,7 @@
             }
 
             renderImpl = renderManualList;
-            window._applomat_renderManualList = window._hh_ar_renderManualList = renderImpl;
+            window._hhApplyAssistantRenderManualQueue = renderImpl;
             renderImpl();
         }
 
@@ -5998,11 +6269,9 @@
         function destroy() {
             renderImpl = () => {};
             try {
-                delete window._applomat_renderManualList;
-                delete window._hh_ar_renderManualList;
+                delete window._hhApplyAssistantRenderManualQueue;
             } catch (e) {
-                window._applomat_renderManualList = undefined;
-                window._hh_ar_renderManualList = undefined;
+                window._hhApplyAssistantRenderManualQueue = undefined;
             }
         }
         return { mount, render, destroy };
@@ -6058,7 +6327,7 @@
             }
 
             renderImpl = renderStats;
-            window._applomat_renderStats = window._hh_ar_renderStats = renderImpl;
+            window._hhApplyAssistantRenderStats = renderImpl;
             renderStats();
         }
 
@@ -6067,11 +6336,9 @@
             renderImpl = () => {};
             lastState = null;
             try {
-                delete window._applomat_renderStats;
-                delete window._hh_ar_renderStats;
+                delete window._hhApplyAssistantRenderStats;
             } catch (e) {
-                window._applomat_renderStats = undefined;
-                window._hh_ar_renderStats = undefined;
+                window._hhApplyAssistantRenderStats = undefined;
             }
         }
         return { mount, render, destroy };
@@ -6080,6 +6347,7 @@
     const DiagnosticsView = (() => {
         let renderImpl = () => {};
         let updateImpl = () => {};
+        let cancelScheduledImpl = () => {};
         let lastRenderedVersion = -1;
         let lastRenderedLang = '';
         const expandedGroups = new Set();
@@ -6170,6 +6438,39 @@
         }
 
         function mount({ el, uiSignal }) {
+            cancelScheduledImpl();
+            let scheduledRenderId = null;
+            let scheduledRenderIsRaf = false;
+
+            const cancelScheduledRender = () => {
+                if (scheduledRenderId === null) return;
+                if (scheduledRenderIsRaf && typeof cancelAnimationFrame === 'function') {
+                    cancelAnimationFrame(scheduledRenderId);
+                } else {
+                    clearTimeout(scheduledRenderId);
+                }
+                scheduledRenderId = null;
+            };
+
+            const scheduleRender = () => {
+                if (scheduledRenderId !== null) return;
+                const run = () => {
+                    scheduledRenderId = null;
+                    const diag = el('ar-view-diag');
+                    if (diag && diag.style.display !== 'none') {
+                        renderFullDiag({ preserveScroll: true });
+                    }
+                };
+                if (typeof requestAnimationFrame === 'function') {
+                    scheduledRenderIsRaf = true;
+                    scheduledRenderId = requestAnimationFrame(run);
+                } else {
+                    scheduledRenderIsRaf = false;
+                    scheduledRenderId = setTimeout(run, 0);
+                }
+            };
+            cancelScheduledImpl = cancelScheduledRender;
+
             // ---------- Экран диагностики ----------
             const openFullDiag = () => {
                 const viewMain = el('ar-view-main');
@@ -6177,6 +6478,7 @@
                 if (!viewMain || !viewDiag) return;
                 viewMain.style.display = 'none';
                 viewDiag.style.display = 'flex';
+                WorkModeSlider.onVisibilityChange(false);
                 renderFullDiag();
             };
 
@@ -6184,11 +6486,15 @@
                 const viewMain = el('ar-view-main');
                 const viewDiag = el('ar-view-diag');
                 if (!viewMain || !viewDiag) return;
+                cancelScheduledRender();
                 viewDiag.style.display = 'none';
                 viewMain.style.display = 'flex';
+                const panelEl = el('ar-main-panel');
+                WorkModeSlider.onVisibilityChange(!!panelEl && panelEl.style.display !== 'none' && !document.hidden);
             };
 
             function renderFullDiag({ preserveScroll = false } = {}) {
+                cancelScheduledRender();
                 const fullBox = el('ar-diag-full-box');
                 if (!fullBox) return;
 
@@ -6266,7 +6572,6 @@
                     fullBox.scrollTop = fullBox.scrollHeight;
                 }
 
-                updateDiagCount(true);
             }
 
             const backBtn = el('ar-diag-back-btn');
@@ -6277,6 +6582,7 @@
 
             const diagFullClearBox = el('ar-diag-full-clear-box');
             if (diagFullClearBox) diagFullClearBox.onclick = () => {
+                cancelScheduledRender();
                 const fullBox = el('ar-diag-full-box');
                 if (fullBox) fullBox.innerHTML = '';
                 el('ar-diag-full-dropdown')?.classList.remove('is-open');
@@ -6339,15 +6645,14 @@
 
             const ownedUpdateBadge = (force) => updateDiagCount(force);
             const ownedRenderDiag = () => {
-                updateDiagCount(true);
                 const diag = el('ar-view-diag');
                 if (diag && diag.style.display !== 'none') {
-                    renderFullDiag();
+                    scheduleRender();
                 }
             };
 
-            window._hha_updateDiagBadge = window._applomat_updateDiagBadge = window._hh_ar_updateDiagBadge = ownedUpdateBadge;
-            window._hha_renderDiagnostics = ownedRenderDiag;
+            window._hhApplyAssistantUpdateDiagBadge = ownedUpdateBadge;
+            window._hhApplyAssistantRenderDiagnostics = ownedRenderDiag;
             updateDiagCount(true);
 
             // Выгрузка полного диагностического лога в файл
@@ -6361,6 +6666,7 @@
             // Очистка постоянного лога
             const handleClearAllDiag = () => {
                 if (confirm(I18n.t('confirm.clearDiag'))) {
+                    cancelScheduledRender();
                     DiagLog.clear();
                     Metrics.clear();
                     expandedGroups.clear();
@@ -6391,21 +6697,19 @@
             if (diag && diag.style.display !== 'none') renderImpl();
         }
         function destroy() {
+            cancelScheduledImpl();
             renderImpl = () => {};
             updateImpl = () => {};
+            cancelScheduledImpl = () => {};
             lastRenderedVersion = -1;
             lastRenderedLang = '';
             expandedGroups.clear();
             try {
-                delete window._hha_renderDiagnostics;
-                delete window._hha_updateDiagBadge;
-                delete window._applomat_updateDiagBadge;
-                delete window._hh_ar_updateDiagBadge;
+                delete window._hhApplyAssistantRenderDiagnostics;
+                delete window._hhApplyAssistantUpdateDiagBadge;
             } catch (e) {
-                window._hha_renderDiagnostics = undefined;
-                window._hha_updateDiagBadge = undefined;
-                window._applomat_updateDiagBadge = undefined;
-                window._hh_ar_updateDiagBadge = undefined;
+                window._hhApplyAssistantRenderDiagnostics = undefined;
+                window._hhApplyAssistantUpdateDiagBadge = undefined;
             }
         }
         return { mount, render, update, refresh, destroy };
@@ -6573,14 +6877,14 @@
 
         const lang = I18n.getLanguage();
 
-        // Свёрнутое состояние - вертикальная вкладка applomat
+        // Свёрнутое состояние - вертикальная вкладка HH Apply Assistant
         const toggleBtn = document.createElement('button');
         toggleBtn.id = 'ar-toggle-btn';
         toggleBtn.type = 'button';
         toggleBtn.setAttribute('lang', lang);
         toggleBtn.innerHTML = `
             <span class="ar-tab-dot" aria-hidden="true"></span>
-            <span class="ar-tab-text">applomat</span>
+            <span class="ar-tab-text">HH Apply Assistant</span>
         `;
         toggleBtn.title = I18n.t('panel.expandTitle');
         toggleBtn.setAttribute('aria-label', I18n.t('panel.expandTitle'));
@@ -6623,15 +6927,22 @@
 
         // ---------- Сохранение настроек ----------
         const saveSettings = () => {
-            config = Settings.normalize({
+            const nextConfig = Settings.normalize({
                 ...config,
                 coverText: el('ar-cover-text').value,
                 useCover: el('ar-use-cover-check').checked,
                 applyOnRejectWarning: el('ar-apply-reject-check').checked,
                 limit: el('ar-limit-input').value
             });
+            if (!persistSettings(nextConfig)) {
+                el('ar-cover-text').value = config.coverText;
+                el('ar-use-cover-check').checked = config.useCover;
+                el('ar-apply-reject-check').checked = config.applyOnRejectWarning;
+                el('ar-limit-input').value = config.limit;
+                renderCoverState();
+                return;
+            }
             el('ar-limit-input').value = config.limit;
-            Settings.save(config);
             log(I18n.t('logs.settingsSaved'));
         };
         ['ar-cover-text', 'ar-use-cover-check', 'ar-apply-reject-check', 'ar-limit-input']
@@ -6814,7 +7125,7 @@
         }
     }
     // ─────────────────────────────────────────────────────────────
-    //  14. ЭКСПОРТ РУЧНОГО СПИСКА (интерактивный HTML applomat)
+    //  14. ЭКСПОРТ РУЧНОГО СПИСКА (интерактивный HTML HH Apply Assistant)
     // ─────────────────────────────────────────────────────────────
 
     function exportManualListHtml() {
@@ -7003,20 +7314,11 @@
                 let sortKey = 'ts_desc';
                 let filterText = '';
                 let viewMode = 'new';
-                const PROCESSED_KEY = 'applomat_manual_processed';
-                const LEGACY_PROCESSED_KEY = 'hh_ar_manual_processed';
+                const PROCESSED_KEY = 'hh_apply_assistant_v4_manual_processed';
                 let processed = {};
                 try {
                     const raw = localStorage.getItem(PROCESSED_KEY);
-                    if (raw) {
-                        processed = JSON.parse(raw) || {};
-                    } else {
-                        const legacyRaw = localStorage.getItem(LEGACY_PROCESSED_KEY);
-                        if (legacyRaw) {
-                            processed = JSON.parse(legacyRaw) || {};
-                            try { localStorage.setItem(PROCESSED_KEY, JSON.stringify(processed)); } catch (_) {}
-                        }
-                    }
+                    if (raw) processed = JSON.parse(raw) || {};
                     if (!processed || typeof processed !== 'object' || Array.isArray(processed)) processed = {};
                 } catch (e) {
                     processed = {};
@@ -7266,20 +7568,20 @@
             </script>
             </body></html>`;
 
-        downloadFile('applomat_manual_list.html', content, 'text/html;charset=utf-8');
+        downloadFile('hh_apply_assistant_manual_queue.html', content, 'text/html;charset=utf-8');
         log(I18n.t('logs.htmlExported'));
     }
     // ─────────────────────────────────────────────────────────────
     //  15. ЗАПУСК И ГЛОБАЛЬНЫЕ ОБРАБОТЧИКИ
     // ─────────────────────────────────────────────────────────────
 
-    // Перехват необработанных ошибок: отделяем собственные ошибки applomat от шума HeadHunter и сторонних скриптов.
-    let applomatErrCount = 0;
+    // Перехват необработанных ошибок: отделяем собственные ошибки HH Apply Assistant от шума HeadHunter и сторонних скриптов.
+    let assistantErrCount = 0;
     let externalErrCount = 0;
-    const APPLOMAT_ERR_LIMIT = 50;
+    const ASSISTANT_ERR_LIMIT = 50;
     const EXTERNAL_ERR_LIMIT = 5;
 
-    function isApplomatError(e, isPromise = false) {
+    function isHHApplyAssistantError(e, isPromise = false) {
         const errObj = isPromise ? e.reason : (e.error || e);
         const stack = (errObj && typeof errObj.stack === 'string') ? errObj.stack : '';
         const filename = (!isPromise && typeof e.filename === 'string') ? e.filename : '';
@@ -7288,47 +7590,47 @@
             : (e.message || String(errObj || ''));
         const combined = `${filename} ${stack} ${message}`;
 
-        // Характерные маркеры кода applomat
-        const applomatMarkers = [
-            'applomat', 'hh_ar_', 'startLoop', 'processVacancy', 'applyToVacancy',
+        // Характерные маркеры кода HH Apply Assistant
+        const assistantMarkers = [
+            'HH Apply Assistant', 'hh_apply_assistant_', 'startLoop', 'processVacancy', 'applyToVacancy',
             'realisticClick', 'fillCoverLetter', 'checkResponseTrap', 'watchdogTick',
             'setupUI', 'PanelController', 'WorkModeSlider', 'DiagnosticsView', 'DiagLog', 'interruptibleWait', 'fnv1a32', 'buildPanelHtml',
             'exportManualListHtml', 'runHealthCheck'
         ];
-        return applomatMarkers.some(m => combined.includes(m));
+        return assistantMarkers.some(m => combined.includes(m));
     }
 
     window.addEventListener('error', (e) => {
         try {
-            const isInternal = isApplomatError(e, false);
+            const isInternal = isHHApplyAssistantError(e, false);
             const where = e.filename ? ` @ ${e.filename}:${e.lineno || 0}:${e.colno || 0}` : '';
             if (isInternal) {
-                if (applomatErrCount >= APPLOMAT_ERR_LIMIT) return;
-                applomatErrCount++;
+                if (assistantErrCount >= ASSISTANT_ERR_LIMIT) return;
+                assistantErrCount++;
                 log(I18n.t('logs.jsError', { msg: e.message || 'Error', where }), true);
             } else {
                 if (externalErrCount >= EXTERNAL_ERR_LIMIT) return;
                 externalErrCount++;
                 DiagLog.push(`[External hh.ru error]: ${(e.message || 'Error').slice(0, 300)}${where}`, false);
-                console.warn('[applomat] External hh.ru error:', e.message, where);
+                console.warn('[HH Apply Assistant] External hh.ru error:', e.message, where);
             }
         } catch (_) { /* ignore */ }
     });
 
     window.addEventListener('unhandledrejection', (e) => {
         try {
-            const isInternal = isApplomatError(e, true);
+            const isInternal = isHHApplyAssistantError(e, true);
             const r = e.reason;
             const text = r && (r.stack || r.message) ? (r.stack || r.message) : String(r);
             if (isInternal) {
-                if (applomatErrCount >= APPLOMAT_ERR_LIMIT) return;
-                applomatErrCount++;
+                if (assistantErrCount >= ASSISTANT_ERR_LIMIT) return;
+                assistantErrCount++;
                 log(I18n.t('logs.unhandledRejection', { msg: String(text).slice(0, 500) }), true);
             } else {
                 if (externalErrCount >= EXTERNAL_ERR_LIMIT) return;
                 externalErrCount++;
                 DiagLog.push(`[External unhandled rejection]: ${String(text).slice(0, 300)}`, false);
-                console.warn('[applomat] External unhandled rejection hh.ru:', text);
+                console.warn('[HH Apply Assistant] External unhandled rejection hh.ru:', text);
             }
         } catch (_) { /* ignore */ }
     });
@@ -7380,6 +7682,19 @@
         });
         domReadyObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
+
+    // При восстановлении страницы из bfcache возвращается старый JS runtime со старым
+    // leaseId. Новый startLoop синхронно меняет runId до первого await и получает новое
+    // поколение lease, поэтому continuations замороженной страницы не могут продолжиться.
+    window.addEventListener('pageshow', (event) => {
+        if (!event.persisted || !State.amIRunning()) return;
+        if (activeAbortController) {
+            try { activeAbortController.abort(); } catch (e) {}
+        }
+        isLoopActive = false;
+        handlingResponsePage = false;
+        startLoop();
+    });
 
     // Очищаем instance lock при закрытии вкладки - но только когда прогон не активен:
     // прогон живёт через полные навигации (список → вакансия → список), и лок должен
