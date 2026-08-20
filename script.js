@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         applomat v4.0.0
+// @name         HH Apply Assistant v4.0.0
 // @namespace    http://tampermonkey.net/
 // @version      v4.0.0
-// @description  applomat — инструмент автоматизации откликов на вакансии hh.ru (HeadHunter)
+// @description  HH Apply Assistant — инструмент автоматизации откликов на вакансии hh.ru (HeadHunter)
 // @author       Timur Geruzov
 // @license      GPL-3.0-only
 // @match        *://*.hh.ru/search/vacancy*
@@ -21,24 +21,23 @@
 
     const VERSION = '4.0.0';
 
-    // Префикс сохраняем от v2, чтобы при обновлении не потерять
-    // накопленные данные (ручной список, диагностический лог, метрики).
-    const STORAGE_PREFIX = 'hh_ar_v2_';
+    // Чистая v4-схема. Данные предыдущих namespace намеренно не мигрируются.
+    const STORAGE_PREFIX = 'hh_apply_assistant_v4_';
     const KEYS = {
-        settings: STORAGE_PREFIX + 'cfg_data',
+        settings: STORAGE_PREFIX + 'settings',
         language: STORAGE_PREFIX + 'language',
         isRunning: STORAGE_PREFIX + 'is_active',
-        returnUrl: STORAGE_PREFIX + 'list_url',
+        returnUrl: STORAGE_PREFIX + 'return_url',
         history: STORAGE_PREFIX + 'processed_ids',
         needF5: STORAGE_PREFIX + 'reload_flag',
-        trapLock: STORAGE_PREFIX + 'ar_trap_lock',
+        trapLock: STORAGE_PREFIX + 'trap_lock',
         instanceLock: STORAGE_PREFIX + 'instance_lock',
         lastAttempt: STORAGE_PREFIX + 'last_attempt_id',
-        manualList: STORAGE_PREFIX + 'manual_list',
+        manualList: STORAGE_PREFIX + 'manual_queue',
         lastVacancyMeta: STORAGE_PREFIX + 'last_vacancy_meta',
         tabId: STORAGE_PREFIX + 'tab_id',
         sentCount: STORAGE_PREFIX + 'sent_count',
-        diagLog: STORAGE_PREFIX + 'diag_log',
+        diagLog: STORAGE_PREFIX + 'diagnostic_log',
         metrics: STORAGE_PREFIX + 'metrics',
         uiOpen: STORAGE_PREFIX + 'ui_open',
         stats: STORAGE_PREFIX + 'run_stats'
@@ -122,7 +121,7 @@
             status: {
                 idle: 'Ожидание',
                 running: 'В работе',
-                runningTurbo: 'В работе · ↯ Турбо',
+                runningTurbo: 'В работе · Турбо',
                 stopped: 'Остановлено',
                 error: 'Внимание',
                 done: 'Завершено',
@@ -135,14 +134,25 @@
             },
             panel: {
                 minimizeTitle: 'Свернуть панель',
-                expandTitle: 'Развернуть applomat',
+                expandTitle: 'Развернуть HH Apply Assistant',
                 langSwitchLabel: 'Язык интерфейса',
                 modeTitle: 'Режим работы',
                 modeHelpAria: 'О режимах работы',
                 modeHelpTitle: 'Безопасный, Оптимальный, Быстрый и Турбо режимы',
+                modeScaleSlower: 'Медленнее',
+                modeScaleFaster: 'Быстрее',
+                modeHelpSafeTitle: 'Safe',
+                modeHelpSafeText: 'Самый спокойный режим · длинные паузы',
+                modeHelpBalancedTitle: 'Balanced',
+                modeHelpBalancedText: 'Оптимальный баланс скорости и пауз',
+                modeHelpFastTitle: 'Fast',
+                modeHelpFastText: 'Быстрее · короткие паузы',
+                modeHelpTurboTitle: 'Turbo',
+                modeHelpTurboText: 'Максимальная скорость · минимальные задержки',
                 limitLabel: 'Лимит откликов за запуск',
+                limitShort: 'Лимит',
                 startBtn: 'Запустить отклики',
-                stopBtn: 'Остановить (Стоп)',
+                stopBtn: 'Остановить',
                 resetHistory: 'Сбросить историю',
                 resetHistoryTitle: 'Сбросить историю отправленных откликов и статистику',
                 diagnostics: 'Диагностика',
@@ -163,6 +173,7 @@
                 manualOpenTitle: 'Открыть вакансию в новой вкладке',
                 manualUnsafeUrl: 'Ссылка не прошла проверку безопасности',
                 manualRemoveTitle: 'Удалить из очереди',
+                manualRemove: 'Удалить',
                 manualMore: 'Открыть очередь ({count}) →',
                 manualMoreTitle: 'Открыть интерактивную страницу со всей очередью вакансий'
             },
@@ -173,6 +184,17 @@
                 downloadLog: 'Скачать лог',
                 downloadLogTitle: 'Скачать полный диагностический отчет',
                 checkSelectors: 'Проверить селекторы',
+                checkSummaryIdle: '',
+                checkSummaryProgress: '{passed}/3',
+                checkSummaryOk: 'OK',
+                filterAll: 'Все',
+                filterErrors: 'Ошибки',
+                searchPlaceholder: 'Поиск по логам...',
+                searchLabel: 'Поиск по диагностическому логу',
+                clearSearch: 'Очистить поиск',
+                autoScroll: 'Автопрокрутка',
+                noEntries: 'Ничего не найдено',
+                emptySearchHint: 'Попробуйте изменить запрос или фильтр',
                 errorsOnly: 'Только ошибки',
                 moreBtn: 'Дополнительно',
                 moreTitle: 'Дополнительные действия',
@@ -252,7 +274,7 @@
                 diagExported: 'Диагностический лог выгружен в файл.',
                 diagExportFailed: 'Не удалось выгрузить лог: {err}',
                 htmlExported: 'HTML экспорт выполнен.',
-                trapTimeout: 'Очистил ar_trap_lock по таймауту.',
+                trapTimeout: 'Очистил trap_lock по таймауту.',
                 tabBusy: 'Запуск отменён: в другой вкладке уже запущен процесс (instance lock).',
                 onResponsePage: 'На странице отклика - управление у обработчика формы.',
                 onVacancyPage: 'На странице вакансии - продолжаю обработку тут.',
@@ -320,11 +342,11 @@
                 domSnapshot: 'Снимок DOM ({label}): data-qa={dataQa}, textarea={textareas}, taskFields={taskFields}, modalBtns={modalButtons}.',
                 heuristicFallback: '[Heuristics] Резервный поиск для "{key}": обнаружен <{tag}>',
                 heuristicFallbackAll: '[Heuristics] Резервный поиск всех элементов для "{key}": найдено {count}',
-                jsError: 'JS-ошибка [applomat]: {msg}{where}',
-                unhandledRejection: 'Unhandled rejection [applomat]: {msg}'
+                jsError: 'JS-ошибка [HH Apply Assistant]: {msg}{where}',
+                unhandledRejection: 'Unhandled rejection [HH Apply Assistant]: {msg}'
             },
             report: {
-                headerTitle: '===== applomat - Diagnostic Log =====',
+                headerTitle: '===== HH Apply Assistant - Diagnostic Log =====',
                 scriptVersion: 'Версия скрипта : v{version}',
                 exportedAt: 'Выгружено      : {time}',
                 currentUrl: 'URL сейчас     : {url}',
@@ -364,8 +386,8 @@
                 taskFieldsHeading: '  taskFields (вопросы работодателя):'
             },
             export: {
-                docTitle: 'applomat · сохранённые вакансии',
-                brandWordmark: 'applomat',
+                docTitle: 'HH Apply Assistant · сохранённые вакансии',
+                brandWordmark: 'HH Apply Assistant',
                 brandSub: 'сохранённые вакансии',
                 metaText: 'Экспорт ручной очереди от {date} · дубликатов удалено: {duplicates}',
                 searchPlaceholder: 'Поиск по названию или ссылке...',
@@ -434,7 +456,7 @@
             status: {
                 idle: 'Idle',
                 running: 'Running',
-                runningTurbo: 'Running · ↯ Turbo',
+                runningTurbo: 'Running · Turbo',
                 stopped: 'Stopped',
                 error: 'Warning',
                 done: 'Completed',
@@ -447,12 +469,23 @@
             },
             panel: {
                 minimizeTitle: 'Collapse panel',
-                expandTitle: 'Expand applomat',
+                expandTitle: 'Expand HH Apply Assistant',
                 langSwitchLabel: 'Interface language',
                 modeTitle: 'Work mode',
                 modeHelpAria: 'About work modes',
                 modeHelpTitle: 'Safe, Balanced, Fast and Turbo work modes',
+                modeScaleSlower: 'Slower',
+                modeScaleFaster: 'Faster',
+                modeHelpSafeTitle: 'Safe',
+                modeHelpSafeText: 'Calmest mode · longer pauses',
+                modeHelpBalancedTitle: 'Balanced',
+                modeHelpBalancedText: 'Optimal balance of speed and pauses',
+                modeHelpFastTitle: 'Fast',
+                modeHelpFastText: 'Faster · shorter pauses',
+                modeHelpTurboTitle: 'Turbo',
+                modeHelpTurboText: 'Maximum speed · minimal delays',
                 limitLabel: 'Application limit per run',
+                limitShort: 'Limit',
                 startBtn: 'Start applying',
                 stopBtn: 'Stop',
                 resetHistory: 'Reset history',
@@ -475,6 +508,7 @@
                 manualOpenTitle: 'Open vacancy in a new tab',
                 manualUnsafeUrl: 'URL failed security check',
                 manualRemoveTitle: 'Remove from queue',
+                manualRemove: 'Remove',
                 manualMore: 'Open queue ({count}) →',
                 manualMoreTitle: 'Open interactive page with the full vacancy queue'
             },
@@ -485,6 +519,17 @@
                 downloadLog: 'Download log',
                 downloadLogTitle: 'Download full diagnostic report',
                 checkSelectors: 'Check selectors',
+                checkSummaryIdle: '',
+                checkSummaryProgress: '{passed}/3',
+                checkSummaryOk: 'OK',
+                filterAll: 'All',
+                filterErrors: 'Errors',
+                searchPlaceholder: 'Search logs...',
+                searchLabel: 'Search diagnostic log',
+                clearSearch: 'Clear search',
+                autoScroll: 'Auto-scroll',
+                noEntries: 'Nothing found',
+                emptySearchHint: 'Try changing the query or filter',
                 errorsOnly: 'Errors only',
                 moreBtn: 'More',
                 moreTitle: 'Additional actions',
@@ -564,7 +609,7 @@
                 diagExported: 'Diagnostic log exported to file.',
                 diagExportFailed: 'Failed to export log: {err}',
                 htmlExported: 'HTML export completed.',
-                trapTimeout: 'Cleared ar_trap_lock on timeout.',
+                trapTimeout: 'Cleared trap_lock on timeout.',
                 tabBusy: 'Start canceled: process already active in another tab (instance lock).',
                 onResponsePage: 'On response page — handing over to form handler.',
                 onVacancyPage: 'On vacancy page — continuing processing here.',
@@ -632,11 +677,11 @@
                 domSnapshot: 'DOM snapshot ({label}): data-qa={dataQa}, textarea={textareas}, taskFields={taskFields}, modalBtns={modalButtons}.',
                 heuristicFallback: '[Heuristics] Fallback search for "{key}": found <{tag}>',
                 heuristicFallbackAll: '[Heuristics] Fallback search for all items "{key}": found {count}',
-                jsError: 'JS-error [applomat]: {msg}{where}',
-                unhandledRejection: 'Unhandled rejection [applomat]: {msg}'
+                jsError: 'JS-error [HH Apply Assistant]: {msg}{where}',
+                unhandledRejection: 'Unhandled rejection [HH Apply Assistant]: {msg}'
             },
             report: {
-                headerTitle: '===== applomat - Diagnostic Log =====',
+                headerTitle: '===== HH Apply Assistant - Diagnostic Log =====',
                 scriptVersion: 'Script version : v{version}',
                 exportedAt: 'Exported at    : {time}',
                 currentUrl: 'Current URL    : {url}',
@@ -676,8 +721,8 @@
                 taskFieldsHeading: '  taskFields (employer questions):'
             },
             export: {
-                docTitle: 'applomat · saved vacancies',
-                brandWordmark: 'applomat',
+                docTitle: 'HH Apply Assistant · saved vacancies',
+                brandWordmark: 'HH Apply Assistant',
                 brandSub: 'saved vacancies',
                 metaText: 'Manual queue export from {date} · duplicates removed: {duplicates}',
                 searchPlaceholder: 'Search by title or URL...',
@@ -1014,10 +1059,10 @@
     const storage = {
         localGet: (key) => { try { return localStorage.getItem(key); } catch (e) { return null; } },
         localSet: (key, value) => { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } },
-        localRemove: (key) => { try { localStorage.removeItem(key); } catch (e) { /* ignore */ } },
+        localRemove: (key) => { try { localStorage.removeItem(key); return true; } catch (e) { return false; } },
         sessionGet: (key) => { try { return sessionStorage.getItem(key); } catch (e) { return null; } },
         sessionSet: (key, value) => { try { sessionStorage.setItem(key, value); return true; } catch (e) { return false; } },
-        sessionRemove: (key) => { try { sessionStorage.removeItem(key); } catch (e) { /* ignore */ } }
+        sessionRemove: (key) => { try { sessionStorage.removeItem(key); return true; } catch (e) { return false; } }
     };
 
     // ─────────────────────────────────────────────────────────────
@@ -1025,8 +1070,7 @@
     // ─────────────────────────────────────────────────────────────
 
     const Settings = {
-        // Приводим сырые данные (в т.ч. конфиг от старых версий с ручными
-        // таймингами) к актуальной схеме: пресет + несколько флагов.
+        // Defensive validation актуальной v4-схемы: defaults, типы и диапазоны.
         normalize(raw = {}) {
             const defaultCover = getDefaultCoverText();
             const merged = { ...DEFAULTS, coverText: defaultCover, ...(raw || {}) };
@@ -1043,16 +1087,33 @@
             return Settings.normalize(parseJson(storage.localGet(KEYS.settings), {}));
         },
         save(cfg) {
-            storage.localSet(KEYS.settings, JSON.stringify(cfg));
+            try {
+                return storage.localSet(KEYS.settings, JSON.stringify(cfg));
+            } catch (e) {
+                return false;
+            }
         }
     };
 
     let config = Settings.load();
+    function persistSettings(nextConfig) {
+        const normalized = Settings.normalize(nextConfig);
+        if (!Settings.save(normalized)) {
+            handleSettingsPersistenceFailure();
+            return false;
+        }
+        config = normalized;
+        return true;
+    }
     let isLoopActive = false;
     let stopSignal = false;
     let currentRunId = 0;
     let resumeTimer = null;
     let activeAbortController = null;
+    let trapLockTimer = null;
+    let currentInstanceLeaseId = null;
+    let instanceLeaseVerified = false;
+    let pendingInstanceLeaseId = null;
     // Флаг: уже обрабатываем полностраничную форму отклика (защита от повторного входа из watchdog).
     // Сбрасывается сам при загрузке новой страницы (новый экземпляр скрипта).
     let handlingResponsePage = false;
@@ -1282,7 +1343,7 @@
             if (!s.startedAt) s.startedAt = Date.now();
             s[key] = (s[key] || 0) + by;
             Stats._save(s);
-            try { window._hh_ar_renderStats?.(); } catch (e) { /* ignore */ }
+            try { window._hhApplyAssistantRenderStats?.(); } catch (e) { /* ignore */ }
         },
         // Попытка отклика = один терминальный исход по вакансии (успех + ручной + пропуск).
         attempts() {
@@ -1295,7 +1356,7 @@
         },
         reset() {
             storage.sessionRemove(KEYS.stats);
-            try { window._hh_ar_renderStats?.(); } catch (e) { /* ignore */ }
+            try { window._hhApplyAssistantRenderStats?.(); } catch (e) { /* ignore */ }
         }
     };
 
@@ -1313,19 +1374,19 @@
         try {
             // 2. Обновляем счетчик / бейдж
             try {
-                (window._applomat_updateDiagBadge || window._hh_ar_updateDiagBadge)?.();
+                window._hhApplyAssistantUpdateDiagBadge?.();
             } catch (e) { /* ignore */ }
 
             // 3. Выделенный полноразмерный экран диагностики (рендерим только если он активен/видим)
             const viewDiag = document.getElementById('ar-view-diag');
             if (viewDiag && viewDiag.style.display !== 'none') {
                 try {
-                    window._hha_renderDiagnostics?.();
+                    window._hhApplyAssistantRenderDiagnostics?.();
                 } catch (e) { /* ignore */ }
             }
         } catch (e) { /* UI-лог не критичен */ }
 
-        console.log(`[applomat] ${msg}`);
+        console.log(`[HH Apply Assistant] ${msg}`);
     };
 
     // Снимок связанного с откликом DOM - чтобы по нему обновлять селекторы, когда детект не сработал.
@@ -1386,8 +1447,12 @@
 
     // Фиксируем, какой вариант селектора реально сработал: новый или legacy-фоллбек.
     // Если legacy начинает преобладать - значит hh.ru вернул старую вёрстку (или наоборот).
-    function recordSelectorVariant(name, newSel, legacySel) {
+    function recordSelectorVariant(name, newSel, legacySel, knownVariant) {
         try {
+            if (knownVariant) {
+                Metrics.bump(`sel.${name}.${knownVariant}`);
+                return;
+            }
             const hasNew = !!document.querySelector(newSel);
             const hasLegacy = legacySel ? !!document.querySelector(legacySel) : false;
             const variant = hasNew ? 'new' : (hasLegacy ? 'legacy' : 'none');
@@ -1524,7 +1589,7 @@
         try {
             const report = buildDiagnosticReport();
             const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            downloadFile(`applomat_log_${stamp}.txt`, report, 'text/plain;charset=utf-8');
+            downloadFile(`hh_apply_assistant_log_${stamp}.txt`, report, 'text/plain;charset=utf-8');
             log(I18n.t('logs.diagExported'));
         } catch (e) {
             log(I18n.t('logs.diagExportFailed', { err: (e && e.message ? e.message : e) }), true);
@@ -1548,16 +1613,62 @@
     //  6. СОСТОЯНИЕ ПРОГОНА (local/session storage)
     // ─────────────────────────────────────────────────────────────
 
+    function clearTrapLockTimer() {
+        if (trapLockTimer) {
+            clearTimeout(trapLockTimer);
+            trapLockTimer = null;
+        }
+    }
+
+    function getActiveTrapLock() {
+        const raw = storage.sessionGet(KEYS.trapLock);
+        if (!raw) return null;
+        const lock = parseJson(raw, null);
+        const expiresAt = Number(lock?.expiresAt);
+        if (!lock || typeof lock !== 'object' || typeof lock.token !== 'string' || !lock.token || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+            storage.sessionRemove(KEYS.trapLock);
+            clearTrapLockTimer();
+            return null;
+        }
+        return {
+            token: lock.token,
+            expiresAt,
+            runId: Number.isFinite(Number(lock.runId)) ? Number(lock.runId) : null
+        };
+    }
+
+    function readInstanceLock() {
+        try {
+            const raw = localStorage.getItem(KEYS.instanceLock);
+            return { ok: true, lock: parseJson(raw, null) };
+        } catch (e) {
+            return { ok: false, lock: null };
+        }
+    }
+
+    function sameInstanceLease(lock, tabId, leaseId) {
+        return !!(lock && lock.tabId === tabId && typeof leaseId === 'string' && leaseId && lock.leaseId === leaseId);
+    }
+
+    function isLiveInstanceLease(lock, now = Date.now()) {
+        const ts = Number(lock?.ts);
+        return Number.isFinite(ts) && now - ts < TUNING.instanceLockTtl;
+    }
+
+    function newInstanceLeaseId(tabId) {
+        return `${tabId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    }
+
     const State = {
         getProcessedIDs: () => {
             const arr = parseJson(storage.sessionGet(KEYS.history), []);
             return new Set(Array.isArray(arr) ? arr : []);
         },
         addProcessedID: (id) => {
-            if (!id) return;
+            if (!id) return true;
             const s = State.getProcessedIDs();
             s.add(id);
-            storage.sessionSet(KEYS.history, JSON.stringify([...s]));
+            return storage.sessionSet(KEYS.history, JSON.stringify([...s]));
         },
         clearProcessedIDs: () => storage.sessionRemove(KEYS.history),
 
@@ -1569,7 +1680,7 @@
         },
         incSentCount: () => {
             const next = State.getSentCount() + 1;
-            storage.sessionSet(KEYS.sentCount, String(next));
+            if (!storage.sessionSet(KEYS.sentCount, String(next))) return null;
             Stats.bump('success');
             return next;
         },
@@ -1590,28 +1701,33 @@
         // не мог снять блокировку у нового активного обработчика.
         setTrapLock: (ttlMs = 45000) => {
             const token = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
-            storage.sessionSet(KEYS.trapLock, token);
-            setTimeout(() => {
-                if (storage.sessionGet(KEYS.trapLock) === token) {
+            const ttl = Math.max(0, Number(ttlMs) || 0);
+            const lock = { token, runId: currentRunId, expiresAt: Date.now() + ttl };
+            if (!storage.sessionSet(KEYS.trapLock, JSON.stringify(lock))) return null;
+            clearTrapLockTimer();
+            trapLockTimer = setTimeout(() => {
+                const current = parseJson(storage.sessionGet(KEYS.trapLock), null);
+                if (current && current.token === token) {
                     storage.sessionRemove(KEYS.trapLock);
+                    trapLockTimer = null;
                     log(I18n.t('logs.trapTimeout'));
                 }
-            }, ttlMs);
+            }, ttl);
             return token;
         },
         clearTrapLock: (token) => {
             if (token) {
-                if (storage.sessionGet(KEYS.trapLock) === token) {
-                    storage.sessionRemove(KEYS.trapLock);
-                }
-            } else {
-                storage.sessionRemove(KEYS.trapLock);
+                const current = getActiveTrapLock();
+                if (!current || current.token !== token) return false;
             }
+            const removed = storage.sessionRemove(KEYS.trapLock);
+            if (removed) clearTrapLockTimer();
+            return removed;
         },
-        hasTrapLock: () => !!storage.sessionGet(KEYS.trapLock),
+        hasTrapLock: () => !!getActiveTrapLock(),
 
         // Запоминаем последнюю попытку отклика - пригодится при редиректах
-        setLastAttemptID: (id) => { if (id) storage.sessionSet(KEYS.lastAttempt, id); },
+        setLastAttemptID: (id) => id ? storage.sessionSet(KEYS.lastAttempt, id) : true,
         getLastAttemptID: () => storage.sessionGet(KEYS.lastAttempt),
         clearLastAttemptID: () => storage.sessionRemove(KEYS.lastAttempt),
 
@@ -1627,34 +1743,91 @@
         },
         getLastVacancyMeta: () => parseJson(storage.sessionGet(KEYS.lastVacancyMeta), null),
 
-        // Простая кросс-вкладочная блокировка (instance lock).
-        // Асинхронная: localStorage не даёт атомарного compare-and-set, поэтому после
-        // записи перечитываем ключ с небольшой задержкой - если другая вкладка успела
-        // перезаписать лок в этом окне, признаём поражение (лок уже не наш).
+        // Кросс-вкладочный lease: TAB_ID задаёт вкладку, leaseId — конкретное поколение.
+        // После записи обязательно перечитываем ключ: localStorage не даёт атомарного CAS,
+        // поэтому ownership появляется только после точного read-back совпадения.
         acquireInstanceLock: async (tabId) => {
             const now = Date.now();
-            const obj = parseJson(storage.localGet(KEYS.instanceLock), null);
-            if (obj && Number.isFinite(Number(obj.ts)) && now - obj.ts < TUNING.instanceLockTtl && obj.tabId !== tabId) {
+            const current = readInstanceLock();
+            if (!current.ok) {
+                instanceLeaseVerified = false;
                 return false;
             }
-            storage.localSet(KEYS.instanceLock, JSON.stringify({ tabId, ts: now }));
-            await sleep(60);
-            const check = parseJson(storage.localGet(KEYS.instanceLock), null);
-            return !!(check && check.tabId === tabId);
-        },
-        releaseInstanceLock: (tabId) => {
-            const obj = parseJson(storage.localGet(KEYS.instanceLock), null);
-            if (obj && obj.tabId === tabId) storage.localRemove(KEYS.instanceLock);
-        },
-        // Обновляем timestamp блокировки, если она принадлежит нашей вкладке.
-        // Возвращает статус: 'OWNED' (лок успешно продлён) | 'LOST' (лок принадлежит другой вкладке или отсутствует).
-        touchInstanceLock: (tabId) => {
-            const obj = parseJson(storage.localGet(KEYS.instanceLock), null);
-            if (obj && obj.tabId === tabId) {
-                storage.localSet(KEYS.instanceLock, JSON.stringify({ tabId, ts: Date.now() }));
-                return 'OWNED';
+            const obj = current.lock;
+            if (obj && isLiveInstanceLease(obj, now) && obj.tabId !== tabId) {
+                instanceLeaseVerified = false;
+                return false;
             }
-            return 'LOST';
+
+            const leaseId = newInstanceLeaseId(tabId);
+            const candidate = { tabId, leaseId, ts: now };
+            currentInstanceLeaseId = leaseId;
+            instanceLeaseVerified = false;
+            pendingInstanceLeaseId = leaseId;
+            if (!storage.localSet(KEYS.instanceLock, JSON.stringify(candidate))) {
+                if (pendingInstanceLeaseId === leaseId) pendingInstanceLeaseId = null;
+                return false;
+            }
+
+            await sleep(60);
+            const check = readInstanceLock();
+            const owned = !!(
+                check.ok
+                && currentInstanceLeaseId === leaseId
+                && sameInstanceLease(check.lock, tabId, leaseId)
+                && Number(check.lock.ts) === now
+                && isLiveInstanceLease(check.lock)
+            );
+            if (pendingInstanceLeaseId === leaseId) pendingInstanceLeaseId = null;
+            if (currentInstanceLeaseId === leaseId) instanceLeaseVerified = owned;
+            return owned;
+        },
+        verifyInstanceLock: (tabId, leaseId = currentInstanceLeaseId) => {
+            if (!leaseId || leaseId !== currentInstanceLeaseId || !instanceLeaseVerified) return 'LOST';
+            const current = readInstanceLock();
+            const owned = current.ok
+                && sameInstanceLease(current.lock, tabId, leaseId)
+                && isLiveInstanceLease(current.lock);
+            if (!owned && leaseId === currentInstanceLeaseId) instanceLeaseVerified = false;
+            return owned ? 'OWNED' : 'LOST';
+        },
+        releaseInstanceLock: (tabId, leaseId = currentInstanceLeaseId) => {
+            let removed = false;
+            const current = readInstanceLock();
+            if (current.ok && sameInstanceLease(current.lock, tabId, leaseId)) {
+                removed = storage.localRemove(KEYS.instanceLock);
+            }
+            if (leaseId && leaseId === currentInstanceLeaseId) {
+                currentInstanceLeaseId = null;
+                instanceLeaseVerified = false;
+            }
+            if (leaseId && leaseId === pendingInstanceLeaseId) pendingInstanceLeaseId = null;
+            return removed;
+        },
+        // Продлеваем только текущее подтверждённое поколение и проверяем результат записи.
+        // Любая неопределённость storage означает LOST: UNKNOWN никогда не трактуется как OWNED.
+        touchInstanceLock: (tabId, leaseId = currentInstanceLeaseId) => {
+            if (!leaseId || leaseId !== currentInstanceLeaseId || !instanceLeaseVerified) return 'LOST';
+            const current = readInstanceLock();
+            if (!current.ok || !sameInstanceLease(current.lock, tabId, leaseId) || !isLiveInstanceLease(current.lock)) {
+                instanceLeaseVerified = false;
+                return 'LOST';
+            }
+
+            // Значение должно отличаться даже у двух guards в одну миллисекунду,
+            // иначе проигнорированную запись нельзя отличить от старого timestamp.
+            const now = Math.max(Date.now(), Number(current.lock.ts) + 1);
+            const renewed = { tabId, leaseId, ts: now };
+            if (!storage.localSet(KEYS.instanceLock, JSON.stringify(renewed))) {
+                instanceLeaseVerified = false;
+                return 'LOST';
+            }
+            const check = readInstanceLock();
+            const owned = check.ok
+                && sameInstanceLease(check.lock, tabId, leaseId)
+                && Number(check.lock.ts) === now;
+            instanceLeaseVerified = !!owned;
+            return owned ? 'OWNED' : 'LOST';
         },
 
         // --- Ручной список (вакансии с вопросами/блокировками для ручного отклика) ---
@@ -1695,7 +1868,7 @@
                 }
                 return 'EXISTS';
             } catch (e) {
-                console.warn('[applomat] addManualEntry error', e);
+                console.warn('[HH Apply Assistant] addManualEntry error', e);
                 return 'FAILED';
             }
         },
@@ -1704,7 +1877,7 @@
                 const list = State.getManualList().filter(e => e.vid !== vid);
                 return storage.localSet(KEYS.manualList, JSON.stringify(list));
             } catch (e) {
-                console.warn('[applomat] removeManualEntry error', e);
+                console.warn('[HH Apply Assistant] removeManualEntry error', e);
                 return false;
             }
         },
@@ -1713,17 +1886,26 @@
                 storage.localRemove(KEYS.manualList);
                 return true;
             } catch (e) {
-                console.warn('[applomat] clearManualList error', e);
+                console.warn('[HH Apply Assistant] clearManualList error', e);
                 return false;
             }
         }
     };
 
+    // Fencing guard только для safety-critical commit points. Он не подменяет runId:
+    // сначала отсекаем старое внутривкладочное поколение, затем renew+read-back текущего lease.
+    function guardOwnedCommit(runId = currentRunId) {
+        if (!isRunCurrent(runId)) return false;
+        if (State.touchInstanceLock(TAB_ID) === 'OWNED') return true;
+        haltForLostInstanceLock();
+        return false;
+    }
+
     // При авто-возобновлении сразу проверяем lock (запись в localStorage происходит
     // синхронно при вызове, пост-верификация - асинхронно)
     if (State.amIRunning()) {
         State.acquireInstanceLock(TAB_ID).then((ok) => {
-            if (!ok) console.warn('[applomat] Обнаружен активный процесс в другой вкладке.');
+            if (!ok) console.warn('[HH Apply Assistant] Обнаружен активный процесс в другой вкладке.');
         });
     }
 
@@ -1759,6 +1941,23 @@
         return false;
     }
 
+    function queryExact(key, root) {
+        const selector = SELECTORS[key];
+        if (!selector) return null;
+        const el = q(selector, root);
+        if (!el || isAutoResponderUI(el)) return null;
+        recordSelectorVariant(key, selector, null, 'new');
+        return el;
+    }
+
+    function queryHeuristic(key, root) {
+        const found = runHeuristic(key, root || document);
+        if (!found || isAutoResponderUI(found)) return null;
+        Metrics.bump(`heuristic.fallback.${key}`);
+        log(I18n.t('logs.heuristicFallback', { key, tag: found.tagName.toLowerCase() }));
+        return found;
+    }
+
     // Интеллектуальный поиск элементов с эвристиками на случай изменения верстки
     function query(keyOrSelector, root) {
         const selector = SELECTORS[keyOrSelector];
@@ -1771,19 +1970,10 @@
             const el = q(keyOrSelector, root);
             return isAutoResponderUI(el) ? null : el;
         }
-        const el = q(selector, root);
-        if (el && !isAutoResponderUI(el)) {
-            recordSelectorVariant(keyOrSelector, selector, null);
-            return el;
-        }
+        const el = queryExact(keyOrSelector, root);
+        if (el) return el;
         // Запуск эвристического поиска
-        const found = runHeuristic(keyOrSelector, root || document);
-        if (found && !isAutoResponderUI(found)) {
-            Metrics.bump(`heuristic.fallback.${keyOrSelector}`);
-            log(I18n.t('logs.heuristicFallback', { key: keyOrSelector, tag: found.tagName.toLowerCase() }));
-            return found;
-        }
-        return null;
+        return queryHeuristic(keyOrSelector, root);
     }
 
     function queryAll(keyOrSelector, root) {
@@ -1816,7 +2006,7 @@
                     const elements = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     const matchText = /откликнуться|отклик без резюме|перейти к отклику|apply|respond|no resume necessary|apply now/i;
                     for (const el of elements) {
-                        if (isVisible(el) && matchText.test((el.textContent || '').trim())) {
+                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             return el;
                         }
                     }
@@ -1838,14 +2028,14 @@
                     // Сначала ищем среди интерактивных элементов
                     const activeEls = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     for (const el of activeEls) {
-                        if (isVisible(el) && matchText.test((el.textContent || '').trim())) {
+                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             return el;
                         }
                     }
                     // Если не нашли, ищем среди span и div (как фоллбек)
                     const staticEls = Array.from(root.querySelectorAll('span, div'));
                     for (const el of staticEls) {
-                        if (isVisible(el) && matchText.test((el.textContent || '').trim())) {
+                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             // Исключаем контейнеры, если внутри них есть другие интерактивные элементы или textarea
                             if (el.querySelector('button, a, textarea, input, select')) continue;
                             return el;
@@ -1871,11 +2061,10 @@
                     const elements = Array.from(root.querySelectorAll('button, input[type="submit"], [role="button"]'));
                     const matchText = /отправить|откликнуться|готово|send|submit|done|apply/i;
                     for (const el of elements) {
-                        if (isVisible(el) && matchText.test((el.textContent || '').trim())) {
-                            const qaAttr = el.getAttribute('data-qa') || '';
-                            if (qaAttr.includes('vacancy-response-link') || qaAttr.includes('vacancy-serp__vacancy_response')) continue;
-                            return el;
-                        }
+                        if (!matchText.test((el.textContent || '').trim())) continue;
+                        const qaAttr = el.getAttribute('data-qa') || '';
+                        if (qaAttr.includes('vacancy-response-link') || qaAttr.includes('vacancy-serp__vacancy_response')) continue;
+                        if (isVisible(el)) return el;
                     }
                     const submitBtn = root.querySelector('button[type="submit"], input[type="submit"]');
                     if (submitBtn && isVisible(submitBtn)) {
@@ -1893,7 +2082,8 @@
                     // ищем строго в его контейнере. Раньше поиск шёл по всей странице с матчем
                     // подстроки /да/, и за кнопку подтверждения принимались Задать вопрос,
                     // ...Дальнего Востока и любой текст с да внутри.
-                    const scope = root.querySelector('[data-qa*="relocation" i], [role="dialog"], [data-qa*="modal" i], [class*="modal" i]');
+                    const scopeSelector = '[data-qa*="relocation" i], [role="dialog"], [data-qa*="modal" i], [class*="modal" i]';
+                    const scope = root.matches?.(scopeSelector) ? root : root.querySelector(scopeSelector);
                     if (!scope) break;
                     const elements = Array.from(scope.querySelectorAll('button, a, [role="button"]'));
                     const exact = /^(да|yes|ok|хорошо)[.!]?$/i;
@@ -1909,7 +2099,7 @@
                     const elements = Array.from(root.querySelectorAll('div, span, p, h1, h2, h3'));
                     const matchText = /отказ|не подходит|будет отказ|reject|unsuitable|decline|likely to get a rejection/i;
                     for (const el of elements) {
-                        if (isVisible(el) && matchText.test((el.textContent || '').trim())) {
+                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             return el;
                         }
                     }
@@ -1919,7 +2109,7 @@
                     const elements = Array.from(root.querySelectorAll('a, button'));
                     const matchText = /сообщение|чат|переписке|перейти к|message|chat|topic/i;
                     for (const el of elements) {
-                        if (isVisible(el) && matchText.test((el.textContent || '').trim())) {
+                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             return el;
                         }
                     }
@@ -1943,7 +2133,7 @@
                 }
             }
         } catch (e) {
-            console.warn('[applomat] Ошибка в эвристике для ' + key, e);
+            console.warn('[HH Apply Assistant] Ошибка в эвристике для ' + key, e);
         }
         return null;
     }
@@ -1954,21 +2144,21 @@
                 case 'applyBtn': {
                     const buttons = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     const matchText = /откликнуться|отклик без резюме|apply|respond|no resume necessary/i;
-                    const results = buttons.filter(el => isVisible(el) && matchText.test((el.textContent || '').trim()));
+                    const results = buttons.filter(el => matchText.test((el.textContent || '').trim()) && isVisible(el));
                     if (results.length > 0) return results;
                     // Только интерактивные элементы и без служебных data-qa (см. runHeuristic)
                     const notApply = /status|success|view-topic|error|chat/i;
                     const hrefs = Array.from(root.querySelectorAll('a[href*="/applicant/vacancy_response"], a[data-qa*="response"], button[data-qa*="response"], a[data-qa*="apply"], button[data-qa*="apply"]'));
-                    return hrefs.filter(el => isVisible(el) && !notApply.test(el.getAttribute('data-qa') || ''));
+                    return hrefs.filter(el => !notApply.test(el.getAttribute('data-qa') || '') && isVisible(el));
                 }
                 case 'vacancyApply': {
                     const buttons = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     const matchText = /откликнуться|respond|apply/i;
-                    return buttons.filter(el => isVisible(el) && matchText.test((el.textContent || '').trim()));
+                    return buttons.filter(el => matchText.test((el.textContent || '').trim()) && isVisible(el));
                 }
             }
         } catch (e) {
-            console.warn('[applomat] Ошибка в групповой эвристике для ' + key, e);
+            console.warn('[HH Apply Assistant] Ошибка в групповой эвристике для ' + key, e);
         }
         return [];
     }
@@ -2159,7 +2349,7 @@
             const wrapper = getNativeWrapper(el);
             const clone = wrapper ? q('pre', wrapper) : null;
             if (clone) clone.textContent = value || '​';
-        } catch (e) { console.warn('[applomat] fillTextarea error', e); }
+        } catch (e) { console.warn('[HH Apply Assistant] fillTextarea error', e); }
     }
 
     // Отслеживаем реальные координаты мыши пользователя, чтобы траектория начиналась оттуда
@@ -2251,7 +2441,7 @@
             fire(PointerCtor, 'pointerup', { ...base, buttons: 0 });
             fire(MouseEvent, 'mouseup', { ...base, buttons: 0 });
 
-            if (!isRunCurrent(runId)) return false;
+            if (!guardOwnedCommit(runId)) return false;
 
             // Строгая single-action семантика: вызываем el.click() ровно один раз
             let clicked = false;
@@ -2338,24 +2528,43 @@
         return false;
     }
 
-    // Признак успешно отправленного отклика: появилась ссылка на чат или текст "резюме доставлено".
-    function isResponseConfirmed() {
-        const chat = query('responseChat');
-        if (chat && isVisible(chat)) {
-            return true;
-        }
-        const success = q('[data-qa="vacancy-response-success"], .vacancy-response-success');
-        if (success && isVisible(success)) {
-            return true;
-        }
+    function getResponseDetectionScope() {
+        const scopeSelector = '[data-qa="modal-content-scroll-container"], [data-qa="modal-content"], [role="dialog"], form[action*="vacancy_response"], form[id^="cover-letter-"], [data-qa*="modal" i], [class*="modal" i]';
+        return qa(scopeSelector).find(el => !isAutoResponderUI(el) && isVisible(el)) || null;
+    }
+
+    function hasResponseTextConfirmation(root) {
         try {
-            const nodes = document.querySelectorAll('h1,h2,h3,p,div,span');
+            const nodes = (root || document).querySelectorAll('h1,h2,h3,p,div,span');
             for (const el of nodes) {
                 const t = el.childElementCount === 0 ? (el.textContent || '') : '';
                 if (t && /(?:резюме доставлено|resume delivered|application sent|response sent)/i.test(t.trim()) && isVisible(el)) return true;
             }
         } catch (e) { /* ignore */ }
         return false;
+    }
+
+    function hasExactResponseConfirmation(root) {
+        const chat = queryExact('responseChat', root);
+        if (chat && isVisible(chat)) return true;
+        const success = q('[data-qa="vacancy-response-success"], .vacancy-response-success', root);
+        return !!(success && !isAutoResponderUI(success) && isVisible(success));
+    }
+
+    // Признак успешно отправленного отклика: появилась ссылка на чат или текст "резюме доставлено".
+    function isResponseConfirmed() {
+        if (hasExactResponseConfirmation(document)) return true;
+
+        const scope = getResponseDetectionScope();
+        if (scope) {
+            const scopedChat = queryHeuristic('responseChat', scope);
+            if (scopedChat && isVisible(scopedChat)) return true;
+            if (hasResponseTextConfirmation(scope)) return true;
+        }
+
+        const chat = queryHeuristic('responseChat', document);
+        if (chat && isVisible(chat)) return true;
+        return hasResponseTextConfirmation(document);
     }
 
     // На эту вакансию уже откликались ранее (не ошибка - ничего делать не нужно, просто пропускаем).
@@ -2547,7 +2756,8 @@
     // Сохраняем текущую вакансию в список для ручного отклика, чтобы заблокированные/неподтверждённые
     // отклики не терялись - пользователь сможет обработать их вручную.
     // Возвращает true, если вакансия гарантированно сохранена (или уже есть) в ручном списке.
-    function saveCurrentForManual(vid, note) {
+    function saveCurrentForManual(vid, note, runId) {
+        if (runId && !guardOwnedCommit(runId)) return false;
         try {
             const res = State.addManualEntry({
                 vid: vid,
@@ -2559,19 +2769,18 @@
             if (res === 'ADDED') {
                 Stats.bump('manual');
                 log(I18n.t('logs.manualSaved', { note: note ? ' (' + note + ')' : '', vid }));
-                try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
+                try { window._hhApplyAssistantRenderManualQueue?.(); } catch (e) { /* ignore */ }
                 return true;
             } else if (res === 'EXISTS' || res === 'UPDATED') {
-                Stats.bump('manual');
                 log(I18n.t('logs.manualAlready', { note: note ? ' (' + note + ')' : '', vid }));
-                try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
+                try { window._hhApplyAssistantRenderManualQueue?.(); } catch (e) { /* ignore */ }
                 return true;
             } else {
                 log(I18n.t('logs.manualSaveFailed', { note: note ? ' [' + note + ']' : '', vid }), true);
                 return false;
             }
         } catch (e) {
-            console.warn('[applomat] saveCurrentForManual error', e);
+            console.warn('[HH Apply Assistant] saveCurrentForManual error', e);
             log(I18n.t('logs.manualSaveFailed', { note: '', vid }), true);
             return false;
         }
@@ -2626,6 +2835,13 @@
             stopBtn.disabled = !running;
         }
 
+        const executionCore = document.getElementById('ar-mode-card');
+        if (executionCore) {
+            executionCore.classList.toggle('is-running', running);
+            executionCore.setAttribute('data-runtime-state', key);
+            executionCore.setAttribute('aria-busy', running ? 'true' : 'false');
+        }
+
         const toggle = document.getElementById('ar-toggle-btn');
         if (toggle) {
             toggle.classList.toggle('is-running', running);
@@ -2656,33 +2872,33 @@
         NO_LINK: 'NO_LINK',
         NO_HREF: 'NO_HREF',
         UNKNOWN: 'UNKNOWN',
-        LEGACY: 'LEGACY'
+        UNRECOGNIZED_CODE: 'UNRECOGNIZED_CODE'
     });
 
     const ExecutionResult = {
-        fromLegacy(code) {
-            const legacyCode = String(code || 'ERROR_UNKNOWN');
-            switch (legacyCode) {
+        fromTerminalCode(code) {
+            const terminalCode = String(code || 'ERROR_UNKNOWN');
+            switch (terminalCode) {
                 case 'OK':
-                    return { status: EXECUTION_STATUS.SUCCESS, reason: EXECUTION_REASON.APPLIED, code: legacyCode };
+                    return { status: EXECUTION_STATUS.SUCCESS, reason: EXECUTION_REASON.APPLIED, code: terminalCode };
                 case 'RETURNED':
-                    return { status: EXECUTION_STATUS.SUCCESS, reason: EXECUTION_REASON.RETURNING_TO_LIST, code: legacyCode };
+                    return { status: EXECUTION_STATUS.SUCCESS, reason: EXECUTION_REASON.RETURNING_TO_LIST, code: terminalCode };
                 case 'NAVIGATED':
-                    return { status: EXECUTION_STATUS.NAVIGATED, reason: EXECUTION_REASON.VACANCY_PAGE, code: legacyCode };
+                    return { status: EXECUTION_STATUS.NAVIGATED, reason: EXECUTION_REASON.VACANCY_PAGE, code: terminalCode };
                 case 'REDIRECT':
-                    return { status: EXECUTION_STATUS.NAVIGATED, reason: EXECUTION_REASON.RESPONSE_PAGE, code: legacyCode };
+                    return { status: EXECUTION_STATUS.NAVIGATED, reason: EXECUTION_REASON.RESPONSE_PAGE, code: terminalCode };
                 case 'STOPPED':
-                    return { status: EXECUTION_STATUS.STOPPED, reason: EXECUTION_REASON.UNKNOWN, code: legacyCode };
+                    return { status: EXECUTION_STATUS.STOPPED, reason: EXECUTION_REASON.UNKNOWN, code: terminalCode };
                 case 'CAPTCHA':
-                    return { status: EXECUTION_STATUS.CAPTCHA, reason: EXECUTION_REASON.UNKNOWN, code: legacyCode };
+                    return { status: EXECUTION_STATUS.CAPTCHA, reason: EXECUTION_REASON.UNKNOWN, code: terminalCode };
                 case 'ERROR_NO_LINK':
-                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.NO_LINK, code: legacyCode };
+                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.NO_LINK, code: terminalCode };
                 case 'ERROR_NO_HREF':
-                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.NO_HREF, code: legacyCode };
+                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.NO_HREF, code: terminalCode };
                 case 'ERROR_UNKNOWN':
-                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.UNKNOWN, code: legacyCode };
+                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.UNKNOWN, code: terminalCode };
                 default:
-                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.LEGACY, code: legacyCode };
+                    return { status: EXECUTION_STATUS.SKIPPED, reason: EXECUTION_REASON.UNRECOGNIZED_CODE, code: terminalCode };
             }
         }
     };
@@ -2702,13 +2918,25 @@
 
             const needleRx = /(?:подходящие вакансии в этой компании|similar vacancies|vacancies at this company)/i;
             let sectionEl = null;
-            for (const el of qa('h1,h2,h3,h4,div,section')) {
+            // Чаще всего секция обозначена заголовком: дешёвый semantic path до широкого scan.
+            for (const el of qa('h1,h2,h3,h4')) {
                 try {
                     if (el.innerText && needleRx.test(el.innerText.trim())) {
                         sectionEl = el;
                         break;
                     }
                 } catch (e) { continue; }
+            }
+            // Старый широкий поиск сохраняем как compatibility fallback.
+            if (!sectionEl) {
+                for (const el of qa('h1,h2,h3,h4,div,section')) {
+                    try {
+                        if (el.innerText && needleRx.test(el.innerText.trim())) {
+                            sectionEl = el;
+                            break;
+                        }
+                    } catch (e) { continue; }
+                }
             }
 
             let targetY;
@@ -2756,35 +2984,57 @@
             if (!isRunCurrent(runId)) return;
             await actionPause();
         } catch (e) {
-            console.warn('[applomat] simulateReading error', e);
+            console.warn('[HH Apply Assistant] simulateReading error', e);
         }
+    }
+
+    function detectResponseOutcomeInRoot(root, includeExactSelectors) {
+        if (includeExactSelectors) {
+            if (isVisible(queryExact('relocationBtn', root))) return 'RELOCATION';
+            // Сценарий Б проверяется РАНЬШЕ сценария А: внутри ещё не отправленной модалки
+            // есть кнопка прикрепить сопроводительное, которую нельзя считать успехом.
+            if (isVisible(queryExact('letterSubmit', root))) return 'SCENARIO_B';
+            if (isVisible(queryExact('attachCoverBtn', root))) return 'SCENARIO_A';
+            if (hasExactResponseConfirmation(root)) return 'SCENARIO_C';
+        }
+
+        // Compatibility fallback: те же эвристики, но сначала только в активной форме/модалке.
+        if (queryHeuristic('relocationBtn', root)) return 'RELOCATION';
+        if (queryHeuristic('letterSubmit', root)) return 'SCENARIO_B';
+        if (queryHeuristic('attachCoverBtn', root)) return 'SCENARIO_A';
+        if (queryHeuristic('responseChat', root) || hasResponseTextConfirmation(root)) return 'SCENARIO_C';
+        return false;
+    }
+
+    function detectResponseOutcomeOnce(runId = currentRunId) {
+        if (!isRunCurrent(runId)) return 'STOPPED';
+        // Капча/анти-бот появилась прямо в ответ на клик - ловим сразу (не дожидаясь
+        // тика watchdog), пока оверлей ещё на экране и до навигации назад к списку.
+        if (detectCaptcha()) return 'CAPTCHA';
+        // HH перебросил на страницу тестов/вопросов.
+        if (Page.isResponseForm()) return 'QUESTIONS';
+
+        // Fast path: известные data-qa/селекторы без широкого сканирования DOM.
+        if (isVisible(queryExact('relocationBtn'))) return 'RELOCATION';
+        if (isVisible(queryExact('letterSubmit'))) return 'SCENARIO_B';
+        if (isVisible(queryExact('attachCoverBtn'))) return 'SCENARIO_A';
+        if (hasExactResponseConfirmation(document)) return 'SCENARIO_C';
+
+        // Scoped fallback: ограничиваем эвристики активной формой или модальным окном.
+        const scope = getResponseDetectionScope();
+        if (scope) {
+            const scopedOutcome = detectResponseOutcomeInRoot(scope, true);
+            if (scopedOutcome) return scopedOutcome;
+        }
+
+        // Expensive compatibility fallback: широкий поиск остаётся последним уровнем.
+        return detectResponseOutcomeInRoot(document, false);
     }
 
     // Динамически определяем, что произошло после клика "Откликнуться".
     // Возвращает: 'STOPPED' | 'QUESTIONS' | 'RELOCATION' | 'SCENARIO_A' | 'SCENARIO_B' | 'SCENARIO_C' | 'TIMEOUT'
     async function resolveResponseOutcome(timeout, runId = currentRunId) {
-        const outcome = await waitForCondition(() => {
-            if (!isRunCurrent(runId)) return 'STOPPED';
-            // Капча/анти-бот появилась прямо в ответ на клик - ловим сразу (не дожидаясь
-            // тика watchdog), пока оверлей ещё на экране и до навигации назад к списку.
-            if (detectCaptcha()) return 'CAPTCHA';
-            // HH перебросил на страницу тестов/вопросов
-            if (Page.isResponseForm()) return 'QUESTIONS';
-            // Окно подтверждения переезда
-            if (isVisible(query('relocationBtn'))) return 'RELOCATION';
-            // Сценарий Б проверяется РАНЬШЕ сценария А: внутри ещё не отправленной модалки
-            // есть кнопка прикрепить сопроводительное, которую эвристика сценария А
-            // принимала за пост-отправочное предложение письма - и при выключенном письме
-            // скрипт засчитывал успех, не отправив отклик вовсе.
-            // Поле письма может быть ещё скрыто за кнопкой "прикрепить сопроводительное" -
-            // поэтому ориентируемся именно на видимую кнопку отправки, а не на textarea.
-            if (isVisible(query('letterSubmit'))) return 'SCENARIO_B';
-            // Сценарий А: резюме отправлено, предлагают прикрепить письмо (пост-отправка)
-            if (isVisible(query('attachCoverBtn'))) return 'SCENARIO_A';
-            // Сценарий В: прямой отклик - есть признак успешной отправки
-            if (isResponseConfirmed()) return 'SCENARIO_C';
-            return false;
-        }, timeout);
+        const outcome = await waitForCondition(() => detectResponseOutcomeOnce(runId), timeout);
         if (!isRunCurrent(runId)) return 'STOPPED';
         return outcome || 'TIMEOUT';
     }
@@ -2802,6 +3052,7 @@
             if (reloc) {
                 await actionPause();
                 if (!isRunCurrent(runId)) return 'STOPPED';
+                if (!guardOwnedCommit(runId)) return 'STOPPED';
                 safeClick(reloc);
             }
             await actionPause();
@@ -2851,9 +3102,9 @@
             if (form) {
                 submitButton = q('button[type="submit"], input[type="submit"]', form);
                 if (!submitButton) {
-                    if (!isRunCurrent(runId)) return false;
+                    if (!guardOwnedCommit(runId)) return false;
                     try { form.submit(); log(I18n.t('logs.formSubmitFallback')); return true; }
-                    catch (e) { console.warn('[applomat] form.submit fallback failed', e); }
+                    catch (e) { console.warn('[HH Apply Assistant] form.submit fallback failed', e); }
                 }
             }
         }
@@ -2912,26 +3163,47 @@
     // иначе та же карточка выбиралась бы из списка заново - бесконечно.
     function markAliasProcessed(vid) {
         const last = State.getLastAttemptID();
-        if (last && last !== vid) State.addProcessedID(last);
+        if (last && last !== vid) return State.addProcessedID(last);
+        return true;
+    }
+
+    function persistProcessedVacancy(vid, runId) {
+        if (runId && !guardOwnedCommit(runId)) return false;
+        if (!vid) return true;
+        if (State.addProcessedID(vid) && markAliasProcessed(vid)) return true;
+        haltForPersistenceFailure(vid, 'history');
+        return false;
+    }
+
+    function persistSentCount(vid, runId) {
+        if (runId && !guardOwnedCommit(runId)) return false;
+        if (State.incSentCount() !== null) return true;
+        haltForPersistenceFailure(vid, 'sentCount');
+        return false;
     }
 
     // Подготовка к переходу на страницу отклика/тестов: отдаём управление watchdog'у.
     // ВАЖНО: REDIRECT !== PROCESSED. Вакансия не помечается processed, пока исход
     // не подтверждён (успешная отправка или гарантированное сохранение в Manual Queue).
     function markRedirect(vid) {
-        if (vid && !State.getLastAttemptID()) State.setLastAttemptID(vid);
+        if (vid && !State.getLastAttemptID() && !State.setLastAttemptID(vid)) {
+            haltForPersistenceFailure(vid, 'lastAttempt');
+            return 'STOPPED';
+        }
         return 'REDIRECT';
     }
 
     // Возврат к списку вакансий после обработки одной вакансии.
     // Помечаем вакансию обработанной (чтобы не зациклиться) и уходим на сохранённый список.
     function returnToList(vid, { markProcessed = true, runId = currentRunId } = {}) {
-        if (runId && !isRunCurrent(runId)) return;
-        if (markProcessed && vid) {
-            State.addProcessedID(vid);
-            markAliasProcessed(vid);
+        if (runId && !guardOwnedCommit(runId)) return false;
+        if (markProcessed && vid && !persistProcessedVacancy(vid)) {
+            return false;
         }
-        State.clearLastAttemptID();
+        if (!State.clearLastAttemptID()) {
+            haltForPersistenceFailure(vid, 'lastAttempt');
+            return false;
+        }
         const returnUrl = State.getReturnUrl() || '/search/vacancy';
         if (returnUrl && returnUrl.includes('/search/vacancy')) {
             // Полная навигация на список - страница загрузится свежей, F5 не требуется.
@@ -2943,11 +3215,12 @@
             // Страховка: если возврат не сработал - форс-редирект на список.
             const timerRunId = runId || currentRunId;
             setTimeout(() => {
-                if (isRunCurrent(timerRunId) && !Page.isSearchList()) {
+                if (isRunCurrent(timerRunId) && !Page.isSearchList() && guardOwnedCommit(timerRunId)) {
                     window.location.href = '/search/vacancy';
                 }
             }, 1500);
         }
+        return true;
     }
 
     // Отправка отклика с полностраничной формы /applicant/vacancy_response (не тест).
@@ -2968,7 +3241,7 @@
                 if (!isRunCurrent(runId)) return;
                 log(I18n.t('logs.responsePageRejectSkip'), true);
                 Metrics.bump('page.reject.skipped');
-                savedForManual = saveCurrentForManual(vid, 'reject-warning');
+                savedForManual = saveCurrentForManual(vid, 'reject-warning', runId);
             } else {
                 log(I18n.t('logs.responsePageFilling', { reject: reject ? I18n.t('logs.responsePageRejectNote') : '' }));
                 captureResponseDom('response-page-form');
@@ -2977,7 +3250,7 @@
                 if (!submitted) {
                     Metrics.bump('page.response.fail');
                     captureResponseDom('response-page-no-submit');
-                    savedForManual = saveCurrentForManual(vid, reject ? 'reject-warning' : 'page-no-submit');
+                    savedForManual = saveCurrentForManual(vid, reject ? 'reject-warning' : 'page-no-submit', runId);
                     log(I18n.t('logs.responsePageSubmitFail'), true);
                 } else {
                     let redirectedToQuestions = false;
@@ -3013,24 +3286,24 @@
 
                     if (confirmed) {
                         Metrics.bump('page.response.ok' + (reject ? '.reject' : ''));
-                        State.incSentCount();
+                        if (!persistSentCount(vid, runId)) return;
                         log(I18n.t('logs.responsePageSent'));
                     } else if (redirectedToQuestions) {
                         Metrics.bump('scenario.questions.responsePage');
-                        savedForManual = saveCurrentForManual(vid, 'questions');
+                        savedForManual = saveCurrentForManual(vid, 'questions', runId);
                         log(I18n.t('logs.responsePageQuestions'), true);
                     } else {
                         Metrics.bump('page.response.fail');
                         captureResponseDom('response-page-no-confirm');
-                        savedForManual = saveCurrentForManual(vid, reject ? 'reject-warning' : 'page-no-confirm');
+                        savedForManual = saveCurrentForManual(vid, reject ? 'reject-warning' : 'page-no-confirm', runId);
                         log(I18n.t('logs.responsePageNoConfirm'), true);
                     }
                 }
             }
         } catch (e) {
             if (!isRunCurrent(runId)) return;
-            console.warn('[applomat] submitResponsePage error', e);
-            try { savedForManual = saveCurrentForManual(vid, 'page-error'); } catch (_) { /* ignore */ }
+            console.warn('[HH Apply Assistant] submitResponsePage error', e);
+            try { savedForManual = saveCurrentForManual(vid, 'page-error', runId); } catch (_) { /* ignore */ }
         } finally {
             if (runId === currentRunId) {
                 handlingResponsePage = false;
@@ -3039,11 +3312,11 @@
         }
         if (!isRunCurrent(runId)) return;
         if (confirmed || savedForManual) {
-            if (vid) {
-                State.addProcessedID(vid);
-                markAliasProcessed(vid);
+            if (!persistProcessedVacancy(vid, runId)) return;
+            if (!State.clearLastAttemptID()) {
+                haltForPersistenceFailure(vid, 'lastAttempt');
+                return;
             }
-            State.clearLastAttemptID();
             State.setF5Needed();
             // Возврат к списку (если submit ещё не увёл нас туда сам).
             if (!Page.isSearchList()) {
@@ -3083,7 +3356,11 @@
         log(I18n.t('logs.openingVacancy', { vid }));
         await actionPause();
         if (!isRunCurrent(runId)) return 'STOPPED';
-        State.setLastAttemptID(vid); // запомним, на какую вакансию кликаем
+        if (!State.setLastAttemptID(vid)) {
+            haltForPersistenceFailure(vid, 'lastAttempt');
+            return 'STOPPED';
+        }
+        if (!guardOwnedCommit(runId)) return 'STOPPED';
         window.location.href = href;
         return 'NAVIGATED';
     }
@@ -3143,7 +3420,7 @@
             log(I18n.t('logs.coverOff'));
         }
         if (!isRunCurrent(runId)) return 'STOPPED';
-        State.incSentCount();
+        if (!persistSentCount(vid, runId)) return 'STOPPED';
         log(I18n.t('logs.scenarioASent'));
         returnToList(vid, { markProcessed: true, runId });
         return 'OK';
@@ -3164,8 +3441,9 @@
         if (rejectSeen && !config.applyOnRejectWarning) {
             Metrics.bump('reject.skipped.modal');
             log(I18n.t('logs.scenarioBRejectSkip'));
-            const saved = saveCurrentForManual(vid, 'reject-warning');
+            const saved = saveCurrentForManual(vid, 'reject-warning', runId);
             if (!saved) {
+                if (!isRunCurrent(runId)) return 'STOPPED';
                 haltForPersistenceFailure(vid);
                 return 'STOPPED';
             }
@@ -3178,8 +3456,9 @@
         if (!submitted) {
             log(I18n.t('logs.scenarioBSubmitFail'), true);
             captureResponseDom('scenarioB-no-submit');
-            const saved = saveCurrentForManual(vid, rejectSeen ? 'reject-warning' : 'no-submit');
+            const saved = saveCurrentForManual(vid, rejectSeen ? 'reject-warning' : 'no-submit', runId);
             if (!saved) {
+                if (!isRunCurrent(runId)) return 'STOPPED';
                 haltForPersistenceFailure(vid);
                 return 'STOPPED';
             }
@@ -3192,7 +3471,7 @@
         if (conf === 'CONFIRMED' || conf === true) {
             if (rejectSeen) Metrics.bump('reject.sent.modal');
             if (!isRunCurrent(runId)) return 'STOPPED';
-            State.incSentCount();
+            if (!persistSentCount(vid, runId)) return 'STOPPED';
             log(I18n.t('logs.scenarioBSent', { reject: rejectSeen ? I18n.t('logs.scenarioBSentRejectNote') : '' }));
             returnToList(vid, { markProcessed: true, runId });
             return 'OK';
@@ -3209,7 +3488,7 @@
             if (forced === 'OK') {
                 if (!isRunCurrent(runId)) return 'STOPPED';
                 Metrics.bump('scenario.B.rejectForced.ok');
-                State.incSentCount();
+                if (!persistSentCount(vid, runId)) return 'STOPPED';
                 log(I18n.t('logs.scenarioBForcedSent'));
                 returnToList(vid, { markProcessed: true, runId });
                 return 'OK';
@@ -3227,8 +3506,9 @@
             log(I18n.t('logs.letterSentNoConfirm'), true);
         }
         // Не теряем такие вакансии - сохраняем для ручной обработки.
-        const saved = saveCurrentForManual(vid, reason || 'no-confirm');
+        const saved = saveCurrentForManual(vid, reason || 'no-confirm', runId);
         if (!saved) {
+            if (!isRunCurrent(runId)) return 'STOPPED';
             haltForPersistenceFailure(vid);
             return 'STOPPED';
         }
@@ -3245,7 +3525,7 @@
             if (!isRunCurrent(runId)) return 'STOPPED';
             Metrics.bump('scenario.timeout.confirmed');
             log(I18n.t('logs.responseConfirmed'));
-            State.incSentCount();
+            if (!persistSentCount(vid, runId)) return 'STOPPED';
             returnToList(vid, { markProcessed: true, runId });
             return 'OK';
         }
@@ -3276,7 +3556,7 @@
                 if (!isRunCurrent(runId)) return 'STOPPED';
                 Metrics.bump('scenario.timeout.confirmed');
                 log(I18n.t('logs.responseConfirmedExtra'));
-                State.incSentCount();
+                if (!persistSentCount(vid, runId)) return 'STOPPED';
                 returnToList(vid, { markProcessed: true, runId });
                 return 'OK';
             }
@@ -3301,8 +3581,9 @@
             captureResponseDom('timeout-button-disappeared');
             log(I18n.t('logs.btnDisappearedUnconfirmed'), true);
             const blockReason = detectModalBlockReason();
-            const saved = saveCurrentForManual(vid, blockReason || 'button-disappeared-unconfirmed');
+            const saved = saveCurrentForManual(vid, blockReason || 'button-disappeared-unconfirmed', runId);
             if (!saved) {
+                if (!isRunCurrent(runId)) return 'STOPPED';
                 haltForPersistenceFailure(vid);
                 return 'STOPPED';
             }
@@ -3327,7 +3608,7 @@
         if (retryOutcome === 'SCENARIO_C') {
             if (!isRunCurrent(runId)) return 'STOPPED';
             Metrics.bump('scenario.retryClick.ok');
-            State.incSentCount();
+            if (!persistSentCount(vid, runId)) return 'STOPPED';
             log(I18n.t('logs.retryClickSent'));
             returnToList(vid, { markProcessed: true, runId });
             return 'OK';
@@ -3337,8 +3618,9 @@
         Metrics.bump('scenario.timeout.unresolved');
         captureResponseDom('timeout-unresolved');
         log(I18n.t('logs.timeoutUnresolved'), true);
-        const saved = saveCurrentForManual(vid, 'timeout');
+        const saved = saveCurrentForManual(vid, 'timeout', runId);
         if (!saved) {
+            if (!isRunCurrent(runId)) return 'STOPPED';
             haltForPersistenceFailure(vid);
             return 'STOPPED';
         }
@@ -3382,7 +3664,10 @@
         }
 
         // Пометим, что сейчас пытаемся откликнуться на эту вакансию (если не было ID карточки).
-        if (!State.getLastAttemptID()) State.setLastAttemptID(vid);
+        if (!State.getLastAttemptID() && !State.setLastAttemptID(vid)) {
+            haltForPersistenceFailure(vid, 'lastAttempt');
+            return 'STOPPED';
+        }
 
         window.scrollTo({ top: 0, behavior: 'auto' });
         await actionPause();
@@ -3421,7 +3706,7 @@
             case 'SCENARIO_C':
                 if (!isRunCurrent(runId)) return 'STOPPED';
                 log(I18n.t('logs.scenarioC'));
-                State.incSentCount();
+                if (!persistSentCount(vid, runId)) return 'STOPPED';
                 returnToList(vid, { markProcessed: true, runId });
                 return 'OK';
             default:
@@ -3430,7 +3715,7 @@
     }
 
     // Обработка вакансии: работает и на странице вакансии, и для кнопки на листинге
-    async function processVacancyLegacy(btn, runId = currentRunId) {
+    async function processVacancyCode(btn, runId = currentRunId) {
         if (!isRunCurrent(runId)) return 'STOPPED';
 
         if (Page.isVacancy()) return handleVacancyPage(btn, runId);
@@ -3449,7 +3734,7 @@
     }
 
     async function processVacancy(btn, runId = currentRunId) {
-        return ExecutionResult.fromLegacy(await processVacancyLegacy(btn, runId));
+        return ExecutionResult.fromTerminalCode(await processVacancyCode(btn, runId));
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -3627,7 +3912,7 @@
                     setStatus('running', 'status.waitingToReturn');
                     return;
                 } else {
-                    // SKIPPED / legacy terminal codes: сохраняем прежнее логирование и продолжаем.
+                    // SKIPPED / неизвестные terminal codes: сохраняем прежнее логирование и продолжаем.
                     if (result.status === EXECUTION_STATUS.SKIPPED) {
                         if (result.code === 'ERROR_NO_LINK' || result.code === 'ERROR_NO_HREF' || result.code === 'ERROR_UNKNOWN') {
                             Stats.bump('skipped');
@@ -3645,7 +3930,7 @@
                 finalizeRun(runId, 'done', I18n.t('logs.runCompleted', { count: State.getSentCount() }));
             }
         } catch (e) {
-            console.warn('[applomat] startLoop error', e);
+            console.warn('[HH Apply Assistant] startLoop error', e);
             finalizeRun(runId, 'error', I18n.t('logs.mainLoopError', { err: (e && e.message ? e.message : e) }));
         }
     }
@@ -3725,11 +4010,21 @@
         log(I18n.t('logs.instanceLockLost'), true);
     }
 
-    // Остановка из-за сбоя сохранения в список для ручного отклика (Manual Queue).
-    // Вакансию нельзя терять: останавливаем прогон, НЕ помечаем processed и сохраняем контекст.
-    function haltForPersistenceFailure(vid) {
+    function handleSettingsPersistenceFailure() {
+        if (State.amIRunning()) {
+            haltForPersistenceFailure('config', 'settings');
+            return;
+        }
+        Metrics.bump('storage.settings.failed');
+        setStatus('error');
+        log('[CRITICAL_STORAGE_WRITE_FAILED] settings: config', true);
+    }
+
+    // Остановка из-за сбоя критической записи. Для Manual Queue сохраняем прежний статус/текст;
+    // для внутренних terminal-state ключей используем нейтральный error status и диагностический marker.
+    function haltForPersistenceFailure(vid, storageArea = 'manual') {
         currentRunId++;
-        Metrics.bump('storage.manual.failed');
+        Metrics.bump(`storage.${storageArea}.failed`);
         stopSignal = true;
         if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
         handlingResponsePage = false;
@@ -3741,8 +4036,13 @@
         isLoopActive = false;
         State.setRunning(false);
         State.releaseInstanceLock(TAB_ID);
-        setStatus('error', 'status.storageFailed');
-        log(I18n.t('logs.persistenceFailure', { vid: vid || '' }), true);
+        if (storageArea === 'manual') {
+            setStatus('error', 'status.storageFailed');
+            log(I18n.t('logs.persistenceFailure', { vid: vid || '' }), true);
+        } else {
+            setStatus('error');
+            log(`[CRITICAL_STORAGE_WRITE_FAILED] ${storageArea}: ${vid || 'n/a'}`, true);
+        }
     }
 
     // Watchdog: следит за URL. Если попали на страницу отклика/теста - обрабатываем её;
@@ -3752,7 +4052,7 @@
             try {
                 watchdogTick();
             } catch (e) {
-                console.warn('[applomat] watchdog error', e);
+                console.warn('[HH Apply Assistant] watchdog error', e);
             }
         }, 1000);
     }
@@ -3762,6 +4062,10 @@
         if (document.body && !document.getElementById('ar-main-panel')) PanelController.mount();
 
         if (!State.amIRunning()) return;
+
+        // acquire уже выполняет собственный read-back; до его завершения ownership ещё
+        // не существует и watchdog не должен ошибочно классифицировать 60ms race window.
+        if (pendingInstanceLeaseId) return;
 
         // Обновляем timestamp instance lock и проверяем, что ownership всё ещё наш
         const lockStatus = State.touchInstanceLock(TAB_ID);
@@ -3778,7 +4082,12 @@
         if (Page.isResponseForm()) {
             if (handlingResponsePage) return; // уже обрабатываем эту страницу
             if (State.hasTrapLock()) return;
+            if (currentRunId === 0) currentRunId = 1;
             const trapToken = State.setTrapLock();
+            if (!trapToken) {
+                haltForPersistenceFailure(State.getLastAttemptID(), 'trapLock');
+                return;
+            }
 
             // Определяем ID вакансии (для пометки обработанной и сохранения).
             let vid = null;
@@ -3800,7 +4109,6 @@
                 handlingResponsePage = true;
                 Metrics.bump('page.response.detected');
                 log(I18n.t('logs.onResponsePage'));
-                if (currentRunId === 0) currentRunId = 1;
                 submitResponsePage(vid, backUrl, currentRunId, trapToken); // async: сам заполнит/отправит и вернёт к списку
                 return;
             }
@@ -3823,28 +4131,29 @@
                 if (res === 'ADDED') {
                     Stats.bump('manual');
                     log(I18n.t('logs.manualSaved', { note: '', vid: entry.vid }));
-                    try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
+                    try { window._hhApplyAssistantRenderManualQueue?.(); } catch (e) { /* ignore */ }
                     saved = true;
                 } else if (res === 'EXISTS' || res === 'UPDATED') {
-                    Stats.bump('manual');
                     log(I18n.t('logs.manualAlready', { note: '', vid: entry.vid }));
-                    try { window._hh_ar_renderManualList?.(); } catch (e) { /* ignore */ }
+                    try { window._hhApplyAssistantRenderManualQueue?.(); } catch (e) { /* ignore */ }
                     saved = true;
                 } else {
                     log(I18n.t('logs.manualSaveFailed', { note: '', vid: entry.vid }), true);
                     saved = false;
                 }
             } catch (e) {
-                console.warn('[applomat] save manual entry error', e);
+                console.warn('[HH Apply Assistant] save manual entry error', e);
                 log(I18n.t('logs.manualSaveFailed', { note: '', vid }), true);
                 saved = false;
             }
 
             if (saved) {
                 if (vid) {
-                    State.addProcessedID(vid);
-                    markAliasProcessed(vid);
-                    State.clearLastAttemptID();
+                    if (!persistProcessedVacancy(vid, currentRunId)) return;
+                    if (!State.clearLastAttemptID()) {
+                        haltForPersistenceFailure(vid, 'lastAttempt');
+                        return;
+                    }
                 } else {
                     log(I18n.t('logs.noVidOnQuestions'), true);
                 }
@@ -3857,7 +4166,7 @@
                 // Если через 1.2 сек всё ещё на странице с тестом - форсим переход на список
                 const timerRunId = currentRunId;
                 setTimeout(() => {
-                    if (isRunCurrent(timerRunId) && Page.isResponseForm()) {
+                    if (isRunCurrent(timerRunId) && Page.isResponseForm() && guardOwnedCommit(timerRunId)) {
                         log(I18n.t('logs.twoStepBackFailed'), true);
                         window.location.href = backUrl;
                     }
@@ -3891,371 +4200,75 @@
         const style = document.createElement('style');
         style.id = 'ar-styles';
         style.textContent = `
-        #ar-main-panel, #ar-main-panel *, #ar-toggle-btn, #ar-toggle-btn *{ box-sizing:border-box; }
-        #ar-main-panel, #ar-toggle-btn{
-            /* Палитра applomat: фирменный красный, синий основной CTA, зелёный статус успеха */
-            --ap-brand:#d6001c; --ap-brand-hover:#b80018; --ap-brand-soft:#ffebee;
-            --hh-red:#d6001c; --hh-red-hover:#b80018; --hh-red-soft:#ffebee;
-            --hh-green:#059669; --hh-green-hover:#047857; --hh-green-soft:#ecfdf5;
-            --hh-blue:#0070e5; --hh-blue-hover:#005cbd; --hh-blue-soft:#e9f2fd;
-            --hh-amber:#d97706; --hh-amber-soft:#fffbeb;
-            --ink:#1e293b; --ink-2:#475569; --ink-3:#94a3b8;
-            --line:#e2e8f0; --line-2:#f1f5f9;
-            --card:#ffffff; --bg:#f8fafc; --bg-2:#f1f5f9;
-            --r-lg:12px; --r-md:8px; --r-sm:6px;
-            --font:'HH Sans','Inter',-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
-            font-family:var(--font); letter-spacing:normal; text-transform:none;
-        }
-
-        /* Панель раздвигает контент hh.ru, а не перекрывает его */
-        html.hh-ar-open{ margin-right:410px !important; }
-        html.hh-ar-anim{ transition:margin-right .2s ease; }
-
-        /* Свёрнутое состояние - вертикальная вкладка applomat */
-        #ar-toggle-btn{
-            position:fixed; top:50%; right:0; transform:translateY(-50%);
-            width:34px; height:104px; border:none; padding:10px 0;
-            background:var(--ap-brand);
-            color:#fff; border-radius:8px 0 0 8px;
-            display:flex; flex-direction:column; align-items:center; justify-content:center;
-            cursor:pointer; z-index:2147483000; box-shadow:0 1px 3px rgba(0,0,0,.18);
-            user-select:none; transition:background .15s ease;
-        }
-        #ar-toggle-btn:hover{ background:var(--ap-brand-hover); }
-        #ar-toggle-btn:focus-visible{ outline:2px solid #fff; outline-offset:-2px; }
-        #ar-toggle-btn .ar-tab-dot{
-            width:6px; height:6px; border-radius:50%;
-            background:rgba(255,255,255,.55); flex:none; margin-bottom:8px;
-            transition:background .2s ease;
-        }
-        #ar-toggle-btn.is-running .ar-tab-dot,
-        #ar-toggle-btn[data-status="running"] .ar-tab-dot{ background:#34d399; }
-        #ar-toggle-btn[data-status="error"] .ar-tab-dot{ background:#fbbf24; }
-        #ar-toggle-btn[data-status="stopped"] .ar-tab-dot{ background:#f87171; }
-        #ar-toggle-btn[data-status="done"] .ar-tab-dot{ background:#60a5fa; }
-        #ar-toggle-btn .ar-tab-text{
-            font-size:11.5px; font-weight:650; letter-spacing:.04em;
-            color:#ffffff; text-transform:lowercase; line-height:1;
-            writing-mode:vertical-rl; transform:rotate(180deg);
-        }
-
-        /* Каркас панели - боковая колонка во всю высоту */
-        #ar-main-panel{
-            position:fixed; top:0; right:0; bottom:0; height:100vh;
-            width:410px; max-width:100vw;
-            background:var(--bg); color:var(--ink);
-            border-left:1px solid var(--line); z-index:2147483000;
-            box-shadow:-4px 0 20px rgba(15,23,42,.06);
-            font-family:var(--font); font-size:13px; line-height:1.4;
-            display:flex; flex-direction:column; overflow:hidden; text-align:left;
-        }
-        #ar-main-panel a{ color:var(--hh-blue); text-decoration:none; }
-        #ar-main-panel a:hover{ text-decoration:underline; }
-
-        /* Views switching inside sidebar */
-        .ar-view{
-            display:flex; flex-direction:column; width:100%; height:100%; min-height:0; overflow:hidden;
-        }
-        .ar-diag-nav{ display:flex; align-items:center; gap:8px; min-width:0; }
-        .ar-diag-view-title{ font-weight:600; font-size:13.5px; color:var(--ink); }
-        .ar-btn-back{ padding:0 8px; font-weight:600; }
-        .ar-diag-body{
-            flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:8px; padding:10px; background:var(--bg);
-        }
-        .ar-diag-stat-row{ display:flex; align-items:center; padding:0 2px; }
-        .ar-diag-stat{ font-size:11.5px; color:var(--ink-2); font-weight:600; font-variant-numeric:tabular-nums; }
-        .ar-diag-toolbar{
-            display:flex; align-items:center; justify-content:space-between; gap:8px; padding:0;
-        }
-        .ar-diag-full-box{
-            flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
-            background:#0f172a; color:#94a3b8; border-radius:var(--r-md);
-            font-family:'SFMono-Regular',ui-monospace,Menlo,Consolas,monospace; font-size:10.5px;
-            padding:10px 12px; line-height:1.5; border:1px solid #1e293b;
-            display:flex; flex-direction:column; gap:2px;
-        }
-        .ar-diag-full-box::-webkit-scrollbar{ width:6px; }
-        .ar-diag-full-box::-webkit-scrollbar-thumb{ background:#334155; border-radius:6px; }
-        .ar-diag-footer{ display:flex; align-items:center; justify-content:flex-start; padding:0; }
-        .ar-diag-footer .ar-dropdown-menu{ top:auto; bottom:calc(100% + 4px); right:auto; left:0; }
-
-        /* Шапка: чистый lowercase текст, оптическое выравнивание */
-        .ar-header{
-            flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:8px;
-            padding:10px 14px; border-bottom:1px solid var(--line); background:var(--card);
-        }
-        .ar-brand{ display:flex; align-items:baseline; gap:6px; min-width:0; }
-        .ar-title{
-            font-weight:600; font-size:13.5px; color:var(--ink);
-            letter-spacing:-.01em; text-transform:lowercase; white-space:nowrap;
-        }
-        .ar-sub{ font-size:11px; font-weight:500; color:var(--ink-3); }
-        .ar-header-right{ display:flex; align-items:center; gap:6px; flex:0 1 auto; min-width:0; }
-        .ar-lang-switcher{
-            display:inline-flex; align-items:center; gap:2px;
-            background:var(--bg-2); border:1px solid var(--line);
-            border-radius:var(--r-sm); padding:1px 2px; flex:none;
-        }
-        .ar-lang-btn{
-            border:none; background:transparent; font-family:inherit;
-            font-size:10px; font-weight:700; color:var(--ink-3);
-            padding:2px 4px; border-radius:4px; cursor:pointer; line-height:1;
-            transition:background .12s, color .12s;
-        }
-        .ar-lang-btn:hover{ color:var(--ink); }
-        .ar-lang-btn.is-active{
-            background:var(--card); color:var(--ink);
-            box-shadow:0 1px 2px rgba(15,23,42,.08);
-        }
-        .ar-lang-btn:focus-visible{ outline:2px solid var(--hh-blue); outline-offset:1px; }
-        .ar-lang-sep{ color:var(--line); font-size:9px; user-select:none; }
-
-        /* Статус-пилюля */
-        .ar-status{
-            display:inline-flex; align-items:center; gap:5px; min-width:0; max-width:160px;
-            padding:2.5px 8px; font-size:10.5px; font-weight:600; border-radius:999px;
-            white-space:nowrap; overflow:hidden; background:var(--bg-2); color:var(--ink-2);
-            border:1px solid var(--line);
-        }
-        #ar-status-text{ overflow:hidden; text-overflow:ellipsis; }
-        .ar-status::before{ content:''; width:6px; height:6px; border-radius:50%; background:currentColor; flex:none; }
-        .ar-status--idle{ background:var(--bg-2); color:var(--ink-2); border-color:var(--line); }
-        .ar-status--running{ background:var(--hh-green-soft); color:var(--hh-green); border-color:#a7f3d0; }
-        .ar-status--running::before{ animation:ar-pulse 1.2s ease-in-out infinite; }
-        .ar-status--stopped{ background:var(--hh-red-soft); color:#c01126; border-color:#fecaca; }
-        .ar-status--error{ background:var(--hh-amber-soft); color:var(--hh-amber); border-color:#fde68a; }
-        .ar-status--done{ background:var(--hh-blue-soft); color:var(--hh-blue); border-color:#bfdbfe; }
-        @keyframes ar-pulse{ 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.4; transform:scale(1.25); } }
-
-        .ar-icon-btn{
-            border:none; background:transparent; cursor:pointer; width:26px; height:26px;
-            color:var(--ink-3); display:flex; align-items:center; justify-content:center;
-            border-radius:var(--r-sm); transition:background .15s, color .15s;
-        }
-        .ar-icon-btn:hover{ background:var(--bg-2); color:var(--ink); }
-
-        /* Прокручиваемое тело */
-        .ar-scroll{
-            flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
-            padding:10px; display:flex; flex-direction:column; gap:9px;
-        }
-        .ar-scroll::-webkit-scrollbar{ width:6px; }
-        .ar-scroll::-webkit-scrollbar-thumb{ background:#cbd5e1; border-radius:6px; }
-
-        /* Карточки */
-        .ar-card{
-            background:var(--card); border-radius:var(--r-lg); padding:12px 14px;
-            border:1px solid var(--line); box-shadow:0 1px 2px rgba(15,23,42,.04);
-            display:flex; flex-direction:column; gap:9px; position:relative; overflow:hidden;
-            flex-shrink:0;
-        }
-        .ar-card-title{ font-size:12px; font-weight:700; color:var(--ink); text-transform:uppercase; letter-spacing:.03em; }
-
-        /* ─── Work Mode Card & Slider ─── */
-        #ar-mode-card {
-            --ar-work-track-h: 36px;
-            --ar-work-track-radius: 11px;
-            --ar-work-track-pad: 3px;
-            --ar-work-thumb-w: 44px;
-            --ar-work-thumb-h: 30px;
-            --ar-work-thumb-radius: 10px;
-            --ar-work-thumb-duration: 255ms;
-            --ar-work-turbo-reveal-duration: 380ms;
-            --ar-work-turbo-exit-duration: 220ms;
-            --ar-work-shock-cycle-duration: 5s;
-            --ar-work-turbo-grid-duration: 60s;
-            --ar-work-grid-shift: -320px;
-            --ar-work-move-ease: cubic-bezier(.22, .8, .3, 1);
-            --ar-work-reveal-ease: cubic-bezier(.18, .82, .22, 1);
-            --thumb-source-x: 0px;
-            --thumb-center-x: 50%;
-
-            /* Static Turbo matrix geometry. Shockwave runs per-cell. */
-            --ar-work-grid-cell: 5px;
-            --ar-work-grid-col-gap: 2px;
-            --ar-work-grid-row-gap: 2px;
-        }
-
-        .ar-work-mode-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-        }
-
-        .ar-work-mode-title {
-            display: flex;
-            align-items: baseline;
-            gap: 8px;
-            min-width: 0;
-            margin: 0;
-            font-size: 13.5px;
-            line-height: 1.2;
-            white-space: nowrap;
-        }
-
-        .ar-work-mode-title__label {
-            font-size: 12px;
-            font-weight: 700;
-            color: var(--ink);
-            text-transform: uppercase;
-            letter-spacing: .03em;
-        }
-
-        .ar-work-mode-title__state {
-            font-size: 13px;
-            font-weight: 700;
-            color: var(--ink);
-            transition: color 170ms ease;
-        }
-
-        .ar-work-mode-card[data-mode="turbo"] .ar-work-mode-title__state {
-            color: #ff232d;
-        }
-
-        .ar-work-mode-help {
-            position: relative;
-            flex: 0 0 auto;
-            width: 20px;
-            height: 20px;
-            display: grid;
-            place-items: center;
-            padding: 0;
-            border: 1.5px solid #c2c3c6;
-            border-radius: 999px;
-            background: transparent;
-            color: #8e8f93;
-            cursor: pointer;
-            font-size: 11.5px;
-            font-weight: 700;
-            line-height: 1;
-            transition: border-color 150ms ease, color 150ms ease, background-color 150ms ease;
-        }
-
-        .ar-work-mode-help:hover {
-            color: var(--ink);
-            border-color: #94a3b8;
-            background: rgba(0, 0, 0, 0.04);
-        }
-
-        .ar-work-mode-help:focus-visible {
-            outline: 2px solid var(--hh-blue);
-            outline-offset: 2px;
-        }
-
-        .ar-work-mode-labels {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-top: 1px;
-            margin-bottom: -3px;
-            color: var(--ink-3);
-            font-size: 11px;
-            font-weight: 600;
-            line-height: 1;
-            letter-spacing: -0.01em;
-            user-select: none;
-        }
-
-        .ar-work-mode-slider {
-            position: relative;
-            height: var(--ar-work-track-h);
-            border-radius: var(--ar-work-track-radius);
-            overflow: hidden;
-            touch-action: none;
-            user-select: none;
-            cursor: pointer;
-            isolation: isolate;
-            perspective: 800px;
-            perspective-origin: var(--thumb-center-x, 50%) 50%;
-            transform-style: preserve-3d;
-            background: linear-gradient(90deg, #e7e9ed 0%, #e9ebee 55%, #eceef0 100%);
-            box-shadow:
-                inset 0 1px 0 rgba(255,255,255,.68),
-                inset 0 0 0 1px rgba(27,35,48,.025);
-        }
-
-        .ar-work-mode-slider::before {
-            content: "";
-            position: absolute;
-            inset: 0;
-            z-index: 0;
-            border-radius: inherit;
-            pointer-events: none;
-            background: linear-gradient(90deg, rgba(255,255,255,.12), rgba(255,255,255,.025) 62%, transparent 100%);
-        }
-
-        .ar-work-mode-turbo-surface {
-            position: absolute;
-            inset: 0;
-            z-index: 1;
-            border-radius: inherit;
-            pointer-events: none;
-            opacity: 0;
-            background: linear-gradient(
-                90deg,
-                rgba(255, 83, 91, .12) 0%,
-                rgba(255, 75, 83, .23) 27%,
-                rgba(255, 65, 74, .43) 55%,
-                rgba(255, 52, 62, .69) 79%,
-                rgba(255, 42, 52, .89) 100%
-            );
-            transition: opacity var(--ar-work-turbo-exit-duration) ease;
-            will-change: opacity;
-        }
-
-        .ar-work-mode-slider.is-turbo .ar-work-mode-turbo-surface {
-            opacity: 1;
-            transition: opacity var(--ar-work-turbo-reveal-duration) cubic-bezier(.22, .72, .22, 1);
-        }
-
-        .ar-work-mode-grid-mask {
-            position: absolute;
-            inset: 0;
-            z-index: 2;
-            overflow: hidden;
-            border-radius: inherit;
-            pointer-events: none;
-            opacity: 0;
-            visibility: hidden;
-            color: #fff;
-            filter: blur(0);
-            will-change: opacity, filter;
-            -webkit-mask-image: linear-gradient(
+        #ar-main-panel, #ar-main-panel *, #ar-toggle-btn, #ar-toggle-btn *{box-sizing:border-box;}
+        #ar-main-panel, #ar-toggle-btn{--ar-ui-radius:11px;--font:"HH Sans","Inter",-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-family:var(--font);letter-spacing:normal;text-transform:none;}
+        html.hha-open{margin-right:410px!important;}
+        html.hha-anim{transition:margin-right .2s ease;}
+        #ar-toggle-btn{position:fixed;top:50%;right:0;transform:translateY(-50%);border:none;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;z-index:2147483000;user-select:none;}
+        #ar-toggle-btn:focus-visible{outline:2px solid #fff;outline-offset:-2px;}
+        #ar-toggle-btn .ar-tab-text{color:#ffffff;text-transform:none;line-height:1;writing-mode:vertical-rl;transform:rotate(180deg);}
+        #ar-main-panel{position:fixed;top:0;right:0;bottom:0;height:100vh;width:410px;max-width:100vw;z-index:2147483000;font-family:var(--font);line-height:1.4;border-radius:11px;display:flex;flex-direction:column;overflow:hidden;text-align:left;}
+        #ar-main-panel a{text-decoration:none;}
+        #ar-main-panel a:hover{text-decoration:underline;}
+        .ar-view{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden;}
+        .ar-diag-nav{display:flex;align-items:center;}
+        .ar-btn-back{font-weight:600;}
+        .ar-diag-body{display:flex;flex-direction:column;}
+        .ar-diag-stat-row{display:flex;align-items:center;padding:0 2px;}
+        .ar-diag-stat{font-variant-numeric:tabular-nums;}
+        .ar-diag-toolbar{padding:0;}
+        .ar-diag-full-box{display:flex;flex-direction:column;gap:2px;}
+        .ar-diag-footer{display:flex;align-items:center;justify-content:flex-start;padding:0;}
+        .ar-diag-footer .ar-dropdown-menu{top:auto;bottom:calc(100% + 4px);right:auto;left:0;}
+        .ar-header{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:8px;border-radius:11px;}
+        .ar-brand{display:flex;align-items:baseline;min-width:0;}
+        .ar-title{text-transform:none;white-space:nowrap;}
+        .ar-header-right{display:flex;align-items:center;flex:0 1 auto;min-width:0;}
+        .ar-lang-switcher{display:inline-flex;align-items:center;flex:none;}
+        .ar-lang-btn{font-family:inherit;cursor:pointer;line-height:1;}
+        .ar-lang-btn:focus-visible{outline-offset:1px;}
+        .ar-lang-sep{color:var(--line);font-size:9px;user-select:none;}
+        .ar-status{display:inline-flex;align-items:center;min-width:0;max-width:160px;white-space:nowrap;overflow:hidden;}
+        #ar-status-text{overflow:hidden;text-overflow:ellipsis;}
+        @keyframes ar-pulse{0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.4; transform:scale(1.25); }}
+        .ar-header-action{background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:inherit;}
+        .ar-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;}
+        .ar-scroll::-webkit-scrollbar{width:6px;}
+        .ar-card{display:flex;flex-direction:column;position:relative;overflow:hidden;flex-shrink:0;}
+        .ar-card-title{text-transform:uppercase;}
+        #ar-mode-card{--ar-work-track-h:36px;--ar-work-track-pad:3px;--ar-work-thumb-w:44px;--ar-work-thumb-h:30px;--ar-work-thumb-duration:255ms;--ar-work-turbo-reveal-duration:380ms;--ar-work-turbo-exit-duration:220ms;--ar-work-shock-cycle-duration:5s;--ar-work-turbo-grid-duration:60s;--ar-work-grid-shift:-320px;--ar-work-move-ease:cubic-bezier(.22, .8, .3, 1);--ar-work-reveal-ease:cubic-bezier(.18, .82, .22, 1);--thumb-source-x:0px;--thumb-center-x:50%;--ar-work-grid-cell:5px;--ar-work-grid-col-gap:2px;--ar-work-grid-row-gap:2px;}
+        .ar-work-mode-header{display:flex;justify-content:space-between;}
+        .ar-work-mode-title{display:flex;min-width:0;margin:0;font-size:13.5px;line-height:1.2;white-space:nowrap;}
+        .ar-work-mode-title__label{text-transform:uppercase;}
+        .ar-work-mode-help{position:relative;flex:0 0 auto;display:grid;place-items:center;cursor:pointer;}
+        .ar-work-mode-help:hover{color:var(--ink);border-color:#94a3b8;background:rgba(0, 0, 0, 0.04);}
+        .ar-work-mode-help:focus-visible{outline-offset:2px;}
+        .ar-work-mode-labels{display:flex;align-items:center;justify-content:space-between;margin-top:1px;margin-bottom:-3px;line-height:1;user-select:none;}
+        .ar-work-mode-slider{position:relative;height:var(--ar-work-track-h);border-radius:11px;overflow:hidden;touch-action:none;user-select:none;cursor:pointer;isolation:isolate;perspective:800px;perspective-origin:var(--thumb-center-x, 50%) 50%;transform-style:preserve-3d;}
+        .ar-work-mode-slider::before{content:"";position:absolute;inset:0;z-index:0;border-radius:11px;pointer-events:none;background:linear-gradient(90deg, rgba(255,255,255,.12), rgba(255,255,255,.025) 62%, transparent 100%);}
+        .ar-work-mode-turbo-surface{position:absolute;inset:0;z-index:1;border-radius:11px;pointer-events:none;opacity:0;will-change:opacity;}
+        .ar-work-mode-slider.is-turbo .ar-work-mode-turbo-surface{opacity:1;}
+        .ar-work-mode-grid-mask{position:absolute;inset:0;z-index:2;overflow:hidden;border-radius:11px;pointer-events:none;opacity:0;visibility:hidden;filter:blur(0);will-change:opacity, filter;-webkit-mask-image:linear-gradient(
                 to right,
                 #000 0,
                 #000 calc(var(--thumb-source-x, 0px) - 24px),
                 transparent var(--thumb-source-x, 0px),
                 transparent 100%
-            );
-            mask-image: linear-gradient(
+            );mask-image:linear-gradient(
                 to right,
                 #000 0,
                 #000 calc(var(--thumb-source-x, 0px) - 24px),
                 transparent var(--thumb-source-x, 0px),
                 transparent 100%
-            );
-            transition:
-                opacity var(--ar-work-turbo-exit-duration) ease,
+            );transition:opacity var(--ar-work-turbo-exit-duration) ease,
                 filter var(--ar-work-turbo-exit-duration) ease,
-                visibility 0s linear var(--ar-work-turbo-exit-duration);
-        }
-
-        .ar-work-mode-slider.is-turbo .ar-work-mode-grid-mask {
-            opacity: .62;
-            visibility: visible;
-            animation:
-                ar-turbo-grid-fade-in calc(var(--ar-work-turbo-reveal-duration) + 80ms)
+                visibility 0s linear var(--ar-work-turbo-exit-duration);}
+        .ar-work-mode-slider.is-turbo .ar-work-mode-grid-mask{visibility:visible;animation:ar-turbo-grid-fade-in calc(var(--ar-work-turbo-reveal-duration) + 80ms)
                 cubic-bezier(.22, .72, .22, 1)
-                1 both;
-            transition:
-                opacity var(--ar-work-turbo-reveal-duration) ease,
+                1 both;transition:opacity var(--ar-work-turbo-reveal-duration) ease,
                 filter var(--ar-work-turbo-reveal-duration) ease,
-                visibility 0s linear 0s;
-        }
-
-        @keyframes ar-turbo-grid-fade-in {
-            0% {
+                visibility 0s linear 0s;}
+        @keyframes ar-turbo-grid-fade-in{0% {
                 opacity: 0;
                 filter: blur(1.2px);
             }
@@ -4266,520 +4279,518 @@
             100% {
                 opacity: .62;
                 filter: blur(0);
-            }
-        }
-
-        .ar-work-mode-grid-strip {
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            left: 0;
-            display: grid;
-            grid-template-rows: repeat(5, var(--ar-work-grid-cell));
-            grid-auto-flow: column;
-            grid-auto-columns: var(--ar-work-grid-cell);
-            align-content: center;
-            column-gap: var(--ar-work-grid-col-gap);
-            row-gap: var(--ar-work-grid-row-gap);
-            width: max-content;
-            transform: translate3d(0,0,0);
-            will-change: transform;
-        }
-
-        .ar-work-mode-slider.is-turbo .ar-work-mode-grid-strip {
-            animation: ar-turbo-grid-drift var(--ar-work-turbo-grid-duration) linear infinite;
-        }
-
-        @keyframes ar-turbo-grid-drift {
-            from { transform: translate3d(0, 0, 0); }
-            to   { transform: translate3d(var(--ar-work-grid-shift), 0, 0); }
-        }
-
-        .ar-work-mode-grid-cell {
-            --wave-boost: 0;
-            --wave-x: 0px;
-            --wave-y: 0px;
-            --wave-scale: 1;
-
-            width: var(--ar-work-grid-cell);
-            height: var(--ar-work-grid-cell);
-            border-radius: 1px;
-            background: currentColor;
-            opacity: calc(var(--cell-alpha, .15) + var(--wave-boost));
-            transform:
-                translate3d(
+            }}
+        .ar-work-mode-grid-strip{position:absolute;top:0;bottom:0;left:0;display:grid;grid-template-rows:repeat(5, var(--ar-work-grid-cell));grid-auto-flow:column;grid-auto-columns:var(--ar-work-grid-cell);align-content:center;column-gap:var(--ar-work-grid-col-gap);row-gap:var(--ar-work-grid-row-gap);width:max-content;transform:translate3d(0,0,0);will-change:transform;}
+        .ar-work-mode-slider.is-turbo .ar-work-mode-grid-strip{animation:ar-turbo-grid-drift var(--ar-work-turbo-grid-duration) linear infinite;}
+        @keyframes ar-turbo-grid-drift{from { transform: translate3d(0, 0, 0); }
+            to { transform: translate3d(var(--ar-work-grid-shift), 0, 0); }}
+        .ar-work-mode-grid-cell{--wave-boost:0;--wave-x:0px;--wave-y:0px;--wave-scale:1;width:var(--ar-work-grid-cell);height:var(--ar-work-grid-cell);clip-path:inset(0 round 1px);background:currentColor;opacity:calc(var(--cell-alpha, .15) + var(--wave-boost));transform:translate3d(
                     var(--wave-x),
                     var(--wave-y),
                     0
                 )
-                scale(var(--wave-scale));
-            transform-origin: center;
-            will-change: transform, opacity;
+                scale(var(--wave-scale));transform-origin:center;will-change:transform, opacity;}
+        .ar-work-mode-grid-cell.l0{--cell-alpha:0;}
+        .ar-work-mode-grid-cell.l1{--cell-alpha:.10;}
+        .ar-work-mode-grid-cell.l2{--cell-alpha:.20;}
+        .ar-work-mode-grid-cell.l3{--cell-alpha:.35;}
+        .ar-work-mode-grid-cell.l4{--cell-alpha:.55;}
+        .ar-work-mode-grid-cell.l5{--cell-alpha:.75;}
+        .ar-work-mode-snap-markers{position:absolute;z-index:3;top:50%;left:calc(var(--ar-work-track-pad) + var(--ar-work-thumb-w) / 2);right:calc(var(--ar-work-track-pad) + var(--ar-work-thumb-w) / 2);display:flex;align-items:center;justify-content:space-between;transform:translateY(-50%);pointer-events:none;}
+        .ar-work-mode-snap-marker{width:3px;height:3px;flex:0 0 3px;clip-path:inset(0 round 1px);transition:opacity 100ms ease;}
+        .ar-work-mode-slider:hover:not(.is-turbo) .ar-work-mode-snap-marker, .ar-work-mode-slider:focus-visible:not(.is-turbo) .ar-work-mode-snap-marker{opacity:.23;}
+        .ar-work-mode-slider.is-turbo .ar-work-mode-snap-marker{opacity:0;}
+        .ar-work-mode-thumb{position:absolute;z-index:5;top:var(--ar-work-track-pad);left:var(--ar-work-track-pad);width:var(--ar-work-thumb-w);height:var(--ar-work-thumb-h);transform:translate3d(0, 0, 0);transform-style:preserve-3d;transition:transform var(--ar-work-thumb-duration) var(--ar-work-move-ease);will-change:transform;pointer-events:none;}
+        .ar-work-mode-slider.is-dragging .ar-work-mode-thumb{transition:none;}
+        .ar-work-mode-thumb__shadow{position:absolute;inset:0;pointer-events:none;will-change:transform, box-shadow, opacity;transition:box-shadow 150ms ease;}
+        .ar-work-mode-thumb__body{position:absolute;inset:0;border:1px solid rgba(92,105,122,.11);transform:translateZ(0);transform-style:preserve-3d;will-change:transform;transition:border-color 170ms ease,
+                scale 100ms ease;pointer-events:none;}
+        .ar-work-mode-slider.is-pressed .ar-work-mode-thumb__body{scale:.985;}
+        .ar-work-mode-slider:focus{outline:none;}
+        .ar-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+        .ar-row-label{flex:1;min-width:0;font-weight:500;line-height:1.4;}
+        .ar-input{border:1px solid var(--line);background:var(--card);border-radius:10px;font-family:inherit;font-size:13px;color:var(--ink);transition:border-color .15s, box-shadow .15s;outline:none;}
+        .ar-input:focus{border-color:var(--hh-blue);box-shadow:0 0 0 3px var(--hh-blue-soft);}
+        .ar-input:hover:not(:focus){border-color:#cbd5e1;}
+        .ar-input-num{flex:none;text-align:center;}
+        .ar-input[type=number]{-moz-appearance:textfield;appearance:textfield;}
+        .ar-input[type=number]::-webkit-outer-spin-button, .ar-input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+        .ar-textarea{width:100%;border:1px solid var(--line);background:var(--card);border-radius:11px;resize:vertical;font-family:inherit;color:var(--ink);transition:border-color .15s, box-shadow .15s, opacity .15s;}
+        .ar-textarea:focus{outline:none;border-color:var(--hh-blue);box-shadow:0 0 0 3px var(--hh-blue-soft);}
+        .ar-textarea:hover:not(:focus){border-color:#cbd5e1;}
+        .ar-textarea:disabled{cursor:not-allowed;resize:none;}
+        .ar-cover-footer{display:flex;justify-content:flex-end;font-size:10.5px;font-variant-numeric:tabular-nums;}
+        .ar-cover-counter.is-near{font-weight:700;}
+        .ar-cover-counter.is-off{visibility:hidden;}
+        .ar-switch-row{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;user-select:none;}
+        .ar-switch-row-sub{padding-top:2px;}
+        .ar-switch{position:relative;display:inline-block;flex:none;}
+        .ar-switch input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:1;}
+        .ar-switch i{display:block;width:100%;height:100%;border-radius:7px;pointer-events:none;}
+        .ar-switch i::after{content:"";position:absolute;}
+        .ar-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-family:inherit;line-height:1.15;cursor:pointer;white-space:nowrap;}
+        .ar-btn:active{transform:translateY(1px);}
+        .ar-btn:disabled{cursor:not-allowed;}
+        .ar-btn:disabled:active{transform:none;}
+        .ar-btn-cta{width:100%;box-shadow:0 2px 4px rgba(0,112,229,.18);}
+        .ar-btn-soft{border:1px solid var(--line);}
+        .ar-btn-ghost{padding:0 6px;}
+        .ar-btn-full{width:100%;justify-content:center;}
+        .ar-util-row{display:flex;align-items:center;justify-content:space-between;}
+        .ar-util-btn{flex:1 1 0;min-width:0;font-size:11.5px;}
+        .ar-progress{overflow:hidden;position:relative;}
+        .ar-progress i{display:block;height:100%;width:0;border-radius:1.5px;position:relative;overflow:hidden;}
+        .ar-stats{display:grid;}
+        .ar-stat{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;text-align:center;}
+        .ar-stat-num{line-height:1.1;font-variant-numeric:tabular-nums;}
+        .ar-stat-cap{letter-spacing:.01em;}
+        .ar-badge{display:inline-flex;align-items:center;justify-content:center;transition:all .15s ease;}
+        .ar-badge--neutral{border:1px solid var(--line);}
+        .ar-badge--error{border:1px solid #fecaca;}
+        .ar-badge-count{display:inline-flex;align-items:center;justify-content:center;font-weight:700;line-height:1;flex:none;margin-left:2px;}
+        .ar-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+        .ar-title-with-count{display:inline-flex;align-items:center;gap:6px;}
+        .ar-manual{display:flex;flex-direction:column;}
+        .ar-manual-item{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+        .ar-manual-main{flex:1 1 0;min-width:0;}
+        .ar-manual-meta{display:flex;align-items:center;gap:4px;min-width:0;}
+        .ar-manual-meta .ar-when{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+        .ar-vid{font-weight:600;flex:none;}
+        .ar-manual-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+        .ar-manual-title.is-empty{font-weight:400;color:var(--ink-3);}
+        .ar-manual-actions{margin-left:auto;}
+        .ar-btn-open{font-size:11px;font-weight:600;}
+        .ar-remove-btn{display:flex;align-items:center;justify-content:center;}
+        .ar-queue-more-btn{width:100%;height:30px;font-size:11.5px;font-weight:600;margin-top:2px;}
+        .ar-empty{text-align:center;font-size:11.5px;border:1px dashed var(--line);line-height:1.4;}
+        .ar-inline-check{display:inline-flex;align-items:center;cursor:pointer;user-select:none;}
+        .ar-inline-check input{cursor:pointer;}
+        .ar-log-line{word-break:break-word;white-space:pre-wrap;}
+        .ar-dropdown{position:relative;display:inline-block;}
+        .ar-dropdown-menu{display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:100;flex-direction:column;gap:2px;}
+        .ar-dropdown.is-open .ar-dropdown-menu{display:flex;}
+        .ar-dropdown-item{display:flex;align-items:center;width:100%;font-size:11.5px;font-weight:500;text-align:left;cursor:pointer;}
+        #ar-main-panel, #ar-toggle-btn{--hha-bg:#f5f7fa;--hha-surface:#ffffff;--hha-surface-raised:#ffffff;--hha-surface-hover:#f8fafc;--hha-surface-subtle:#f1f4f8;--hha-text:#18212f;--hha-text-secondary:#596578;--hha-text-muted:#929dad;--hha-border:#e2e7ee;--hha-border-strong:#ccd4df;--hha-accent:#1769e0;--hha-accent-hover:#1059c7;--hha-accent-soft:#eaf2ff;--hha-accent-ring:rgba(23,105,224,.16);--hha-turbo:#625bd7;--hha-turbo-bright:#786ff0;--hha-turbo-deep:#4843ad;--hha-turbo-soft:#eeecff;--hha-turbo-ring:rgba(98,91,215,.18);--hha-success:#12835f;--hha-success-soft:#eaf8f2;--hha-warning:#ae7216;--hha-warning-soft:#fff7e8;--hha-danger:#c33448;--hha-danger-hover:#aa263a;--hha-danger-soft:#fff0f2;--hha-shadow-card:0 1px 2px rgba(24,33,47,.045),0 8px 24px rgba(24,33,47,.025);--hha-shadow-raised:0 12px 34px rgba(24,33,47,.12),0 2px 8px rgba(24,33,47,.06);--hha-shadow-focus:0 0 0 3px var(--hha-accent-ring);--hha-shadow-control-focus:0 0 0 3px rgba(98,91,215,.14);--hha-ease-standard:cubic-bezier(.2,.72,.3,1);--hha-ease-premium:cubic-bezier(.18,.82,.22,1);--hha-duration-fast:120ms;--hha-duration-medium:200ms;--hha-brand:var(--hha-accent);--hha-brand-hover:var(--hha-accent-hover);--hha-brand-soft:var(--hha-accent-soft);--hh-red:var(--hha-danger);--hh-red-hover:var(--hha-danger-hover);--hh-red-soft:var(--hha-danger-soft);--hh-green:var(--hha-success);--hh-green-hover:#0d6d4f;--hh-green-soft:var(--hha-success-soft);--hh-blue:var(--hha-accent);--hh-blue-hover:var(--hha-accent-hover);--hh-blue-soft:var(--hha-accent-soft);--hh-amber:var(--hha-warning);--hh-amber-soft:var(--hha-warning-soft);--ink:var(--hha-text);--ink-2:var(--hha-text-secondary);--ink-3:var(--hha-text-muted);--line:var(--hha-border);--line-2:#edf0f4;--card:var(--hha-surface);--bg:var(--hha-bg);--bg-2:var(--hha-surface-subtle);}
+        #ar-main-panel{background:var(--hha-bg);color:var(--hha-text);border-left:1px solid var(--hha-border);box-shadow:-12px 0 34px rgba(24,33,47,.065);font-size:13px;}
+        #ar-main-panel a{color:var(--hha-accent);}
+        #ar-toggle-btn{width:36px;height:108px;padding:11px 0;border-radius:11px;transition:background var(--hha-duration-medium) var(--hha-ease-standard),box-shadow var(--hha-duration-medium) var(--hha-ease-standard);}
+        #ar-toggle-btn .ar-tab-text{font-size:11.5px;font-weight:700;letter-spacing:.055em;}
+        .ar-header{border-bottom:1px solid var(--hha-border);box-shadow:0 1px 0 rgba(24,33,47,.018);}
+        .ar-brand{gap:7px;}
+        .ar-title{font-size:14.5px;font-weight:720;letter-spacing:-.025em;color:var(--hha-text);}
+        .ar-sub{padding:2px 5px;border:1px solid var(--hha-border);border-radius:5px;background:var(--hha-surface-subtle);font-size:9.5px;line-height:1.15;font-weight:650;color:var(--hha-text-muted);}
+        .ar-lang-switcher{gap:1px;padding:2px;}
+        .ar-lang-sep{display:none;}
+        .ar-lang-btn{min-width:26px;height:22px;padding:0 6px;font-size:9.5px;font-weight:750;transition:background var(--hha-duration-fast) var(--hha-ease-premium),color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium);}
+        .ar-lang-btn:focus-visible{outline:none;box-shadow:var(--hha-shadow-control-focus);}
+        .ar-header-action{border:1px solid transparent;color:var(--hha-text-muted);transition:background var(--hha-duration-fast) var(--hha-ease-premium),border-color var(--hha-duration-fast) var(--hha-ease-premium),color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium),transform var(--hha-duration-fast) var(--hha-ease-premium);}
+        .ar-header-action:hover{background:var(--hha-surface-subtle);border-color:var(--hha-border);color:var(--hha-text);box-shadow:0 2px 6px rgba(24,33,47,.055);}
+        .ar-header-action:active{background:#e9edf3;box-shadow:0 1px 2px rgba(24,33,47,.04);transform:translateY(0);}
+        .ar-header-action:focus-visible{outline:none;box-shadow:var(--hha-shadow-control-focus);color:var(--hha-accent);}
+        .ar-status{min-height:23px;padding:3px 8px;border-radius:7px;border:1px solid var(--hha-border);background:var(--hha-surface-subtle);color:var(--hha-text-secondary);font-size:10px;font-weight:650;}
+        .ar-status--idle{background:var(--hha-surface-subtle);color:var(--hha-text-secondary);border-color:var(--hha-border);}
+        .ar-status--running{background:var(--hha-accent-soft);color:var(--hha-accent);border-color:#cfe0fb;}
+        .ar-status--stopped{background:var(--hha-danger-soft);color:var(--hha-danger);border-color:#f3cbd1;}
+        .ar-status--error{background:var(--hha-warning-soft);color:var(--hha-warning);border-color:#f3dfb6;}
+        .ar-status--done{background:var(--hha-success-soft);color:var(--hha-success);border-color:#c8e9dc;}
+        .ar-scroll{padding:11px;gap:9px;scrollbar-color:#c8d0db transparent;}
+        .ar-scroll::-webkit-scrollbar-thumb{background:#c8d0db;border-radius:2px;}
+        .ar-card{padding:13px 14px;gap:10px;border:1px solid var(--hha-border);}
+        .ar-card-title{font-size:11px;font-weight:750;color:var(--hha-text-secondary);}
+        .ar-card-head{min-height:22px;}
+        #ar-mode-card{border-color:#dce2ea;box-shadow:0 1px 2px rgba(24,33,47,.05),0 12px 28px rgba(24,33,47,.035);overflow:visible;}
+        .ar-work-mode-header{align-items:center;gap:10px;}
+        .ar-work-mode-title{align-items:center;gap:8px;}
+        .ar-work-mode-title__label{font-size:11px;font-weight:780;letter-spacing:.065em;color:var(--hha-text-secondary);}
+        .ar-work-mode-title__state{position:relative;display:inline-flex;align-items:center;min-height:22px;padding:2px 8px;border:1px solid #d7e2f2;border-radius:7px;font-size:10.5px;line-height:1;font-weight:760;letter-spacing:.02em;box-shadow:inset 0 1px 0 rgba(255,255,255,.72);transition:color var(--hha-duration-medium) var(--hha-ease-standard),background var(--hha-duration-medium) var(--hha-ease-standard),border-color var(--hha-duration-medium) var(--hha-ease-standard),box-shadow var(--hha-duration-medium) var(--hha-ease-standard);}
+        .ar-work-mode-title__state.is-changing{animation:ar-mode-chip-in 210ms var(--hha-ease-premium) both;}
+        @keyframes ar-mode-chip-in{0%{ opacity:.15; transform:translateY(2px); filter:blur(1.6px); }
+            100%{ opacity:1; transform:translateY(0); filter:blur(0); }}
+        .ar-work-mode-help-wrap{position:relative;flex:0 0 auto;}
+        .ar-work-mode-help{border:1px solid var(--hha-border-strong);border-radius:7px;background:var(--hha-surface);color:var(--hha-text-muted);transition:background var(--hha-duration-fast) var(--hha-ease-standard),border-color var(--hha-duration-fast) var(--hha-ease-standard),color var(--hha-duration-fast) var(--hha-ease-standard),box-shadow var(--hha-duration-fast) var(--hha-ease-standard);}
+        .ar-work-mode-help:hover,.ar-work-mode-help-wrap.is-pinned .ar-work-mode-help{background:var(--hha-accent-soft);border-color:#cbdcf6;color:var(--hha-accent);}
+        .ar-work-mode-help:focus-visible{outline:none;box-shadow:var(--hha-shadow-focus);border-color:var(--hha-accent);}
+        .ar-work-mode-popover{position:absolute;z-index:40;top:calc(100% + 8px);right:0;width:272px;padding:8px;border:1px solid var(--hha-border);border-radius:11px;background:rgba(255,255,255,.985);box-shadow:var(--hha-shadow-raised);opacity:0;visibility:hidden;transform:translateY(-3px);pointer-events:none;transition:opacity var(--hha-duration-medium) var(--hha-ease-standard),transform var(--hha-duration-medium) var(--hha-ease-standard),visibility 0s linear var(--hha-duration-medium);}
+        .ar-work-mode-help-wrap.is-open .ar-work-mode-popover{opacity:1;visibility:visible;transform:translateY(0);pointer-events:auto;transition-delay:0s;}
+        .ar-mode-help-item{display:grid;grid-template-columns:58px 1fr;gap:7px;align-items:start;padding:7px 7px;border-radius:9px;}
+        .ar-mode-help-item + .ar-mode-help-item{border-top:1px solid #f0f2f6;}
+        .ar-mode-help-name{font-size:10.5px;font-weight:780;color:var(--hha-text);letter-spacing:.01em;}
+        .ar-mode-help-copy{font-size:10.5px;line-height:1.38;color:var(--hha-text-secondary);}
+        .ar-mode-help-item--turbo .ar-mode-help-name{color:var(--hha-turbo-deep);}
+        .ar-work-mode-labels{margin:1px 1px -3px;color:var(--hha-text-muted);font-size:10px;font-weight:650;letter-spacing:.005em;}
+        .ar-work-mode-slider{background:linear-gradient(90deg,#e8ebf0 0%,#edf0f4 58%,#f0f2f5 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.8),inset 0 0 0 1px rgba(24,33,47,.035);}
+        .ar-work-mode-slider:hover:not(.is-turbo){box-shadow:inset 0 1px 0 rgba(255,255,255,.86),inset 0 0 0 1px rgba(24,33,47,.055);}
+        .ar-work-mode-turbo-surface{background:linear-gradient(90deg,rgba(98,91,215,.10) 0%,rgba(98,91,215,.20) 28%,rgba(103,91,220,.38) 56%,rgba(91,79,202,.64) 80%,rgba(72,67,173,.86) 100%);transition:opacity var(--ar-work-turbo-exit-duration) var(--hha-ease-standard);}
+        .ar-work-mode-slider.is-turbo .ar-work-mode-turbo-surface{transition:opacity var(--ar-work-turbo-reveal-duration) var(--hha-ease-premium);}
+        .ar-work-mode-grid-mask{color:#fff;}
+        .ar-work-mode-slider.is-turbo .ar-work-mode-grid-mask{opacity:.58;}
+        .ar-work-mode-snap-marker{background:#728094;opacity:.17;}
+        .ar-work-mode-slider:hover:not(.is-turbo) .ar-work-mode-snap-marker,.ar-work-mode-slider:focus-visible:not(.is-turbo) .ar-work-mode-snap-marker{opacity:.27;}
+        .ar-work-mode-slider:focus-visible{box-shadow:inset 0 1px 0 rgba(255,255,255,.75),inset 0 0 0 1px rgba(24,33,47,.04),0 0 0 3px var(--hha-accent-ring);}
+        .ar-row-limit{padding-top:9px;border-top:1px solid #eef1f5;}
+        .ar-row-label{font-size:12px;color:var(--hha-text-secondary);}
+        .ar-input,.ar-textarea{border:1px solid var(--hha-border);background:var(--hha-surface);color:var(--hha-text);box-shadow:inset 0 1px 0 rgba(255,255,255,.72);transition:border-color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium),background var(--hha-duration-fast) var(--hha-ease-premium),opacity var(--hha-duration-fast) var(--hha-ease-premium);}
+        .ar-input{padding:6px 9px;font-weight:700;}
+        .ar-input-num{width:70px;height:32px;}
+        .ar-input:hover:not(:focus),.ar-textarea:hover:not(:focus){border-color:var(--hha-border-strong);box-shadow:inset 0 1px 0 rgba(255,255,255,.82),0 1px 3px rgba(24,33,47,.035);}
+        .ar-input:focus,.ar-textarea:focus{border-color:var(--hha-accent);box-shadow:var(--hha-shadow-control-focus),inset 0 1px 0 rgba(255,255,255,.78);}
+        .ar-textarea{min-height:62px;padding:8px 10px;font-size:12px;line-height:1.48;}
+        .ar-textarea::placeholder{color:#a1aab8;}
+        .ar-textarea:disabled{opacity:.68;}
+        .ar-cover-footer{color:var(--hha-text-muted);}
+        .ar-cover-counter.is-near{color:var(--hha-warning);}
+        .ar-switch input:focus-visible + i{box-shadow:var(--hha-shadow-control-focus);}
+        .ar-btn{min-height:34px;border-radius:10px;padding:0 13px;border:1px solid transparent;font-size:12px;font-weight:680;transition:background var(--hha-duration-fast) var(--hha-ease-premium),border-color var(--hha-duration-fast) var(--hha-ease-premium),color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium),transform var(--hha-duration-fast) var(--hha-ease-premium);}
+        .ar-btn:not(:disabled):hover{transform:none;}
+        .ar-btn:focus-visible{outline:none;box-shadow:var(--hha-shadow-control-focus);}
+        .ar-btn:disabled{opacity:.46;}
+        .ar-btn-cta{height:40px;border-radius:11px;font-size:13px;font-weight:720;}
+        .ar-btn-primary{background:var(--hha-accent);color:#fff;box-shadow:0 4px 12px rgba(23,105,224,.17);}
+        .ar-btn-primary:hover{background:var(--hha-accent-hover);box-shadow:0 6px 16px rgba(23,105,224,.22);}
+        .ar-btn-danger{background:var(--hha-danger);color:#fff;box-shadow:0 4px 12px rgba(195,52,72,.15);}
+        .ar-btn-danger:hover{background:var(--hha-danger-hover);box-shadow:0 6px 16px rgba(195,52,72,.20);}
+        .ar-btn-soft{background:var(--hha-surface);color:var(--hha-text-secondary);border-color:var(--hha-border);box-shadow:inset 0 1px 0 rgba(255,255,255,.72);}
+        .ar-btn-soft:hover{background:var(--hha-surface-hover);color:var(--hha-text);border-color:var(--hha-border-strong);box-shadow:inset 0 1px 0 rgba(255,255,255,.82),0 2px 6px rgba(24,33,47,.055);}
+        .ar-btn-soft:active{box-shadow:inset 0 1px 2px rgba(24,33,47,.07),0 1px 2px rgba(24,33,47,.035);}
+        .ar-btn-tertiary{background:var(--hha-surface-subtle);border:1px solid var(--hha-border);box-shadow:inset 0 1px 0 rgba(255,255,255,.46);}
+        .ar-btn-tertiary:hover{background:#e9edf3;color:var(--hha-text);border-color:var(--hha-border-strong);box-shadow:0 2px 5px rgba(24,33,47,.045);}
+        .ar-btn-tertiary:active{box-shadow:inset 0 1px 2px rgba(24,33,47,.06);}
+        .ar-btn-ghost{border-color:transparent;}
+        .ar-btn-sm{min-height:29px;padding:0 10px;font-size:11px;border-radius:9px;}
+        .ar-util-row{gap:7px;}
+        .ar-util-btn{height:31px;}
+        .ar-progress{height:5px;background:#edf0f4;border-radius:1.5px;}
+        .ar-progress i{background:linear-gradient(90deg,var(--hha-accent) 0%,#3881e5 100%);transition:width 300ms var(--hha-ease-standard);}
+        .ar-stats{grid-template-columns:repeat(4,1fr);border:1px solid var(--hha-border);border-radius:11px;}
+        .ar-stat{padding:7px 3px;gap:3px;}
+        .ar-stat-num{font-size:16px;font-weight:780;color:var(--hha-text-muted);}
+        .ar-stat-cap{font-size:9px;font-weight:650;color:var(--hha-text-muted);}
+        .ar-stat.is-active-attempts .ar-stat-num{color:var(--hha-text);}
+        .ar-stat.is-active-success .ar-stat-num{color:var(--hha-success);}
+        .ar-stat.is-active-skip{background:transparent;border-color:transparent;}
+        .ar-stat.is-active-skip .ar-stat-num{color:var(--hha-text-secondary);}
+        .ar-badge{min-width:19px;height:19px;padding:0 6px;border:1px solid var(--hha-border);border-radius:6px;background:var(--hha-surface-subtle);color:var(--hha-text-secondary);font-size:10px;font-weight:700;}
+        .ar-badge--neutral{background:var(--hha-surface-subtle);color:var(--hha-text-secondary);border-color:var(--hha-border);}
+        .ar-badge--error{background:var(--hha-danger-soft);color:var(--hha-danger);border-color:#f1ccd2;}
+        .ar-badge-count{min-width:17px;height:17px;padding:0 5px;border:1px solid #d5e1f4;border-radius:5px;background:var(--hha-accent-soft);color:var(--hha-accent);font-size:9.5px;}
+        .ar-manual{gap:6px;}
+        .ar-manual-item{padding:8px 9px 8px 10px;border:1px solid var(--hha-border);border-radius:11px;background:var(--hha-surface-subtle);transition:background var(--hha-duration-fast) var(--hha-ease-premium),border-color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium);}
+        .ar-manual-item:hover{background:var(--hha-surface);border-color:var(--hha-border-strong);box-shadow:0 2px 7px rgba(24,33,47,.045);}
+        .ar-manual-meta{color:var(--hha-text-muted);font-size:9.5px;}
+        .ar-vid{color:var(--hha-text-muted);}
+        .ar-manual-main{display:flex;flex-direction:column;justify-content:center;min-height:40px;}
+        .ar-manual-meta{margin-bottom:3px;line-height:1.2;}
+        .ar-manual-title{color:var(--hha-text);font-size:11.5px;font-weight:650;line-height:1.25;}
+        .ar-manual-actions{flex:0 0 auto;align-self:center;display:flex;align-items:center;gap:10px;}
+        .ar-btn-open, .ar-remove-btn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;align-self:center;vertical-align:middle;line-height:1;}
+        .ar-btn-open{min-height:34px;height:34px;padding:0 16px;border-radius:10px;}
+        .ar-btn-open > span{display:block;line-height:1;}
+        .ar-remove-btn{height:34px;min-height:34px;border-radius:8px;}
+        .ar-empty{padding:15px 10px;border-color:var(--hha-border);border-radius:11px;background:var(--hha-surface-subtle);color:var(--hha-text-muted);}
+        .ar-diag-body{background:var(--hha-bg);}
+        .ar-diag-nav{gap:8px;}
+        .ar-diag-view-title{font-size:13px;font-weight:720;color:var(--hha-text);}
+        .ar-btn-back{padding:0 9px;}
+        .ar-diag-stat{font-size:10.5px;font-weight:650;color:var(--hha-text-muted);}
+        .ar-inline-check{gap:6px;font-size:11px;color:var(--hha-text-secondary);}
+        .ar-inline-check input{accent-color:var(--hha-accent);}
+        .ar-inline-check input:focus-visible{outline:2px solid rgba(98,91,215,.28);outline-offset:2px;}
+        .ar-diag-full-box{border:1px solid #253247;border-radius:11px;background:#111927;color:#aab6c8;box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 8px 20px rgba(17,25,39,.08);}
+        .ar-diag-full-box .ar-log-err{color:#ff8797;}
+        .ar-dropdown-menu{padding:5px;min-width:188px;border:1px solid var(--hha-border);border-radius:11px;}
+        .ar-dropdown-item{padding:7px 9px;border-radius:9px;transition:background var(--hha-duration-fast) var(--hha-ease-premium),color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium);}
+        .ar-dropdown-item:focus-visible{outline:none;box-shadow:var(--hha-shadow-control-focus);color:var(--hha-text);}
+        .ar-dropdown-item--danger{color:var(--hha-danger);}
+        .ar-diag-header{min-height:47px;}
+        .ar-diag-nav{flex:1 1 auto;min-width:0;}
+        .ar-diag-back-arrow{font-size:13px;line-height:1;margin-right:2px;}
+        .ar-diag-health-summary{display:none!important;}
+        .ar-diag-header-actions{flex:0 0 auto;}
+        .ar-diag-body{flex:1 1 auto;min-height:0;gap:6px;padding:10px 10px 14px;align-content:start;}
+        .ar-diag-filter-row{display:flex;align-items:center;gap:10px;min-width:0;}
+        .ar-diag-filter-group{display:inline-flex;align-items:center;flex:0 0 auto;padding:2px;border:1px solid var(--hha-border);border-radius:9px;background:var(--hha-surface-subtle);}
+        .ar-diag-filter-btn{display:inline-flex;align-items:center;gap:5px;height:27px;padding:0 8px;border:0;border-radius:7px;background:transparent;color:var(--hha-text-muted);font-family:inherit;font-size:10.5px;font-weight:700;cursor:pointer;transition:background var(--hha-duration-fast) var(--hha-ease-premium),color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium);}
+        .ar-diag-filter-btn:hover{color:var(--hha-text);}
+        .ar-diag-filter-btn.is-active{background:var(--hha-surface);color:var(--hha-text);box-shadow:0 1px 3px rgba(24,33,47,.08);}
+        .ar-diag-filter-btn:focus-visible{outline:none;box-shadow:var(--hha-shadow-control-focus);}
+        .ar-diag-filter-count{min-width:16px;padding:1px 4px;border-radius:5px;background:rgba(92,104,128,.08);color:inherit;font-size:9px;line-height:1.25;text-align:center;font-variant-numeric:tabular-nums;transition:opacity .15s ease,background .15s ease,color .15s ease;}
+        .ar-diag-filter-btn.is-active .ar-diag-filter-count{background:var(--hha-accent-soft);color:var(--hha-accent);}
+        #ar-diag-filter-errors:not(.has-errors) .ar-diag-filter-count{opacity:.58;background:rgba(92,104,128,.055);color:var(--hha-text-muted);box-shadow:none;}
+        #ar-diag-filter-errors:not(.has-errors).is-active .ar-diag-filter-count{background:rgba(92,104,128,.055);color:var(--hha-text-muted);}
+        #ar-diag-filter-errors.has-errors .ar-diag-filter-count{opacity:1;background:var(--hha-danger-soft);color:var(--hha-danger);}
+        .ar-diag-search-wrap{position:relative;display:flex;align-items:center;flex:1 1 auto;min-width:0;height:32px;border:1px solid var(--hha-border);border-radius:9px;background:var(--hha-surface);transition:border-color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium);}
+        .ar-diag-search-wrap:focus-within{border-color:var(--hha-accent);box-shadow:0 0 0 3px var(--hha-accent-soft);}
+        .ar-diag-search-icon{flex:0 0 auto;padding-left:9px;color:var(--hha-text-muted);font-size:13px;line-height:1;}
+        .ar-diag-search{width:100%;min-width:0;height:100%;padding:0 26px 0 6px;border:0;outline:0;background:transparent;color:var(--hha-text);font-family:inherit;font-size:10.5px;}
+        .ar-diag-search::-webkit-search-cancel-button{display:none;}
+        .ar-diag-search::placeholder{color:var(--hha-text-muted);}
+        .ar-diag-search-clear{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:22px;height:22px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--hha-text-muted);font-family:inherit;font-size:15px;line-height:1;cursor:pointer;}
+        .ar-diag-search-clear:hover{background:var(--hha-surface-subtle);color:var(--hha-text);}
+        .ar-diag-toolbar{min-height:28px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding-block:0;}
+        .ar-diag-controls{display:flex;align-items:center;gap:8px;min-width:0;}
+        .ar-diag-toolbar-right{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto;}
+        .ar-diag-check-zone{display:flex;align-items:center;gap:8px;min-width:0;}
+        .ar-diag-check-btn{min-width:0;padding-inline:10px;}
+        .ar-diag-check-status{display:inline-flex;align-items:center;flex:0 0 auto;gap:6px;height:21px;white-space:nowrap;}
+        .ar-diag-check-status:empty{display:none;}
+        .ar-diag-check-progress{color:var(--hha-text-muted);font-size:9px;line-height:1;font-weight:700;font-variant-numeric:tabular-nums;}
+        .ar-diag-check-ok{display:inline-flex;align-items:center;height:21px;padding:0 6px;border-radius:6px;background:rgba(31,142,102,.08);color:var(--hha-success);font-size:9px;line-height:1;font-weight:750;}
+        .ar-diag-autoscroll{display:inline-flex;align-items:center;gap:5px;color:var(--hha-text-muted);font-size:9.5px;font-weight:650;cursor:pointer;user-select:none;}
+        .ar-diag-autoscroll input{position:absolute;opacity:0;pointer-events:none;}
+        .ar-diag-autoscroll i{position:relative;display:block;width:24px;height:15px;border:1px solid var(--hha-border-strong);border-radius:999px;background:rgba(92,104,128,.08);transition:background var(--hha-duration-fast) var(--hha-ease-premium),border-color var(--hha-duration-fast) var(--hha-ease-premium);}
+        .ar-diag-autoscroll i::after{content:"";position:absolute;top:2px;left:2px;width:9px;height:9px;border-radius:999px;background:#fff;box-shadow:0 1px 2px rgba(24,33,47,.16);transition:transform var(--hha-duration-fast) var(--hha-ease-premium),background var(--hha-duration-fast) var(--hha-ease-premium);}
+        .ar-diag-autoscroll input:checked + i{background:rgba(51,104,204,.13);border-color:rgba(51,104,204,.38);}
+        .ar-diag-autoscroll input:checked + i::after{transform:translateX(9px);background:#5a72d8;}
+        .ar-diag-autoscroll input:focus-visible + i{box-shadow:var(--hha-shadow-control-focus);}
+        .ar-diag-save-btn{min-width:0;padding-inline:9px;}
+        .ar-diag-more-btn{width:32px;min-width:32px;padding:0;font-size:13px;letter-spacing:.08em;}
+        .ar-diag-full-box{flex:0 0 auto;height:clamp(400px,60vh,620px);min-height:400px;max-height:620px;padding:5px 10px 5px 0;border-color:#26344a;overflow-y:scroll;overflow-x:hidden;scrollbar-gutter:stable;scrollbar-width:auto;scrollbar-color:#53647c #0d1725;font-family:var(--hha-font);font-size:10.5px;line-height:1.35;}
+        .ar-diag-full-box::-webkit-scrollbar{width:10px;}
+        .ar-diag-full-box::-webkit-scrollbar-track{background:#0d1725;border-left:1px solid rgba(148,163,184,.06);border-radius:0 10px 10px 0;}
+        .ar-diag-full-box::-webkit-scrollbar-thumb{background:#465870;border:2px solid #0d1725;border-radius:999px;}
+        .ar-diag-full-box::-webkit-scrollbar-thumb:hover{background:#5b6d86;}
+        .ar-diag-full-box:focus-visible{outline:none;box-shadow:inset 0 0 0 1px rgba(129,140,248,.42),0 0 0 2px rgba(129,140,248,.11);}
+        .ar-log-row{display:grid;grid-template-columns:56px 34px minmax(0,1fr) auto;align-items:start;gap:6px;padding:6px 9px;border-bottom:1px solid rgba(148,163,184,.075);color:#c0cad8;}
+        .ar-log-row:last-child{border-bottom:0;}
+        .ar-log-row:hover{background:rgba(148,163,184,.045);}
+        .ar-log-row.is-error{background:rgba(255,90,110,.035);}
+        .ar-log-row.is-warning{background:rgba(245,158,11,.025);}
+        .ar-log-row.is-grouped{cursor:pointer;}
+        .ar-log-time{color:#56657a;font-family:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;font-size:8.65px;white-space:nowrap;font-variant-numeric:tabular-nums;}
+        .ar-log-level{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:16px;padding:0 5px;border-radius:5px;font-size:7.4px;line-height:1;font-weight:800;letter-spacing:.035em;background:rgba(71,126,204,.13);color:#8bb9ff;text-transform:uppercase;}
+        .ar-log-level--ok{background:rgba(52,211,153,.11);color:#72ddb9;}
+        .ar-log-level--warn{background:rgba(245,158,11,.12);color:#f6c66c;}
+        .ar-log-level--err{background:rgba(255,100,120,.15);color:#ff8797;}
+        .ar-log-message{min-width:0;color:#bec8d7;word-break:break-word;white-space:pre-wrap;}
+        .ar-log-row.is-error .ar-log-message{color:#ffc1ca;}
+        .ar-log-row.is-warning .ar-log-message{color:#f6dbad;}
+        .ar-log-repeat{align-self:start;min-width:31px;height:20px;padding:0 6px;border:1px solid rgba(148,163,184,.16);border-radius:999px;background:rgba(148,163,184,.07);color:#9aa9bd;font-family:inherit;font-size:9px;font-weight:800;cursor:pointer;font-variant-numeric:tabular-nums;}
+        .ar-log-repeat:hover{border-color:rgba(165,180,252,.34);background:rgba(129,140,248,.11);color:#c7ccff;}
+        .ar-log-repeat:focus-visible{outline:1px solid #9ca3ff;outline-offset:1px;}
+        .ar-log-group-children{margin:0 8px 5px 101px;border-left:1px solid rgba(148,163,184,.15);}
+        .ar-log-child{display:flex;gap:8px;padding:3px 7px;color:#8796aa;font-size:9.5px;}
+        .ar-log-child-time{flex:0 0 58px;color:#5f6f84;font-family:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;}
+        .ar-log-empty{display:flex;align-items:center;justify-content:center;height:100%;min-height:100%;padding:28px;color:#6f7f94;text-align:center;}
+        .ar-log-empty-inner{display:flex;flex-direction:column;align-items:center;gap:8px;max-width:240px;}
+        .ar-log-empty-icon{width:48px;height:48px;margin-bottom:2px;color:#63738a;opacity:.72;}
+        .ar-log-empty-icon svg{display:block;width:100%;height:100%;}
+        .ar-log-empty-title{font-size:12.5px;line-height:1.25;font-weight:750;color:#b8c3d2;}
+        .ar-log-empty-hint{max-width:220px;color:#708096;font-size:10.5px;line-height:1.5;}
+        .ar-diag-full-dropdown .ar-dropdown-menu{right:0;left:auto;top:calc(100% + 4px);bottom:auto;}
+        @media (max-height:720px){
+          .ar-diag-full-box{height:calc(100vh - 190px);min-height:300px;}
         }
-
-        .ar-work-mode-grid-cell.l0 { --cell-alpha: 0; }
-        .ar-work-mode-grid-cell.l1 { --cell-alpha: .10; }
-        .ar-work-mode-grid-cell.l2 { --cell-alpha: .20; }
-        .ar-work-mode-grid-cell.l3 { --cell-alpha: .35; }
-        .ar-work-mode-grid-cell.l4 { --cell-alpha: .55; }
-        .ar-work-mode-grid-cell.l5 { --cell-alpha: .75; }
-
-        .ar-work-mode-snap-markers {
-            position: absolute;
-            z-index: 3;
-            top: 50%;
-            left: calc(var(--ar-work-track-pad) + var(--ar-work-thumb-w) / 2);
-            right: calc(var(--ar-work-track-pad) + var(--ar-work-thumb-w) / 2);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            transform: translateY(-50%);
-            pointer-events: none;
+        @media (max-width:420px){
+          .ar-work-mode-popover{width:min(272px,calc(100vw - 42px));}
         }
-
-        .ar-work-mode-snap-marker {
-            width: 3px;
-            height: 3px;
-            flex: 0 0 3px;
-            border-radius: 1px;
-            background: #7f8b9c;
-            opacity: .16;
-            transition: opacity 100ms ease;
+        #ar-main-panel, #ar-toggle-btn{--hha-flat-border:#d6dde6;--hha-flat-border-hover:#c2cbd6;--hha-flat-border-active:#b9c3cf;--hha-flat-surface:#ffffff;--hha-flat-surface-hover:#f7f9fb;--hha-flat-surface-active:#eef2f6;--hha-flat-muted:#667284;--hha-flat-violet:#6964b8;--hha-flat-violet-hover:#625dae;--hha-flat-violet-active:#5b56a4;--hha-flat-violet-deep:#56518f;--hha-flat-violet-soft:#f3f2fa;--hha-flat-violet-line:#cfcee4;--hha-shadow-level-1:0 1px 2px rgba(20,30,45,.055);--hha-shadow-level-1-hover:0 1px 3px rgba(20,30,45,.07);--hha-shadow-level-2:0 2px 4px rgba(20,30,45,.08),0 1px 1px rgba(20,30,45,.04);--hha-focus-ring:0 0 0 3px rgba(98,91,215,.16);--hha-focus-ring-strong:0 0 0 3px rgba(98,91,215,.19);}
+        .ar-btn, .ar-header-action, .ar-lang-btn, .ar-dropdown-item, .ar-work-mode-help{transition-property:background-color,background,border-color,color,box-shadow,transform;transition-duration:150ms;transition-timing-function:var(--hha-ease-premium);}
+        .ar-btn:not(:disabled):hover, .ar-header-action:hover, .ar-lang-btn:hover, .ar-dropdown-item:hover, .ar-work-mode-help:hover{transform:none;}
+        .ar-btn:not(:disabled):active{transform:translateY(1px);}
+        .ar-header-action:active, .ar-lang-btn:active, .ar-dropdown-item:active, .ar-work-mode-help:active{transform:none;}
+        .ar-btn-soft, .ar-btn-tertiary{border:1px solid var(--hha-flat-border);background:var(--hha-flat-surface);color:#4f5b6b;box-shadow:var(--hha-shadow-level-1);}
+        .ar-btn-soft:hover, .ar-btn-tertiary:hover{border-color:var(--hha-flat-border-hover);background:var(--hha-flat-surface-hover);color:var(--hha-text);box-shadow:var(--hha-shadow-level-1-hover);}
+        .ar-btn-soft:active, .ar-btn-tertiary:active{border-color:var(--hha-flat-border-active);background:var(--hha-flat-surface-active);box-shadow:none;}
+        .ar-btn-tertiary{border-style:solid;color:#5c6776;}
+        .ar-btn-ghost{border:1px solid transparent;background:transparent;color:var(--hha-text-muted);box-shadow:none;}
+        .ar-btn-ghost:hover{border-color:transparent;background:#f1f4f7;color:var(--hha-text-secondary);box-shadow:none;}
+        .ar-btn-ghost:active{background:#e9edf2;box-shadow:none;}
+        #ar-start-btn{color:#fff;border:1px solid var(--hha-flat-violet-deep);background:var(--hha-flat-violet);text-shadow:none;box-shadow:0 2px 4px rgba(74,68,145,.12),0 1px 1px rgba(20,30,45,.04);}
+        #ar-start-btn:hover{border-color:#514d88;background:var(--hha-flat-violet-hover);box-shadow:0 3px 6px rgba(74,68,145,.14),0 1px 2px rgba(20,30,45,.04);}
+        #ar-start-btn:active{border-color:#4d4982;background:var(--hha-flat-violet-active);box-shadow:0 1px 2px rgba(74,68,145,.10);transform:translateY(1px);}
+        #ar-stop-btn{color:#925267;border:1px solid #d7b4be;background:#fff;text-shadow:none;box-shadow:var(--hha-shadow-level-1);}
+        #ar-stop-btn:hover{color:#84475b;border-color:#c99ca9;background:#fff8fa;box-shadow:var(--hha-shadow-level-1-hover);}
+        #ar-stop-btn:active{color:#7e4053;border-color:#c08f9d;background:#f8eef1;box-shadow:none;transform:translateY(1px);}
+        .ar-btn-open{color:#57538f;border:1px solid #d1cfe5;background:#f6f5fb;box-shadow:var(--hha-shadow-level-1);}
+        .ar-btn-open:hover{color:#4e4a84;border-color:#bfbcda;background:#efedf8;box-shadow:var(--hha-shadow-level-1-hover);}
+        .ar-btn-open:active{color:#49457d;border-color:#b4b0d1;background:#e9e7f3;box-shadow:none;transform:translateY(1px);}
+        .ar-input, .ar-textarea{border:1px solid var(--hha-flat-border);background:#fff;color:var(--hha-text);box-shadow:var(--hha-shadow-level-1);}
+        .ar-input:hover:not(:focus), .ar-textarea:hover:not(:focus){border-color:var(--hha-flat-border-hover);background:#fff;box-shadow:var(--hha-shadow-level-1-hover);}
+        .ar-input:focus, .ar-textarea:focus{outline:none;border-color:#8c87d0;background:#fff;box-shadow:var(--hha-shadow-level-1);}
+        .ar-input:focus-visible, .ar-textarea:focus-visible{border-color:#6c66bf;box-shadow:var(--hha-focus-ring),var(--hha-shadow-level-1);}
+        .ar-textarea:disabled{border-color:#e0e5eb;background:#f3f5f8;box-shadow:none;}
+        .ar-switch{width:38px;height:22px;}
+        .ar-switch i{position:relative;overflow:hidden;border:1px solid #c6ced8;background:#dbe1e8;box-shadow:none;transition:background 180ms var(--hha-ease-premium),border-color 180ms var(--hha-ease-premium),box-shadow 150ms var(--hha-ease-premium);}
+        .ar-switch i::after{box-sizing:border-box;top:2px;left:2px;width:16px;height:16px;border-radius:5px;transform:translateX(0);border:1px solid #d5dbe3;background:#fff;box-shadow:0 1px 2px rgba(20,30,45,.09);transition:transform 180ms var(--hha-ease-premium),box-shadow 150ms var(--hha-ease-premium),background 150ms var(--hha-ease-premium);}
+        .ar-switch-row:hover .ar-switch i{border-color:#b8c2ce;background:#d4dbe3;box-shadow:none;}
+        .ar-switch-row:hover .ar-switch i::after{box-shadow:0 1px 3px rgba(20,30,45,.11);}
+        .ar-switch input:checked + i{border-color:#5e59a3;background:var(--hha-flat-violet);box-shadow:none;}
+        .ar-switch-row:hover .ar-switch input:checked + i{border-color:#56518f;background:var(--hha-flat-violet-hover);}
+        .ar-switch input:checked + i::after{transform:translateX(16px);}
+        .ar-switch input:active + i{box-shadow:none;}
+        .ar-switch input:active + i::after{background:#fafbfc;box-shadow:0 1px 2px rgba(20,30,45,.08);transform:translateX(0) scale(.97);}
+        .ar-switch input:checked:active + i::after{transform:translateX(16px) scale(.97);}
+        .ar-switch input:focus-visible + i, .ar-switch input:checked:focus-visible + i{box-shadow:var(--hha-focus-ring);}
+        .ar-lang-switcher{border:1px solid #d8dfe7;background:#eef2f6;box-shadow:none;}
+        .ar-lang-btn{border:1px solid transparent;background:transparent;color:#758091;box-shadow:none;}
+        .ar-lang-btn:hover{border-color:transparent;background:#f7f9fb;color:#4d5969;box-shadow:none;}
+        .ar-lang-btn:active{border-color:transparent;background:#e6ebf0;box-shadow:none;}
+        .ar-lang-btn.is-active{border-color:#d7dee7;background:#fff;color:#263344;box-shadow:var(--hha-shadow-level-1);}
+        .ar-header-action, .ar-work-mode-help{border:1px solid var(--hha-flat-border);background:#fff;color:#687486;box-shadow:var(--hha-shadow-level-1);}
+        .ar-header-action:hover, .ar-work-mode-help:hover{border-color:var(--hha-flat-border-hover);background:var(--hha-flat-surface-hover);color:#2f3b4b;box-shadow:var(--hha-shadow-level-1-hover);}
+        .ar-header-action:active, .ar-work-mode-help:active{border-color:var(--hha-flat-border-active);background:var(--hha-flat-surface-active);box-shadow:none;}
+        .ar-remove-btn{border:1px solid var(--hha-flat-border);background:#fff;color:#8a7680;box-shadow:var(--hha-shadow-level-1);}
+        .ar-remove-btn:hover{border-color:#d8b8c0;background:#fff5f7;color:#a03f56;box-shadow:var(--hha-shadow-level-1-hover);transform:none;}
+        .ar-remove-btn:active{border-color:#cca4af;background:#f8e8ec;box-shadow:none;transform:translateY(1px);}
+        .ar-dropdown-menu{border-color:#d3dbe4;background:#fff;box-shadow:0 4px 12px rgba(20,30,45,.09),0 1px 2px rgba(20,30,45,.04);}
+        .ar-dropdown-item{border:1px solid transparent;background:transparent;color:#596577;box-shadow:none;}
+        .ar-dropdown-item:hover{border-color:transparent;background:#f2f5f8;color:#253244;box-shadow:none;}
+        .ar-dropdown-item:active{background:#e8edf2;box-shadow:none;}
+        .ar-dropdown-item--danger:hover{background:#fff1f3;color:var(--hha-danger-hover);}
+        #ar-toggle-btn{background:var(--hha-accent);box-shadow:-2px 3px 8px rgba(20,30,45,.10);}
+        #ar-toggle-btn:hover{background:var(--hha-accent-hover);box-shadow:-2px 4px 10px rgba(20,30,45,.12);}
+        #ar-toggle-btn:active{box-shadow:-1px 2px 5px rgba(20,30,45,.10);}
+        .ar-btn:focus-visible, .ar-header-action:focus-visible, .ar-lang-btn:focus-visible, .ar-dropdown-item:focus-visible, .ar-work-mode-help:focus-visible{outline:none;box-shadow:var(--hha-focus-ring);}
+        #ar-start-btn:focus-visible{box-shadow:var(--hha-focus-ring-strong),0 2px 4px rgba(74,68,145,.12);}
+        #ar-stop-btn:focus-visible, .ar-btn-open:focus-visible{box-shadow:var(--hha-focus-ring),var(--hha-shadow-level-1);}
+        .ar-work-mode-slider::after{content:"";position:absolute;z-index:4;top:0;bottom:0;left:0;width:19%;border-radius:11px;pointer-events:none;opacity:0;background:linear-gradient(90deg,
+                rgba(235,238,243,.78) 0%,
+                rgba(235,237,244,.61) 24%,
+                rgba(231,232,244,.38) 48%,
+                rgba(225,222,246,.17) 72%,
+                rgba(225,222,246,0) 100%);transition:opacity var(--ar-work-turbo-reveal-duration) var(--hha-ease-premium);}
+        .ar-work-mode-slider.is-turbo::after{opacity:1;}
+        .ar-card:hover{transform:none;}
+        .ar-stat{transition:none;}
+        .ar-stat:hover{background:inherit;border-color:transparent;box-shadow:none;transform:none;}
+        .ar-stat.is-active-success:hover{background:var(--hha-success-soft);border-color:#d0ebe0;}
+        #ar-main-panel, #ar-toggle-btn{--hha-material-violet:#6967aa;--hha-material-violet-top:#7873b9;--hha-material-violet-deep:#56538f;--hha-control-accent:#6866aa;--hha-control-accent-hover:#605e9f;--hha-control-accent-soft:#efeff9;--hha-control-accent-line:#c9c9e5;}
+        .ar-card{border-radius:11px;border-color:#d7dee7;background:linear-gradient(180deg,#fff 0%,#fdfefe 58%,#fafbfd 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,1),
+                inset 0 -1px 0 rgba(76,89,106,.028),
+                0 1px 2px rgba(24,33,47,.045),
+                0 7px 18px rgba(24,33,47,.026);}
+        .ar-card-title{letter-spacing:.05em;}
+        .ar-header{min-height:47px;padding:9px 12px 9px 14px;background:rgba(252,253,254,.975);border-bottom-color:#dfe5ec;}
+        .ar-header-right{gap:6px;}
+        .ar-lang-switcher{border-radius:9px;}
+        .ar-lang-btn{border-radius:7px;}
+        .ar-header-action{border-radius:9px;}
+        .ar-scroll--content{padding:10px 11px 9px;gap:9px;overscroll-behavior:contain;}
+        .ar-card--settings, .ar-card--stats, .ar-card--manual{flex-shrink:0;}
+        .ar-manual-toolbar{display:flex;gap:6px;}
+        .ar-stat{border-radius:11px;}
+        .ar-header-action{width:auto;min-width:0;height:28px;padding:0 9px;font-size:10.5px;font-weight:650;line-height:1;}
+        .ar-work-mode-help{width:auto;min-width:0;height:22px;padding:0 7px;font-size:10px;font-weight:700;line-height:1;}
+        .ar-status{gap:0;}
+        .ar-work-mode-title__state{gap:0;}
+        .ar-btn-open{gap:0;}
+        .ar-remove-btn{width:auto;min-width:0;padding:0 10px;font-size:10.5px;font-weight:650;line-height:1;}
+        .ar-stats{gap:3px;padding:4px;border-color:#d3dbe5;background:linear-gradient(180deg,#eef2f6 0%,#f3f6f9 100%);box-shadow:inset 0 2px 5px rgba(35,47,63,.055),inset 0 1px 0 rgba(255,255,255,.54);}
+        .ar-stat{min-height:52px;border:1px solid transparent;background:transparent;}
+        .ar-stat.is-active-success{background:linear-gradient(180deg,#f4fbf8 0%,var(--hha-success-soft) 100%);border-color:#d0e9df;box-shadow:inset 0 1px 0 rgba(255,255,255,.76);}
+        .ar-stat.is-active-manual{background:linear-gradient(180deg,#f8f8fd 0%,#f0f0fa 100%);border-color:#dcdced;box-shadow:inset 0 1px 0 rgba(255,255,255,.8);}
+        .ar-stat.is-active-manual .ar-stat-num{color:var(--hha-control-accent);}
+        .ar-work-mode-title__state{background:#f0f0fa;color:#5b5898;border-color:#d8d8eb;}
+        .ar-work-mode-card[data-mode="safe"] .ar-work-mode-title__state{background:var(--hha-surface-subtle);color:var(--hha-text-secondary);border-color:var(--hha-border);}
+        .ar-work-mode-card[data-mode="fast"] .ar-work-mode-title__state{background:#ececf9;color:#5653a0;border-color:#d2d1eb;}
+        .ar-work-mode-card[data-mode="turbo"] .ar-work-mode-title__state{background:var(--hha-turbo-soft);color:var(--hha-turbo-deep);border-color:#d2cef4;box-shadow:0 1px 2px rgba(20,30,45,.04);}
+        .ar-badge--info{background:#efeff9;color:#5b5898;border-color:#d8d8eb;}
+        .ar-execution-shell{position:relative;z-index:20;flex:0 0 auto;padding:7px 11px 11px;border-radius:11px;border-top:1px solid rgba(215,222,231,.78);background:linear-gradient(180deg,rgba(248,250,252,.70) 0%,rgba(248,250,252,.97) 18%,var(--hha-bg) 100%);box-shadow:0 -9px 20px rgba(24,33,47,.025);}
+        .ar-execution-shell::before{content:"";position:absolute;left:11px;right:11px;top:-8px;height:14px;pointer-events:none;background:linear-gradient(180deg,rgba(248,250,252,0),rgba(248,250,252,.92));}
+        #ar-mode-card.ar-execution-core{position:relative;z-index:1;padding:12px 13px 11px;gap:8px;overflow:visible;border-radius:11px;border-color:#cfd8e4;background:linear-gradient(180deg,#ffffff 0%,#fdfefe 46%,#f8fafc 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,1),
+                inset 0 -1px 0 rgba(77,89,108,.045),
+                0 2px 4px rgba(24,33,47,.055),
+                0 10px 24px rgba(49,54,88,.055);transition:border-color 220ms var(--hha-ease-premium),
+                box-shadow 220ms var(--hha-ease-premium),
+                background 220ms var(--hha-ease-premium);}
+        #ar-mode-card.ar-execution-core.is-running{border-color:#bebee0;background:linear-gradient(180deg,#fff 0%,#fdfdff 45%,#f7f7fc 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,1),
+                inset 0 -1px 0 rgba(92,88,167,.055),
+                0 2px 4px rgba(24,33,47,.055),
+                0 11px 26px rgba(76,72,145,.09);}
+        #ar-mode-card.ar-execution-core[data-mode="turbo"]{border-color:#c9c5ec;box-shadow:inset 0 1px 0 rgba(255,255,255,1),
+                inset 0 -1px 0 rgba(98,91,215,.07),
+                0 2px 4px rgba(24,33,47,.055),
+                0 11px 28px rgba(84,77,171,.09);}
+        .ar-execution-core .ar-work-mode-popover{top:auto;bottom:calc(100% + 8px);transform:translateY(3px);}
+        .ar-execution-core .ar-work-mode-help-wrap.is-open .ar-work-mode-popover{transform:translateY(0);}
+        .ar-execution-limit{padding-top:8px;border-top:1px solid #e9edf2;}
+        .ar-execution-limit .ar-row-label{font-size:11.5px;font-weight:590;color:#647083;}
+        .ar-execution-limit .ar-input-num{width:68px;height:30px;border-radius:9px;}
+        .ar-execution-runtime{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;}
+        .ar-execution-runtime .ar-status{min-height:22px;max-width:none;padding:3px 8px;background:#f1f4f7;border-color:#d4dce6;box-shadow:none;}
+        .ar-execution-core.is-running .ar-status--running{color:#5c5998;border-color:#cecee6;background:#f1f0fa;}
+        .ar-execution-count{height:22px;border-radius:7px;min-width:50px;padding:0 8px;border-color:#d4dce6;background:#fff;color:#596577;box-shadow:0 1px 2px rgba(20,30,45,.04);font-variant-numeric:tabular-nums;}
+        .ar-execution-progress{height:4px;border-radius:1px;background:#e8ecf1;box-shadow:none;opacity:.72;transition:opacity 180ms var(--hha-ease-premium),background 180ms var(--hha-ease-premium);}
+        .ar-execution-progress i{border-radius:1px;background:linear-gradient(90deg,#7773b4 0%,#6866aa 58%,#625bd7 100%);box-shadow:none;}
+        .ar-execution-core.is-running .ar-execution-progress{opacity:1;background:#e4e5ed;}
+        .ar-execution-actions{display:flex;flex-direction:column;gap:7px;}
+        .ar-execution-actions #ar-start-btn, .ar-execution-actions #ar-stop-btn{border-radius:11px;}
+        .ar-execution-utils{gap:7px;}
+        .ar-execution-utils .ar-util-btn{height:30px;min-height:30px;border-radius:9px;}
+        .ar-sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important;}
+        .ar-cover-editor{position:relative;}
+        .ar-cover-editor .ar-textarea{display:block;padding-right:64px;padding-bottom:18px;}
+        .ar-cover-editor .ar-cover-counter{position:absolute;right:12px;bottom:6px;z-index:1;line-height:1;pointer-events:none;}
+        .ar-card--stats{padding:0;border:0;background:transparent;box-shadow:none;overflow:visible;}
+        .ar-card--stats .ar-stats{min-height:58px;}
+        .ar-execution-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:8px;border-top:1px solid #e9edf2;}
+        .ar-execution-meta .ar-execution-runtime{flex:0 0 auto;min-height:0;}
+        .ar-execution-meta .ar-execution-limit{flex:0 1 auto;min-width:0;padding-top:0;border-top:0;gap:7px;}
+        .ar-execution-meta .ar-execution-limit .ar-row-label{flex:0 1 auto;min-width:0;white-space:nowrap;font-size:10.5px;}
+        .ar-execution-meta .ar-execution-limit .ar-input-num{width:60px;}
+        .ar-work-mode-thumb__body{border-radius:9px;border-color:rgba(72,84,100,.14);background:#fff;box-shadow:none;}
+        .ar-work-mode-slider.is-turbo .ar-work-mode-thumb__body{border-color:rgba(98,91,215,.30);background:#fbfaff;box-shadow:none;}
+        .ar-work-mode-thumb__shadow{border-radius:9px;box-shadow:0 2px 5px rgba(20,30,45,.09),0 1px 2px rgba(20,30,45,.05);}
+        .ar-work-mode-slider:hover .ar-work-mode-thumb__shadow{box-shadow:0 3px 6px rgba(20,30,45,.10),0 1px 2px rgba(20,30,45,.05);}
+        @media (max-height:720px){
+          .ar-scroll--content{padding-top:8px;gap:7px;}
+          .ar-execution-shell{padding-top:5px;padding-bottom:8px;}
+          #ar-mode-card.ar-execution-core{padding:10px 12px 9px;gap:7px;}
+          .ar-work-mode-labels{display:none;}
+          .ar-execution-meta{padding-top:6px;}
+          .ar-execution-limit{padding-top:0;}
+          .ar-execution-actions{gap:6px;}
+          .ar-execution-utils .ar-util-btn{height:28px;min-height:28px;}
         }
-
-        .ar-work-mode-slider:hover:not(.is-turbo) .ar-work-mode-snap-marker,
-        .ar-work-mode-slider:focus-visible:not(.is-turbo) .ar-work-mode-snap-marker {
-            opacity: .23;
-        }
-
-        .ar-work-mode-slider.is-turbo .ar-work-mode-snap-marker {
-            opacity: 0;
-        }
-
-        .ar-work-mode-thumb {
-            position: absolute;
-            z-index: 5;
-            top: var(--ar-work-track-pad);
-            left: var(--ar-work-track-pad);
-            width: var(--ar-work-thumb-w);
-            height: var(--ar-work-thumb-h);
-            transform: translate3d(0, 0, 0);
-            transform-style: preserve-3d;
-            transition: transform var(--ar-work-thumb-duration) var(--ar-work-move-ease);
-            will-change: transform;
-            pointer-events: none;
-        }
-
-        .ar-work-mode-slider.is-dragging .ar-work-mode-thumb {
-            transition: none;
-        }
-
-        .ar-work-mode-thumb__shadow {
-            position: absolute;
-            inset: 0;
-            border-radius: var(--ar-work-thumb-radius);
-            box-shadow:
-                0 3px 7px rgba(27,35,48,.085),
-                0 1px 2px rgba(27,35,48,.065);
-            pointer-events: none;
-            will-change: transform, box-shadow, opacity;
-            transition: box-shadow 150ms ease;
-        }
-
-        .ar-work-mode-slider:hover .ar-work-mode-thumb__shadow {
-            box-shadow:
-                0 4px 9px rgba(27,35,48,.095),
-                0 1px 2px rgba(27,35,48,.065);
-        }
-
-        .ar-work-mode-thumb__body {
-            position: absolute;
-            inset: 0;
-            border: 1px solid rgba(92,105,122,.11);
-            border-radius: var(--ar-work-thumb-radius);
-            background: linear-gradient(180deg, #ffffff 0%, #fbfcfd 100%);
-            box-shadow: inset 0 0 0 1px rgba(255,255,255,.55);
-            transform: translateZ(0);
-            transform-style: preserve-3d;
-            will-change: transform;
-            transition:
-                border-color 170ms ease,
-                scale 100ms ease;
-            pointer-events: none;
-        }
-
-        .ar-work-mode-slider.is-turbo .ar-work-mode-thumb__body {
-            border-color: rgba(255,35,45,.34);
-        }
-
-        .ar-work-mode-slider.is-pressed .ar-work-mode-thumb__body {
-            scale: .985;
-        }
-
-        .ar-work-mode-slider:focus {
-            outline: none;
-        }
-
-        .ar-work-mode-slider:focus-visible {
-            box-shadow:
-                inset 0 1px 0 rgba(255,255,255,.68),
-                inset 0 0 0 1px rgba(27,35,48,.04),
-                0 0 0 2px rgba(255,52,60,.13);
-        }
-
-        /* Строка подпись + контрол */
-        .ar-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
-        .ar-row-label{ flex:1; min-width:0; font-size:12.5px; font-weight:500; color:var(--ink-2); line-height:1.4; }
-        .ar-row-limit{ padding-top:8px; border-top:1px solid var(--line-2); }
-
-        /* Поле ввода */
-        .ar-input{
-            border:1px solid var(--line); background:var(--card); border-radius:6px;
-            padding:6px 10px; font-family:inherit; font-size:13px; font-weight:700;
-            color:var(--ink); transition:border-color .15s, box-shadow .15s;
-            outline:none;
-        }
-        .ar-input:focus{ border-color:var(--hh-blue); box-shadow:0 0 0 3px var(--hh-blue-soft); }
-        .ar-input:hover:not(:focus){ border-color:#cbd5e1; }
-        .ar-input-num{ width:72px; height:32px; flex:none; text-align:center; }
-        .ar-input[type=number]{ -moz-appearance:textfield; appearance:textfield; }
-        .ar-input[type=number]::-webkit-outer-spin-button,
-        .ar-input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
-
-        /* Textarea сопроводительного письма (компактная по умолчанию) */
-        .ar-textarea{
-            width:100%; border:1px solid var(--line); background:var(--card);
-            border-radius:var(--r-md); padding:7px 10px; resize:vertical; font-family:inherit;
-            font-size:12px; color:var(--ink); line-height:1.45; min-height:56px;
-            transition:border-color .15s, box-shadow .15s, opacity .15s;
-        }
-        .ar-textarea:focus{ outline:none; border-color:var(--hh-blue); box-shadow:0 0 0 3px var(--hh-blue-soft); }
-        .ar-textarea:hover:not(:focus){ border-color:#cbd5e1; }
-        .ar-textarea::placeholder{ color:var(--ink-3); }
-        .ar-textarea:disabled{ opacity:.6; background:var(--bg); cursor:not-allowed; resize:none; border-color:var(--line-2); }
-        .ar-cover-footer{ display:flex; justify-content:flex-end; font-size:10.5px; color:var(--ink-3); font-variant-numeric:tabular-nums; }
-        .ar-cover-counter.is-near{ color:#b26a00; font-weight:700; }
-        .ar-cover-counter.is-off{ visibility:hidden; }
-
-        /* Переключатели (switch) */
-        .ar-switch-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; user-select:none; }
-        .ar-switch-row-sub{ padding-top:2px; }
-        .ar-switch{ position:relative; display:inline-block; width:36px; height:20px; flex:none; }
-        .ar-switch input{ position:absolute; opacity:0; width:100%; height:100%; margin:0; cursor:pointer; z-index:1; }
-        .ar-switch i{
-            display:block; width:100%; height:100%; border-radius:999px;
-            background:#cbd5e1; transition:background .2s ease; pointer-events:none;
-        }
-        .ar-switch i::after{
-            content:''; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%;
-            background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.2); transition:transform .2s ease;
-        }
-        .ar-switch input:checked + i{ background:var(--hh-green); }
-        .ar-switch input:checked + i::after{ transform:translateX(16px); }
-        .ar-switch input:focus-visible + i{ box-shadow:0 0 0 3px var(--hh-blue-soft); }
-
-        /* Кнопки */
-        .ar-btn{
-            display:inline-flex; align-items:center; justify-content:center; gap:6px;
-            border:none; border-radius:var(--r-md); padding:0 14px; min-height:34px;
-            font-family:inherit; font-size:12.5px; font-weight:600; line-height:1.15; cursor:pointer;
-            white-space:nowrap; transition:all .15s ease;
-        }
-        .ar-btn:active{ transform:translateY(1px); }
-        .ar-btn:disabled{ opacity:.45; cursor:not-allowed; }
-        .ar-btn:disabled:active{ transform:none; }
-
-        /* Доминантная главная кнопка CTA */
-        .ar-btn-cta{
-            width:100%; height:40px; font-size:13.5px; font-weight:700;
-            border-radius:9px; box-shadow:0 2px 4px rgba(0,112,229,.18);
-        }
-        .ar-btn-primary{ background:var(--hh-blue); color:#fff; }
-        .ar-btn-primary:hover{ background:var(--hh-blue-hover); box-shadow:0 4px 10px rgba(0,112,229,.26); }
-        .ar-btn-danger{ background:var(--hh-red); color:#fff; box-shadow:0 2px 4px rgba(214,0,28,.2); }
-        .ar-btn-danger:hover{ background:var(--hh-red-hover); box-shadow:0 4px 10px rgba(214,0,28,.3); }
-        .ar-btn-soft{ background:var(--bg); color:var(--ink-2); border:1px solid var(--line); }
-        .ar-btn-soft:hover{ background:var(--bg-2); color:var(--ink); border-color:#cbd5e1; }
-        .ar-btn-tertiary{ background:transparent; color:var(--ink-3); border:1px dashed var(--line); }
-        .ar-btn-tertiary:hover{ background:var(--bg-2); color:var(--ink-2); border-color:#cbd5e1; }
-        .ar-btn-ghost{ background:transparent; border:none; color:var(--ink-3); padding:0 6px; }
-        .ar-btn-ghost:hover{ background:var(--bg-2); color:var(--ink-2); }
-        .ar-btn-full{ width:100%; justify-content:center; }
-        .ar-btn-sm{ min-height:28px; padding:0 10px; font-size:11.5px; border-radius:6px; }
-
-        /* Вторичная строка утилит (understated) */
-        .ar-util-row{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
-        .ar-util-btn{ flex:1 1 0; min-width:0; height:30px; font-size:11.5px; }
-
-        /* Полоса прогресса */
-        .ar-progress{
-            height:5px; border-radius:999px; background:var(--bg-2);
-            overflow:hidden; position:relative;
-        }
-        .ar-progress i{
-            display:block; height:100%; width:0; border-radius:999px;
-            background:linear-gradient(90deg, #0070e5, #059669); transition:width .3s ease;
-            position:relative; overflow:hidden;
-        }
-
-        /* Плитки статистики с нейтральным zero-state */
-        .ar-stats{ display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
-        .ar-stat{
-            display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
-            padding:7px 4px; border-radius:var(--r-md); background:var(--bg);
-            border:1px solid var(--line); min-width:0; text-align:center; transition:all .2s ease;
-        }
-        .ar-stat-num{ font-size:16px; font-weight:800; line-height:1.1; color:var(--ink-3); font-variant-numeric:tabular-nums; }
-        .ar-stat-cap{ font-size:9.5px; font-weight:600; color:var(--ink-3); letter-spacing:.01em; }
-        .ar-stat.is-active-success{ background:var(--hh-green-soft); border-color:#a7f3d0; }
-        .ar-stat.is-active-success .ar-stat-num{ color:var(--hh-green); }
-        .ar-stat.is-active-manual{ background:var(--hh-blue-soft); border-color:#bfdbfe; }
-        .ar-stat.is-active-manual .ar-stat-num{ color:var(--hh-blue); }
-        .ar-stat.is-active-skip{ background:var(--bg-2); border-color:#cbd5e1; }
-        .ar-stat.is-active-skip .ar-stat-num{ color:var(--ink-2); }
-        .ar-stat.is-active-attempts .ar-stat-num{ color:var(--ink); }
-
-        /* Бейджи и счётчики */
-        .ar-badge{
-            display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:18px;
-            padding:0 6px; font-size:10.5px; font-weight:700; border-radius:999px;
-            background:var(--bg-2); color:var(--ink-2); transition:all .15s ease;
-        }
-        .ar-badge--neutral{ background:var(--bg-2); color:var(--ink-2); border:1px solid var(--line); }
-        .ar-badge--error{ background:var(--hh-red-soft); color:var(--hh-red); border:1px solid #fecaca; }
-        .ar-badge--info{ background:var(--hh-blue-soft); color:var(--hh-blue); }
-        .ar-badge-count{
-            display:inline-flex; align-items:center; justify-content:center;
-            min-width:16px; height:16px; padding:0 4px;
-            font-size:10px; font-weight:700; border-radius:999px; line-height:1;
-            background:var(--hh-red-soft); color:var(--hh-red); border:1px solid #fecaca;
-            flex:none; margin-left:2px;
-        }
-        .ar-card-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
-        .ar-title-with-count{ display:inline-flex; align-items:center; gap:6px; }
-
-        /* Ручная очередь (без вложенного скролла) */
-        .ar-manual{ display:flex; flex-direction:column; gap:7px; }
-        .ar-manual-item{
-            display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 10px;
-            border:1px solid var(--line); background:var(--bg); border-radius:var(--r-md);
-            transition:all .15s ease;
-        }
-        .ar-manual-item:hover{ border-color:#cbd5e1; background:#ffffff; }
-        .ar-manual-main{ flex:1 1 0; min-width:0; }
-        .ar-manual-meta{ font-size:9.5px; color:var(--ink-3); margin-bottom:1px; display:flex; align-items:center; gap:4px; min-width:0; }
-        .ar-manual-meta .ar-when{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .ar-vid{ font-weight:600; color:var(--ink-3); flex:none; }
-        .ar-manual-title{
-            font-size:12px; font-weight:600; color:var(--ink);
-            overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.35;
-        }
-        .ar-manual-title.is-empty{ font-weight:400; color:var(--ink-3); }
-        .ar-manual-actions{ display:flex; align-items:center; gap:4px; flex:none; margin-left:auto; }
-        .ar-btn-open{ height:26px; padding:0 8px; font-size:11px; font-weight:600; background:var(--hh-blue-soft); color:var(--hh-blue); border:none; }
-        .ar-btn-open:hover{ background:var(--hh-blue); color:#fff; }
-        .ar-icon-del{
-            width:24px; height:24px; min-height:24px; padding:0; background:transparent; border:none;
-            color:var(--ink-3); border-radius:5px; display:flex; align-items:center; justify-content:center;
-        }
-        .ar-icon-del:hover{ background:var(--hh-red-soft); color:var(--hh-red); }
-        .ar-queue-more-btn{ width:100%; height:30px; font-size:11.5px; font-weight:600; margin-top:2px; }
-        .ar-empty{
-            text-align:center; color:var(--ink-3); font-size:11.5px; padding:14px 10px;
-            background:var(--bg); border:1px dashed var(--line); border-radius:var(--r-md);
-            line-height:1.4;
-        }
-
-        .ar-inline-check{ display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--ink-2); cursor:pointer; user-select:none; }
-        .ar-inline-check input{ cursor:pointer; }
-        .ar-diag-full-box{
-            flex:1; overflow-y:auto; overflow-x:hidden;
-            font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
-            font-size:11px; line-height:1.45;
-            background:var(--bg); border:1px solid var(--line); border-radius:var(--r-md);
-            padding:6px; display:flex; flex-direction:column; gap:4px;
-        }
-        .ar-log-row{
-            display:flex; align-items:flex-start; gap:6px; padding:3px 6px;
-            border-radius:4px; transition:background .1s; color:var(--ink-2);
-        }
-        .ar-log-row:hover{ background:var(--bg-2); }
-        .ar-log-row.is-error{ background:var(--hh-red-soft); color:var(--hh-red); }
-        .ar-log-row.is-warning{ background:var(--hh-amber-soft, rgba(245,158,11,.1)); color:var(--hh-amber, #d97706); }
-        .ar-log-row.is-grouped{ cursor:pointer; }
-        .ar-log-time{ color:var(--ink-3); font-size:10px; flex:none; padding-top:1px; }
-        .ar-log-level{
-            font-size:9.5px; font-weight:700; padding:1px 4px; border-radius:3px;
-            flex:none; background:var(--line); color:var(--ink-2);
-        }
-        .ar-log-level--err{ background:var(--hh-red); color:#fff; }
-        .ar-log-level--warn{ background:var(--hh-amber, #f59e0b); color:#fff; }
-        .ar-log-level--ok{ background:var(--hh-green, #10b981); color:#fff; }
-        .ar-log-message{ flex:1 1 0; min-width:0; word-break:break-word; white-space:pre-wrap; }
-        .ar-log-repeat{
-            flex:none; font-size:10px; font-weight:600; padding:1px 5px; border-radius:3px;
-            background:var(--card); border:1px solid var(--line); color:var(--ink-2);
-            cursor:pointer; line-height:1.2;
-        }
-        .ar-log-repeat:hover{ background:var(--bg-2); }
-        .ar-log-group-children{ display:flex; flex-direction:column; gap:2px; padding-left:22px; }
-        .ar-log-child{ display:flex; align-items:flex-start; gap:6px; font-size:10.5px; opacity:.85; }
-        .ar-log-child-time{ color:var(--ink-3); font-size:9.5px; flex:none; }
-        .ar-log-empty{
-            display:flex; align-items:center; justify-content:center;
-            min-height:140px; height:100%; text-align:center; padding:20px;
-        }
-        .ar-log-empty-inner{ display:flex; flex-direction:column; align-items:center; gap:6px; }
-        .ar-log-empty-icon svg{ width:28px; height:28px; color:var(--ink-3); }
-        .ar-log-empty-title{ font-size:12.5px; font-weight:600; color:var(--ink-2); }
-        .ar-log-empty-hint{ font-size:11px; color:var(--ink-3); max-width:240px; }
-        .ar-diag-full-box .ar-log-err{ color:#f87171; }
-        .ar-log-line{ word-break:break-word; white-space:pre-wrap; }
-
-        /* Выпадающее меню действий */
-        .ar-dropdown{ position:relative; display:inline-block; }
-        .ar-dropdown-menu{
-            display:none; position:absolute; right:0; top:calc(100% + 4px);
-            background:var(--card); border:1px solid var(--line); border-radius:var(--r-md);
-            box-shadow:0 4px 12px rgba(15,23,42,.12); min-width:180px; z-index:100;
-            padding:4px; flex-direction:column; gap:2px;
-        }
-        .ar-dropdown.is-open .ar-dropdown-menu{ display:flex; }
-        .ar-dropdown-item{
-            display:flex; align-items:center; width:100%; padding:6px 10px;
-            font-size:11.5px; font-weight:500; color:var(--ink-2);
-            background:transparent; border:none; border-radius:4px;
-            text-align:left; cursor:pointer; transition:background .12s, color .12s;
-        }
-        .ar-dropdown-item:hover{ background:var(--bg-2); color:var(--ink); }
-        .ar-dropdown-item--danger{ color:var(--hh-red); }
-        .ar-dropdown-item--danger:hover{ background:var(--hh-red-soft); color:var(--hh-red-hover); }
-
         @media (max-width:700px){
-            html.hh-ar-open{ margin-right:0 !important; }
-            #ar-main-panel{ width:min(410px,94vw); }
+          html.hha-open{margin-right:0!important;}
+          #ar-main-panel{width:min(410px,94vw);}
         }
-
         @media (prefers-reduced-motion: reduce){
-            .ar-work-mode-thumb,
-            .ar-work-mode-thumb__body,
-            .ar-work-mode-thumb__shadow,
-            .ar-work-mode-turbo-surface,
-            .ar-work-mode-grid-mask,
-            .ar-work-mode-title__state,
-            .ar-work-mode-snap-marker { transition-duration: 1ms !important; }
-
-            .ar-work-mode-thumb__body {
-                transform: none !important;
-            }
-
-            .ar-work-mode-grid-strip { animation: none !important; }
-            .ar-work-mode-grid-cell {
-                transform: none !important;
-                opacity: var(--cell-alpha, .15) !important;
-            }
-            #ar-main-panel *, #ar-toggle-btn, #ar-toggle-btn *{ animation:none !important; transition:none !important; }
-            html.hh-ar-anim{ transition:none !important; }
+          .ar-work-mode-thumb, .ar-work-mode-thumb__body, .ar-work-mode-thumb__shadow, .ar-work-mode-turbo-surface, .ar-work-mode-grid-mask, .ar-work-mode-title__state, .ar-work-mode-snap-marker{transition-duration:1ms!important;}
+          .ar-work-mode-thumb__body{transform:none!important;}
+          .ar-work-mode-grid-strip{animation:none!important;}
+          .ar-work-mode-grid-cell{transform:none!important;opacity:var(--cell-alpha, .15)!important;}
+          #ar-main-panel *, #ar-toggle-btn, #ar-toggle-btn *{animation:none!important;transition:none!important;}
+          .ar-btn, .ar-header-action{transform:none!important;}
+          html.hha-anim{transition:none!important;}
         }
         `;
         (document.head || document.documentElement).appendChild(style);
     }
-
-    // ─────────────────────────────────────────────────────────────
-    //  13. UI: ПАНЕЛЬ (applomat Redesign)
-    // ─────────────────────────────────────────────────────────────
 
     function buildPanelHtml() {
         const lang = I18n.getLanguage();
         const curPreset = PRESETS[config.preset] ? config.preset : DEFAULT_PRESET;
         const curIndex = modeKeyToIndex(curPreset);
         const curLabel = presetLabel(curPreset);
+        const curModeDisplay = curLabel;
 
         return `
             <div id="ar-view-main" class="ar-view ar-view--main">
                 <div class="ar-header">
                     <div class="ar-brand">
-                        <span class="ar-title">applomat</span>
+                        <span class="ar-title">HH Apply Assistant</span>
                         <span class="ar-sub">v${VERSION}</span>
                     </div>
                     <div class="ar-header-right">
-                        <span id="ar-status-text" class="ar-status ar-status--idle" role="status" aria-live="polite">${I18n.t('status.idle')}</span>
                         <div class="ar-lang-switcher" role="group" aria-label="${I18n.t('panel.langSwitchLabel')}">
                             <button type="button" class="ar-lang-btn${lang === 'ru' ? ' is-active' : ''}" data-lang="ru" aria-pressed="${lang === 'ru'}">RU</button>
                             <span class="ar-lang-sep" aria-hidden="true">|</span>
                             <button type="button" class="ar-lang-btn${lang === 'en' ? ' is-active' : ''}" data-lang="en" aria-pressed="${lang === 'en'}">EN</button>
                         </div>
-                        <button id="ar-minimize-btn" class="ar-icon-btn" title="${I18n.t('panel.minimizeTitle')}" aria-label="${I18n.t('panel.minimizeTitle')}">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
-                        </button>
+                        <button id="ar-minimize-btn" class="ar-header-action ar-icon-only" title="${I18n.t('panel.minimizeTitle')}" aria-label="${I18n.t('panel.minimizeTitle')}"><span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.75 8.25 10 12.5l4.25-4.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
                     </div>
                 </div>
 
-                <div class="ar-scroll">
-                    <section class="ar-card ar-work-mode-card" id="ar-mode-card" data-mode="${curPreset}">
-                        <div class="ar-work-mode-header">
-                            <div class="ar-work-mode-title" id="ar-work-mode-heading">
-                                <span class="ar-work-mode-title__label" id="ar-work-mode-label">${I18n.t('panel.modeTitle')}</span>
-                                <span class="ar-work-mode-title__state" id="ar-work-mode-state">${curLabel}</span>
-                            </div>
-                            <button
-                                class="ar-work-mode-help"
-                                id="ar-work-mode-help-btn"
-                                type="button"
-                                aria-label="${I18n.t('panel.modeHelpAria')}"
-                                title="${I18n.t('panel.modeHelpTitle')}"
-                            >?</button>
-                        </div>
-
-                        <div class="ar-work-mode-labels" aria-hidden="true">
-                            <span id="ar-work-mode-lbl-safe">${presetLabel('safe')}</span>
-                            <span id="ar-work-mode-lbl-turbo">${presetLabel('turbo')}</span>
-                        </div>
-
-                        <div
-                            class="ar-work-mode-slider${curPreset === 'turbo' ? ' is-turbo' : ''}"
-                            id="ar-work-mode-slider"
-                            role="slider"
-                            tabindex="0"
-                            aria-label="${I18n.t('panel.modeTitle')}"
-                            aria-valuemin="0"
-                            aria-valuemax="3"
-                            aria-valuenow="${curIndex}"
-                            aria-valuetext="${curLabel}"
-                            data-value="${curIndex}"
-                        >
-                            <div class="ar-work-mode-turbo-surface" aria-hidden="true"></div>
-
-                            <div class="ar-work-mode-grid-mask" aria-hidden="true">
-                                <div class="ar-work-mode-grid-strip" id="ar-work-mode-grid-strip"></div>
-                            </div>
-
-                            <div class="ar-work-mode-snap-markers" id="ar-work-mode-snap-markers" aria-hidden="true">
-                                <span class="ar-work-mode-snap-marker"></span>
-                                <span class="ar-work-mode-snap-marker"></span>
-                                <span class="ar-work-mode-snap-marker"></span>
-                                <span class="ar-work-mode-snap-marker"></span>
-                            </div>
-
-                            <div class="ar-work-mode-thumb" id="ar-work-mode-thumb" aria-hidden="true">
-                                <div class="ar-work-mode-thumb__shadow" id="ar-work-mode-thumb-shadow" aria-hidden="true"></div>
-                                <div class="ar-work-mode-thumb__body" id="ar-work-mode-thumb-body" aria-hidden="true"></div>
-                            </div>
-                        </div>
-
-                        <div class="ar-row ar-row-limit">
-                            <label class="ar-row-label" id="ar-limit-label" for="ar-limit-input">${I18n.t('panel.limitLabel')}</label>
-                            <input type="number" id="ar-limit-input" class="ar-input ar-input-num" min="1" max="500">
-                        </div>
-                    </section>
-
-                    <section class="ar-card">
+                <div class="ar-scroll ar-scroll--content">
+                    <section class="ar-card ar-card--settings">
                         <label class="ar-switch-row" for="ar-use-cover-check">
                             <span class="ar-card-title" id="ar-cover-card-title" style="margin:0;">${I18n.t('cover.title')}</span>
                             <span class="ar-switch"><input type="checkbox" id="ar-use-cover-check"><i></i></span>
                         </label>
-                        <textarea id="ar-cover-text" class="ar-textarea" rows="2" maxlength="5000" placeholder="${I18n.t('cover.placeholder')}"></textarea>
-                        <div class="ar-cover-footer">
+                        <div class="ar-cover-editor">
+                            <textarea id="ar-cover-text" class="ar-textarea" rows="3" maxlength="5000" placeholder="${I18n.t('cover.placeholder')}"></textarea>
                             <span id="ar-cover-counter" class="ar-cover-counter">0 / 5000</span>
                         </div>
                         <label class="ar-switch-row ar-switch-row-sub" id="ar-apply-reject-wrap" for="ar-apply-reject-check" title="${I18n.t('cover.rejectWarningTitle')}">
@@ -4788,34 +4799,8 @@
                         </label>
                     </section>
 
-                    <section class="ar-card">
-                        <button id="ar-start-btn" class="ar-btn ar-btn-primary ar-btn-cta">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                            <span id="ar-start-btn-text">${I18n.t('panel.startBtn')}</span>
-                        </button>
-                        <button id="ar-stop-btn" class="ar-btn ar-btn-danger ar-btn-cta" style="display:none;">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-                            <span id="ar-stop-btn-text">${I18n.t('panel.stopBtn')}</span>
-                        </button>
-                        <div class="ar-util-row">
-                            <button id="ar-reset-history" class="ar-btn ar-btn-tertiary ar-btn-sm ar-util-btn" title="${I18n.t('panel.resetHistoryTitle')}">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                                <span id="ar-reset-history-text">${I18n.t('panel.resetHistory')}</span>
-                            </button>
-                            <button id="ar-health-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-util-btn" title="${I18n.t('panel.diagnosticsTitle')}">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-                                <span id="ar-health-btn-text">${I18n.t('panel.diagnostics')}</span>
-                                <span id="ar-health-badge" class="ar-badge-count" style="display:none;"></span>
-                            </button>
-                        </div>
-                    </section>
-
-                    <section class="ar-card">
-                        <div class="ar-card-head">
-                            <div class="ar-card-title" id="ar-stats-card-title">${I18n.t('panel.statsTitle')}</div>
-                            <span id="ar-stat-progress" class="ar-badge" title="${I18n.t('panel.statsProgressTitle')}">0 / 0</span>
-                        </div>
-                        <div class="ar-progress" aria-hidden="true"><i id="ar-progress-fill"></i></div>
+                    <section class="ar-card ar-card--stats" aria-labelledby="ar-stats-card-title">
+                        <span class="ar-card-title ar-sr-only" id="ar-stats-card-title">${I18n.t('panel.statsTitle')}</span>
                         <div class="ar-stats">
                             <div class="ar-stat" id="ar-stat-tile-attempts">
                                 <span class="ar-stat-num" id="ar-stat-attempts">0</span>
@@ -4836,13 +4821,13 @@
                         </div>
                     </section>
 
-                    <section class="ar-card">
+                    <section class="ar-card ar-card--manual">
                         <div class="ar-card-head">
                             <div class="ar-title-with-count">
                                 <span class="ar-card-title" id="ar-manual-card-title">${I18n.t('panel.manualTitle')}</span>
                                 <span id="ar-manual-count" class="ar-badge" data-has="0" title="${I18n.t('panel.manualCountTitle')}">0</span>
                             </div>
-                            <div style="display:flex; gap:6px;">
+                            <div class="ar-manual-toolbar">
                                 <button id="ar-export-manual" class="ar-btn ar-btn-soft ar-btn-sm">${I18n.t('panel.manualExport')}</button>
                                 <button id="ar-clear-manual" class="ar-btn ar-btn-soft ar-btn-sm">${I18n.t('panel.manualClear')}</button>
                             </div>
@@ -4850,58 +4835,173 @@
                         <div id="ar-manual-list" class="ar-manual"></div>
                     </section>
                 </div>
+
+                <div class="ar-execution-shell">
+                    <section class="ar-card ar-work-mode-card ar-execution-core" id="ar-mode-card" data-mode="${curPreset}" data-runtime-state="idle">
+                        <div class="ar-work-mode-header">
+                            <div class="ar-work-mode-title" id="ar-work-mode-heading">
+                                <span class="ar-work-mode-title__label" id="ar-work-mode-label">${I18n.t('panel.modeTitle')}</span>
+                                <span class="ar-work-mode-title__state" id="ar-work-mode-state" aria-live="polite">${curModeDisplay}</span>
+                            </div>
+                            <div class="ar-work-mode-help-wrap" id="ar-work-mode-help-wrap">
+                                <button
+                                    class="ar-work-mode-help ar-icon-only"
+                                    id="ar-work-mode-help-btn"
+                                    type="button"
+                                    aria-label="${I18n.t('panel.modeHelpAria')}"
+                                    aria-controls="ar-work-mode-popover"
+                                    aria-expanded="false"
+                                ><span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><path d="M8.6 7.75a1.94 1.94 0 1 1 2.49 2.87c-.7.28-1.09.8-1.09 1.43" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="10" cy="14.35" r=".9" fill="currentColor"/></svg></span></button>
+                                <div class="ar-work-mode-popover" id="ar-work-mode-popover" role="tooltip" aria-hidden="true">
+                                    <div class="ar-mode-help-item">
+                                        <strong class="ar-mode-help-name" id="ar-mode-help-safe-title">${I18n.t('panel.modeHelpSafeTitle')}</strong>
+                                        <span class="ar-mode-help-copy" id="ar-mode-help-safe-text">${I18n.t('panel.modeHelpSafeText')}</span>
+                                    </div>
+                                    <div class="ar-mode-help-item">
+                                        <strong class="ar-mode-help-name" id="ar-mode-help-balanced-title">${I18n.t('panel.modeHelpBalancedTitle')}</strong>
+                                        <span class="ar-mode-help-copy" id="ar-mode-help-balanced-text">${I18n.t('panel.modeHelpBalancedText')}</span>
+                                    </div>
+                                    <div class="ar-mode-help-item">
+                                        <strong class="ar-mode-help-name" id="ar-mode-help-fast-title">${I18n.t('panel.modeHelpFastTitle')}</strong>
+                                        <span class="ar-mode-help-copy" id="ar-mode-help-fast-text">${I18n.t('panel.modeHelpFastText')}</span>
+                                    </div>
+                                    <div class="ar-mode-help-item ar-mode-help-item--turbo">
+                                        <strong class="ar-mode-help-name" id="ar-mode-help-turbo-title">${I18n.t('panel.modeHelpTurboTitle')}</strong>
+                                        <span class="ar-mode-help-copy" id="ar-mode-help-turbo-text">${I18n.t('panel.modeHelpTurboText')}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="ar-work-mode-labels" aria-hidden="true">
+                            <span id="ar-work-mode-lbl-safe">${I18n.t('panel.modeScaleSlower')}</span>
+                            <span id="ar-work-mode-lbl-turbo">${I18n.t('panel.modeScaleFaster')}</span>
+                        </div>
+
+                        <div
+                            class="ar-work-mode-slider${curPreset === 'turbo' ? ' is-turbo' : ''}"
+                            id="ar-work-mode-slider"
+                            role="slider"
+                            tabindex="0"
+                            aria-label="${I18n.t('panel.modeTitle')}"
+                            aria-valuemin="0"
+                            aria-valuemax="3"
+                            aria-valuenow="${curIndex}"
+                            aria-valuetext="${curLabel}"
+                            data-value="${curIndex}"
+                        >
+                            <div class="ar-work-mode-turbo-surface" aria-hidden="true"></div>
+                            <div class="ar-work-mode-grid-mask" aria-hidden="true">
+                                <div class="ar-work-mode-grid-strip" id="ar-work-mode-grid-strip"></div>
+                            </div>
+                            <div class="ar-work-mode-snap-markers" id="ar-work-mode-snap-markers" aria-hidden="true">
+                                <span class="ar-work-mode-snap-marker"></span>
+                                <span class="ar-work-mode-snap-marker"></span>
+                                <span class="ar-work-mode-snap-marker"></span>
+                                <span class="ar-work-mode-snap-marker"></span>
+                            </div>
+                            <div class="ar-work-mode-thumb" id="ar-work-mode-thumb" aria-hidden="true">
+                                <div class="ar-work-mode-thumb__shadow" id="ar-work-mode-thumb-shadow" aria-hidden="true"></div>
+                                <div class="ar-work-mode-thumb__body" id="ar-work-mode-thumb-body" aria-hidden="true"></div>
+                            </div>
+                        </div>
+
+                        <div class="ar-execution-meta">
+                            <div class="ar-execution-runtime" aria-live="polite">
+                                <span id="ar-status-text" class="ar-status ar-status--idle" role="status">${I18n.t('status.idle')}</span>
+                                <span id="ar-stat-progress" class="ar-badge ar-execution-count" title="${I18n.t('panel.statsProgressTitle')}">0 / 0</span>
+                            </div>
+                            <div class="ar-row ar-row-limit ar-execution-limit">
+                                <label class="ar-row-label" id="ar-limit-label" for="ar-limit-input" title="${I18n.t('panel.limitLabel')}">${I18n.t('panel.limitShort')}</label>
+                                <input type="number" id="ar-limit-input" class="ar-input ar-input-num" min="1" max="500">
+                            </div>
+                        </div>
+                        <div class="ar-progress ar-execution-progress" aria-hidden="true"><i id="ar-progress-fill"></i></div>
+
+                        <div class="ar-execution-actions">
+                            <button id="ar-start-btn" class="ar-btn ar-btn-primary ar-btn-cta">
+                                <span id="ar-start-btn-text">${I18n.t('panel.startBtn')}</span>
+                            </button>
+                            <button id="ar-stop-btn" class="ar-btn ar-btn-danger ar-btn-cta" style="display:none;">
+                                <span id="ar-stop-btn-text">${I18n.t('panel.stopBtn')}</span>
+                            </button>
+                            <div class="ar-util-row ar-execution-utils">
+                                <button id="ar-reset-history" class="ar-btn ar-btn-tertiary ar-btn-sm ar-util-btn" title="${I18n.t('panel.resetHistoryTitle')}">
+                                    <span id="ar-reset-history-text">${I18n.t('panel.resetHistory')}</span>
+                                </button>
+                                <button id="ar-health-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-util-btn" title="${I18n.t('panel.diagnosticsTitle')}">
+                                    <span id="ar-health-btn-text">${I18n.t('panel.diagnostics')}</span>
+                                    <span id="ar-health-badge" class="ar-badge-count" style="display:none;"></span>
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+                </div>
             </div>
 
             <div id="ar-view-diag" class="ar-view ar-view--diag" style="display:none;">
-                <div class="ar-header">
+                <div class="ar-header ar-diag-header">
                     <div class="ar-diag-nav">
                         <button id="ar-diag-back-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-btn-back" type="button" title="${I18n.t('diag.backTitle')}">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+                            <span class="ar-diag-back-arrow" aria-hidden="true">←</span>
                             <span id="ar-diag-back-text">${I18n.t('diag.backBtn')}</span>
                         </button>
                         <span class="ar-diag-view-title" id="ar-diag-view-title">${I18n.t('diag.title')}</span>
+                        <span id="ar-diag-health-summary" class="ar-diag-health-summary" aria-live="polite">0</span>
                     </div>
-                    <div class="ar-header-right">
-                        <button id="ar-diag-full-save" class="ar-btn ar-btn-soft ar-btn-sm" type="button" title="${I18n.t('diag.downloadLogTitle')}">${I18n.t('diag.downloadLog')}</button>
-                        <button id="ar-minimize-diag-btn" class="ar-icon-btn" title="${I18n.t('panel.minimizeTitle')}" aria-label="${I18n.t('panel.minimizeTitle')}">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
-                        </button>
+                    <div class="ar-header-right ar-diag-header-actions">
+                        <button id="ar-minimize-diag-btn" class="ar-header-action ar-icon-only" title="${I18n.t('panel.minimizeTitle')}" aria-label="${I18n.t('panel.minimizeTitle')}"><span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.75 8.25 10 12.5l4.25-4.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
                     </div>
                 </div>
                 <div class="ar-diag-body">
-                    <div class="ar-diag-stat-row">
-                        <span id="ar-diag-full-stat" class="ar-diag-stat">0</span>
+                    <div class="ar-diag-filter-row">
+                        <div class="ar-diag-filter-group" role="group" aria-label="Log filters">
+                            <button id="ar-diag-filter-all" class="ar-diag-filter-btn is-active" type="button" aria-pressed="true">
+                                <span id="ar-diag-filter-all-text">${I18n.t('diag.filterAll')}</span>
+                                <span id="ar-diag-filter-all-count" class="ar-diag-filter-count">0</span>
+                            </button>
+                            <button id="ar-diag-filter-errors" class="ar-diag-filter-btn" type="button" aria-pressed="false">
+                                <span id="ar-diag-filter-errors-text">${I18n.t('diag.filterErrors')}</span>
+                                <span id="ar-diag-filter-errors-count" class="ar-diag-filter-count">0</span>
+                            </button>
+                        </div>
+                        <div class="ar-diag-search-wrap">
+                            <span class="ar-diag-search-icon" aria-hidden="true">⌕</span>
+                            <input id="ar-diag-search" class="ar-diag-search" type="search" autocomplete="off" spellcheck="false" placeholder="${I18n.t('diag.searchPlaceholder')}" aria-label="${I18n.t('diag.searchLabel')}">
+                            <button id="ar-diag-search-clear" class="ar-diag-search-clear" type="button" title="${I18n.t('diag.clearSearch')}" aria-label="${I18n.t('diag.clearSearch')}" hidden>×</button>
+                        </div>
                     </div>
                     <div class="ar-diag-toolbar">
-                        <button id="ar-diag-full-check" class="ar-btn ar-btn-soft ar-btn-sm" type="button" title="${I18n.t('diag.checkSelectors')}">${I18n.t('diag.checkSelectors')}</button>
-                        <label class="ar-inline-check" for="ar-diag-full-errors-only">
-                            <input type="checkbox" id="ar-diag-full-errors-only">
-                            <span id="ar-diag-errors-only-text">${I18n.t('diag.errorsOnly')}</span>
-                        </label>
-                    </div>
-                    <div id="ar-diag-full-box" class="ar-diag-full-box"></div>
-                    <div class="ar-diag-footer">
-                        <div class="ar-dropdown" id="ar-diag-full-dropdown">
-                            <button id="ar-diag-full-more-btn" class="ar-btn ar-btn-ghost ar-btn-sm" type="button" title="${I18n.t('diag.moreTitle')}">
-                                <span id="ar-diag-more-text">${I18n.t('diag.moreBtn')}</span>
-                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
-                            </button>
-                            <div class="ar-dropdown-menu" id="ar-diag-full-menu">
-                                <button id="ar-diag-full-clear-box" class="ar-dropdown-item" type="button">${I18n.t('diag.clearView')}</button>
-                                <button id="ar-diag-full-clear-all" class="ar-dropdown-item ar-dropdown-item--danger" type="button">${I18n.t('diag.clearAll')}</button>
+                        <div class="ar-diag-controls">
+                            <div class="ar-diag-check-zone">
+                                <button id="ar-diag-full-check" class="ar-btn ar-btn-soft ar-btn-sm ar-diag-check-btn" type="button" title="${I18n.t('diag.checkSelectors')}">${I18n.t('diag.checkSelectors')}</button>
+                                <span id="ar-diag-check-status" class="ar-diag-check-status" aria-live="polite">${I18n.t('diag.checkSummaryIdle')}</span>
+                            </div>
+                            <label class="ar-diag-autoscroll" for="ar-diag-auto-scroll">
+                                <input type="checkbox" id="ar-diag-auto-scroll" checked>
+                                <i aria-hidden="true"></i>
+                                <span id="ar-diag-auto-scroll-text">${I18n.t('diag.autoScroll')}</span>
+                            </label>
+                        </div>
+                        <div class="ar-diag-toolbar-right">
+                            <button id="ar-diag-full-save" class="ar-btn ar-btn-soft ar-btn-sm ar-diag-save-btn" type="button" title="${I18n.t('diag.downloadLogTitle')}">${I18n.t('diag.downloadLog')}</button>
+                            <div class="ar-dropdown ar-diag-full-dropdown" id="ar-diag-full-dropdown">
+                                <button id="ar-diag-full-more-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-diag-more-btn" type="button" title="${I18n.t('diag.moreTitle')}" aria-label="${I18n.t('diag.moreTitle')}">
+                                    <span id="ar-diag-more-text">${I18n.t('diag.moreBtn')}</span>
+                                </button>
+                                <div class="ar-dropdown-menu" id="ar-diag-full-menu">
+                                    <button id="ar-diag-full-clear-box" class="ar-dropdown-item" type="button">${I18n.t('diag.clearView')}</button>
+                                    <button id="ar-diag-full-clear-all" class="ar-dropdown-item ar-dropdown-item--danger" type="button">${I18n.t('diag.clearAll')}</button>
+                                </div>
                             </div>
                         </div>
                     </div>
+                    <div id="ar-diag-full-box" class="ar-diag-full-box" tabindex="0" aria-live="polite"></div>
                 </div>
             </div>
         `;
     }
 
-    // ─────────────────────────────────────────────────────────────
-    //  13. UI: ПАНЕЛЬ (applomat Redesign & Lifecycle Controller)
-    // ─────────────────────────────────────────────────────────────
-
-    // UI component: Work Mode slider + isolated Turbo visual controller.
     const WorkModeSlider = (() => {
         let resizeObserver = null;
         let activeTurboEffects = null;
@@ -4919,6 +5019,17 @@
             const reducedMotionQuery = typeof window.matchMedia === 'function'
                 ? window.matchMedia('(prefers-reduced-motion: reduce)')
                 : { matches: false };
+
+            function canRunTurboEffects() {
+                if (uiSignal?.aborted || document.hidden || reducedMotionQuery.matches) return false;
+                if (modeKeyToIndex(config.preset) !== 3 || !slider) return false;
+                const panelEl = document.getElementById('ar-main-panel');
+                const mainView = document.getElementById('ar-view-main');
+                if (!panelEl || panelEl.style.display === 'none') return false;
+                if (mainView && mainView.style.display === 'none') return false;
+                if (typeof panelEl.contains === 'function' && !panelEl.contains(slider)) return false;
+                return true;
+            }
 
             // ─── Состояния и параметры физики ───
             const STATE = {
@@ -5203,8 +5314,7 @@
 
                 animateThumbDepth(0, TRAVEL_SETTLE_DURATION, EASE_PREMIUM, () => {
                     currentState = STATE.REST;
-                    const curVal = modeKeyToIndex(config.preset);
-                    if (curVal === 3 && !reducedMotionQuery.matches && !isDragging && !isSnapping) {
+                    if (canRunTurboEffects() && !isDragging && !isSnapping) {
                         scheduleTurboPulse(TURBO_SETTLE_PAUSE);
                     }
                 });
@@ -5212,8 +5322,7 @@
 
             function scheduleTurboPulse(delayMs = 0) {
                 clearTurboTimers();
-                const curVal = modeKeyToIndex(config.preset);
-                if (curVal !== 3 || reducedMotionQuery.matches || isDragging || isSnapping || currentState !== STATE.REST) {
+                if (!canRunTurboEffects() || isDragging || isSnapping || currentState !== STATE.REST) {
                     return;
                 }
 
@@ -5224,13 +5333,13 @@
 
                 turboPulseTimer = setTimeout(() => {
                     turboPulseTimer = 0;
+                    if (!canRunTurboEffects()) return;
                     executeTurboPulse();
                 }, delay);
             }
 
             function executeTurboPulse() {
-                const curVal = modeKeyToIndex(config.preset);
-                if (curVal !== 3 || reducedMotionQuery.matches || isDragging || isSnapping || currentState !== STATE.REST) {
+                if (!canRunTurboEffects() || isDragging || isSnapping || currentState !== STATE.REST) {
                     return;
                 }
 
@@ -5429,8 +5538,7 @@
             }
 
             function startShockwave() {
-                const curVal = modeKeyToIndex(config.preset);
-                if (curVal !== 3 || reducedMotionQuery.matches || !gridCells.length) return;
+                if (!canRunTurboEffects() || !gridCells.length) return;
 
                 if (shockRafId) {
                     cancelAnimationFrame(shockRafId);
@@ -5446,8 +5554,7 @@
             }
 
             function updateShockwave(now) {
-                const curVal = modeKeyToIndex(config.preset);
-                if (!shockActive || curVal !== 3 || reducedMotionQuery.matches) {
+                if (!shockActive || !canRunTurboEffects()) {
                     stopShockwave({ clearSchedule: false });
                     return;
                 }
@@ -5543,14 +5650,15 @@
                     currentState = STATE.REST;
                 }
 
-                const currentPresetVal = modeKeyToIndex(config.preset);
-                if (currentPresetVal === 3 && !reducedMotionQuery.matches && !isDragging && !isSnapping) {
+                if (canRunTurboEffects() && !isDragging && !isSnapping) {
                     scheduleTurboPulse();
                 }
             }
 
             function enterTurbo() {
-                if (reducedMotionQuery.matches) {
+                if (!canRunTurboEffects()) {
+                    cancelTurboPulse({ resetToRest: true });
+                    stopDepthAnimations();
                     resetShockCells();
                     return;
                 }
@@ -5559,7 +5667,7 @@
 
                 // Pick up the freshly-created CSS drift animation on the next frame so shockwave shares its timeline.
                 requestAnimationFrame(() => {
-                    refreshGridDriftAnimation();
+                    if (canRunTurboEffects()) refreshGridDriftAnimation();
                 });
 
                 if (currentState === STATE.REST && !isDragging && !isSnapping) {
@@ -5636,16 +5744,18 @@
                 }
 
                 if (config.preset !== nextKey) {
-                    config.preset = nextKey;
-                    Settings.save(config);
+                    const previousIndex = modeKeyToIndex(config.preset);
+                    if (persistSettings({ ...config, preset: nextKey })) {
+                        updateModeUI(clampedIndex, { animateThumb: true });
 
-                    updateModeUI(clampedIndex, { animateThumb: true });
+                        if (State.amIRunning()) {
+                            setStatus('running');
+                        }
 
-                    if (State.amIRunning()) {
-                        setStatus('running');
+                        log(I18n.t('logs.modeSet', { mode: (nextKey === 'turbo' ? '↯ ' : '') + presetLabel(nextKey) }));
+                    } else {
+                        updateModeUI(previousIndex, { animateThumb: true });
                     }
-
-                    log(I18n.t('logs.modeSet', { mode: (nextKey === 'turbo' ? '↯ ' : '') + presetLabel(nextKey) }));
                 } else {
                     updateModeUI(clampedIndex, { animateThumb: true });
                 }
@@ -5762,6 +5872,11 @@
                 }, { signal: uiSignal });
 
                 resizeObserver = new ResizeObserver(() => {
+                    if (modeKeyToIndex(config.preset) === 3 && !canRunTurboEffects()) {
+                        TurboEffects.cancel({ resetToRest: true });
+                        TurboEffects.stopDepth();
+                        return;
+                    }
                     updateCachedMetrics();
 
                     TurboEffects.cancel({ resetToRest: true });
@@ -5779,8 +5894,7 @@
                     syncThumb(false);
                     TurboEffects.refreshGrid();
 
-                    const wasTurbo = modeKeyToIndex(config.preset) === 3;
-                    if (wasTurbo && !reducedMotionQuery.matches) {
+                    if (canRunTurboEffects()) {
                         TurboEffects.schedule(TURBO_SETTLE_PAUSE);
                     }
 
@@ -5800,7 +5914,7 @@
                             thumbShadow.style.boxShadow = st.boxShadow;
                             thumbShadow.style.transform = st.transform;
                         }
-                    } else if (modeKeyToIndex(config.preset) === 3) {
+                    } else if (canRunTurboEffects()) {
                         TurboEffects.enter();
                     }
                 }
@@ -5816,10 +5930,10 @@
                 }
 
                 function onVisibilityChange(isOpen) {
-                    if (!isOpen || document.hidden) {
+                    if (!isOpen || !canRunTurboEffects()) {
                         TurboEffects.cancel({ resetToRest: true });
                         TurboEffects.stopDepth();
-                    } else if (modeKeyToIndex(config.preset) === 3 && !reducedMotionQuery.matches) {
+                    } else {
                         TurboEffects.enter();
                     }
                 }
@@ -5847,11 +5961,12 @@
                 TurboEffects.rebuildGrid();
                 updateModeUI(modeKeyToIndex(config.preset), { animateThumb: false });
                 requestAnimationFrame(() => {
+                    if (config.preset === 'turbo' && !canRunTurboEffects()) return;
                     updateCachedMetrics();
                     syncThumb(false);
                     requestAnimationFrame(() => {
                         slider?.classList.remove('is-dragging');
-                        if (config.preset === 'turbo' && !reducedMotionQuery.matches) {
+                        if (canRunTurboEffects()) {
                             TurboEffects.enter();
                         }
                     });
@@ -5884,7 +5999,6 @@
         let renderImpl = () => {};
 
         function mount({ el }) {
-            // ---------- Ручная очередь (без вложенного скролла) ----------
             el('ar-clear-manual').onclick = () => {
                 if (confirm(I18n.t('confirm.clearManual'))) {
                     State.clearManualList();
@@ -5914,8 +6028,7 @@
                     return;
                 }
 
-                // Превью до 4 элементов без вложенного скролл-бокса
-                const PREVIEW_LIMIT = 4;
+                const PREVIEW_LIMIT = 2;
                 const previewItems = list.slice(0, PREVIEW_LIMIT);
 
                 previewItems.forEach(item => {
@@ -5958,7 +6071,7 @@
 
                     const openBtn = document.createElement('button');
                     openBtn.className = 'ar-btn ar-btn-open';
-                    openBtn.innerHTML = `<span>${I18n.t('panel.manualOpen')}</span><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
+                    openBtn.textContent = I18n.t('panel.manualOpen');
                     openBtn.disabled = !safeUrl;
                     openBtn.title = safeUrl ? I18n.t('panel.manualOpenTitle') : I18n.t('panel.manualUnsafeUrl');
                     openBtn.onclick = () => {
@@ -5966,9 +6079,10 @@
                     };
 
                     const removeBtn = document.createElement('button');
-                    removeBtn.className = 'ar-btn ar-icon-del';
-                    removeBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+                    removeBtn.className = 'ar-btn ar-remove-btn ar-icon-only';
+                    removeBtn.innerHTML = `<span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7.25 4.75h5.5M8 4.75v-.5A1.25 1.25 0 0 1 9.25 3h1.5A1.25 1.25 0 0 1 12 4.25v.5m-6 1.5h8l-.52 8.06A1.5 1.5 0 0 1 11.98 16H8.02a1.5 1.5 0 0 1-1.5-1.69L6 6.25Z" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.85 8.75v4.1M11.15 8.75v4.1" stroke="currentColor" stroke-width="1.55" stroke-linecap="round"/></svg></span>`;
                     removeBtn.title = I18n.t('panel.manualRemoveTitle');
+                    removeBtn.setAttribute('aria-label', I18n.t('panel.manualRemoveTitle'));
                     removeBtn.onclick = () => { State.removeManualEntry(item.vid); renderManualList(); };
 
                     actions.appendChild(openBtn);
@@ -5990,89 +6104,56 @@
             }
 
             renderImpl = renderManualList;
-            window._applomat_renderManualList = window._hh_ar_renderManualList = renderImpl;
+            window._hhApplyAssistantRenderManualQueue = renderImpl;
             renderImpl();
         }
 
         function render() { renderImpl(); }
         function destroy() {
             renderImpl = () => {};
-            try {
-                delete window._applomat_renderManualList;
-                delete window._hh_ar_renderManualList;
-            } catch (e) {
-                window._applomat_renderManualList = undefined;
-                window._hh_ar_renderManualList = undefined;
-            }
+            try { delete window._hhApplyAssistantRenderManualQueue; }
+            catch (e) { window._hhApplyAssistantRenderManualQueue = undefined; }
         }
         return { mount, render, destroy };
     })();
 
     const StatsView = (() => {
         let renderImpl = () => {};
-        let lastState = null;
 
         function mount() {
-            // ---------- Живая статистика прогона ----------
-            const statAttempts = document.getElementById('ar-stat-attempts');
-            const statSuccess = document.getElementById('ar-stat-success');
-            const statManual = document.getElementById('ar-stat-manual');
-            const statSkipped = document.getElementById('ar-stat-skipped');
-            const statProg = document.getElementById('ar-stat-progress');
-            const progressFill = document.getElementById('ar-progress-fill');
-            const tileAtt = document.getElementById('ar-stat-tile-attempts');
-            const tileSuc = document.getElementById('ar-stat-tile-success');
-            const tileMan = document.getElementById('ar-stat-tile-manual');
-            const tileSkp = document.getElementById('ar-stat-tile-skip');
-
             function renderStats() {
                 const s = Stats.getAll();
+                const setNum = (id, v) => { const n = document.getElementById(id); if (n) n.textContent = v; };
+                setNum('ar-stat-attempts', s.attempts);
+                setNum('ar-stat-success', s.success);
+                setNum('ar-stat-manual', s.manual);
+                setNum('ar-stat-skipped', s.skipped);
                 const sent = State.getSentCount();
-                const limit = config.limit;
+                const prog = document.getElementById('ar-stat-progress');
+                if (prog) prog.textContent = `${sent} / ${config.limit}`;
+                const fill = document.getElementById('ar-progress-fill');
+                if (fill) fill.style.width = clamp(Math.round(sent / Math.max(1, config.limit) * 100), 0, 100) + '%';
 
-                if (lastState &&
-                    lastState.attempts === s.attempts &&
-                    lastState.success === s.success &&
-                    lastState.manual === s.manual &&
-                    lastState.skipped === s.skipped &&
-                    lastState.sent === sent &&
-                    lastState.limit === limit) {
-                    return;
-                }
-
-                lastState = { attempts: s.attempts, success: s.success, manual: s.manual, skipped: s.skipped, sent, limit };
-
-                if (statAttempts) statAttempts.textContent = s.attempts;
-                if (statSuccess) statSuccess.textContent = s.success;
-                if (statManual) statManual.textContent = s.manual;
-                if (statSkipped) statSkipped.textContent = s.skipped;
-
-                if (statProg) statProg.textContent = `${sent} / ${limit}`;
-                if (progressFill) progressFill.style.width = clamp(Math.round(sent / Math.max(1, limit) * 100), 0, 100) + '%';
-
-                // Zero-state consistency: семантические цвета только при ненулевых значениях
+                const tileAtt = document.getElementById('ar-stat-tile-attempts');
+                const tileSuc = document.getElementById('ar-stat-tile-success');
+                const tileMan = document.getElementById('ar-stat-tile-manual');
+                const tileSkp = document.getElementById('ar-stat-tile-skip');
                 if (tileSuc) tileSuc.classList.toggle('is-active-success', s.success > 0);
                 if (tileMan) tileMan.classList.toggle('is-active-manual', s.manual > 0);
                 if (tileSkp) tileSkp.classList.toggle('is-active-skip', s.skipped > 0);
                 if (tileAtt) tileAtt.classList.toggle('is-active-attempts', s.attempts > 0);
             }
+            window._hhApplyAssistantRenderStats = renderStats;
+            renderStats();
 
             renderImpl = renderStats;
-            window._applomat_renderStats = window._hh_ar_renderStats = renderImpl;
-            renderStats();
         }
 
         function render() { renderImpl(); }
         function destroy() {
             renderImpl = () => {};
-            lastState = null;
-            try {
-                delete window._applomat_renderStats;
-                delete window._hh_ar_renderStats;
-            } catch (e) {
-                window._applomat_renderStats = undefined;
-                window._hh_ar_renderStats = undefined;
-            }
+            try { delete window._hhApplyAssistantRenderStats; }
+            catch (e) { window._hhApplyAssistantRenderStats = undefined; }
         }
         return { mount, render, destroy };
     })();
@@ -6080,9 +6161,17 @@
     const DiagnosticsView = (() => {
         let renderImpl = () => {};
         let updateImpl = () => {};
+        let cancelScheduledImpl = () => {};
         let lastRenderedVersion = -1;
         let lastRenderedLang = '';
+        let activeFilter = 'all';
+        let searchQuery = '';
+        let viewOffset = 0;
+        let autoScroll = true;
+        let lastCheckSummary = { key: 'diag.checkSummaryIdle', params: {} };
         const expandedGroups = new Set();
+
+        const normalizeSearch = (value) => String(value || '').trim().toLocaleLowerCase();
 
         function groupConsecutive(items) {
             const groups = [];
@@ -6170,6 +6259,39 @@
         }
 
         function mount({ el, uiSignal }) {
+            cancelScheduledImpl();
+            let scheduledRenderId = null;
+            let scheduledRenderIsRaf = false;
+
+            const cancelScheduledRender = () => {
+                if (scheduledRenderId === null) return;
+                if (scheduledRenderIsRaf && typeof cancelAnimationFrame === 'function') {
+                    cancelAnimationFrame(scheduledRenderId);
+                } else {
+                    clearTimeout(scheduledRenderId);
+                }
+                scheduledRenderId = null;
+            };
+
+            const scheduleRender = () => {
+                if (scheduledRenderId !== null) return;
+                const run = () => {
+                    scheduledRenderId = null;
+                    const diag = el('ar-view-diag');
+                    if (diag && diag.style.display !== 'none') {
+                        renderFullDiag({ preserveScroll: true });
+                    }
+                };
+                if (typeof requestAnimationFrame === 'function') {
+                    scheduledRenderIsRaf = true;
+                    scheduledRenderId = requestAnimationFrame(run);
+                } else {
+                    scheduledRenderIsRaf = false;
+                    scheduledRenderId = setTimeout(run, 0);
+                }
+            };
+            cancelScheduledImpl = cancelScheduledRender;
+
             // ---------- Экран диагностики ----------
             const openFullDiag = () => {
                 const viewMain = el('ar-view-main');
@@ -6177,6 +6299,7 @@
                 if (!viewMain || !viewDiag) return;
                 viewMain.style.display = 'none';
                 viewDiag.style.display = 'flex';
+                WorkModeSlider.onVisibilityChange(false);
                 renderFullDiag();
             };
 
@@ -6184,11 +6307,15 @@
                 const viewMain = el('ar-view-main');
                 const viewDiag = el('ar-view-diag');
                 if (!viewMain || !viewDiag) return;
+                cancelScheduledRender();
                 viewDiag.style.display = 'none';
                 viewMain.style.display = 'flex';
+                const panelEl = el('ar-main-panel');
+                WorkModeSlider.onVisibilityChange(!!panelEl && panelEl.style.display !== 'none' && !document.hidden);
             };
 
             function renderFullDiag({ preserveScroll = false } = {}) {
+                cancelScheduledRender();
                 const fullBox = el('ar-diag-full-box');
                 if (!fullBox) return;
 
@@ -6196,8 +6323,13 @@
                 const previousScrollTop = fullBox.scrollTop;
 
                 const all = DiagLog.getAll();
-                const filterErr = el('ar-diag-full-errors-only')?.checked;
-                const filtered = filterErr ? all.filter(item => item.lvl === 'ERR') : all;
+                const visibleSource = all.slice(Math.min(viewOffset, all.length));
+                const filtered = visibleSource.filter(item => {
+                    if (activeFilter === 'errors' && item.lvl !== 'ERR') return false;
+                    if (!searchQuery) return true;
+                    const haystack = normalizeSearch(`${I18n.formatTime(item.t || Date.now())} ${item.lvl || 'INFO'} ${item.msg || ''}`);
+                    return haystack.includes(searchQuery);
+                });
                 const groups = groupConsecutive(filtered);
 
                 fullBox.innerHTML = '';
@@ -6205,8 +6337,10 @@
                 if (!groups.length) {
                     const empty = document.createElement('div');
                     empty.className = 'ar-log-empty';
-                    const emptyTitleKey = filterErr ? 'diag.emptyNoErrorsTitle' : 'diag.emptyTitle';
-                    const emptyHintKey = filterErr ? 'diag.emptyNoErrorsHint' : 'diag.emptyHint';
+                    const emptyTitleKey = activeFilter === 'errors' && !searchQuery ? 'diag.emptyNoErrorsTitle'
+                        : searchQuery ? 'diag.noEntries' : 'diag.emptyTitle';
+                    const emptyHintKey = activeFilter === 'errors' && !searchQuery ? 'diag.emptyNoErrorsHint'
+                        : searchQuery ? 'diag.emptySearchHint' : 'diag.emptyHint';
                     empty.innerHTML = `
                         <div class="ar-log-empty-inner">
                             <div class="ar-log-empty-icon">
@@ -6260,25 +6394,73 @@
                     fullBox.appendChild(fragment);
                 }
 
-                if (preserveScroll) {
+                if (preserveScroll || !autoScroll) {
                     fullBox.scrollTop = previousScrollTop;
-                } else if (wasAtBottom) {
+                } else if (wasAtBottom || autoScroll) {
                     fullBox.scrollTop = fullBox.scrollHeight;
                 }
 
-                updateDiagCount(true);
             }
 
             const backBtn = el('ar-diag-back-btn');
             if (backBtn) backBtn.onclick = closeFullDiag;
 
-            const diagFullErrChk = el('ar-diag-full-errors-only');
-            if (diagFullErrChk) diagFullErrChk.onchange = () => renderFullDiag();
+            const setFilter = (nextFilter) => {
+                activeFilter = nextFilter === 'errors' ? 'errors' : 'all';
+                for (const [id, value] of [['ar-diag-filter-all', 'all'], ['ar-diag-filter-errors', 'errors']]) {
+                    const button = el(id);
+                    if (!button) continue;
+                    const active = activeFilter === value;
+                    button.classList.toggle('is-active', active);
+                    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+                }
+                renderFullDiag();
+            };
+            el('ar-diag-filter-all')?.addEventListener('click', () => setFilter('all'), { signal: uiSignal });
+            el('ar-diag-filter-errors')?.addEventListener('click', () => setFilter('errors'), { signal: uiSignal });
+
+            const searchInput = el('ar-diag-search');
+            const searchClear = el('ar-diag-search-clear');
+            const syncSearchClear = () => { if (searchClear) searchClear.hidden = !(searchInput?.value || '').length; };
+            searchInput?.addEventListener('input', () => {
+                searchQuery = normalizeSearch(searchInput.value);
+                syncSearchClear();
+                renderFullDiag({ preserveScroll: true });
+            }, { signal: uiSignal });
+            searchClear?.addEventListener('click', () => {
+                if (!searchInput) return;
+                searchInput.value = '';
+                searchQuery = '';
+                syncSearchClear();
+                searchInput.focus();
+                renderFullDiag({ preserveScroll: true });
+            }, { signal: uiSignal });
+
+            const fullBox = el('ar-diag-full-box');
+            const autoScrollInput = el('ar-diag-auto-scroll');
+            if (autoScrollInput) {
+                autoScrollInput.checked = autoScroll;
+                autoScrollInput.addEventListener('change', () => {
+                    autoScroll = autoScrollInput.checked;
+                    if (autoScroll && fullBox) fullBox.scrollTop = fullBox.scrollHeight;
+                }, { signal: uiSignal });
+            }
+            if (fullBox && typeof fullBox.addEventListener === 'function') {
+                fullBox.addEventListener('scroll', () => {
+                    const nextAutoScroll = fullBox.scrollHeight - fullBox.scrollTop - fullBox.clientHeight <= 18;
+                    if (nextAutoScroll !== autoScroll) {
+                        autoScroll = nextAutoScroll;
+                        if (autoScrollInput) autoScrollInput.checked = autoScroll;
+                    }
+                }, { signal: uiSignal, passive: true });
+            }
 
             const diagFullClearBox = el('ar-diag-full-clear-box');
             if (diagFullClearBox) diagFullClearBox.onclick = () => {
-                const fullBox = el('ar-diag-full-box');
-                if (fullBox) fullBox.innerHTML = '';
+                cancelScheduledRender();
+                viewOffset = DiagLog.getAll().length;
+                expandedGroups.clear();
+                renderFullDiag();
                 el('ar-diag-full-dropdown')?.classList.remove('is-open');
             };
 
@@ -6297,6 +6479,20 @@
             document.addEventListener('click', () => {
                 el('ar-diag-full-dropdown')?.classList.remove('is-open');
             }, { signal: uiSignal });
+
+            const updateCheckSummary = () => {
+                const status = el('ar-diag-check-status');
+                if (!status) return;
+                status.replaceChildren();
+                if (lastCheckSummary.key === 'diag.checkSummaryIdle') return;
+                const progress = document.createElement('span');
+                progress.className = 'ar-diag-check-progress';
+                progress.textContent = I18n.t('diag.checkSummaryProgress', lastCheckSummary.params);
+                const ok = document.createElement('span');
+                ok.className = 'ar-diag-check-ok';
+                ok.textContent = I18n.t('diag.checkSummaryOk');
+                status.append(progress, ok);
+            };
 
             // Счётчик записей и ошибок в постоянном логе с проверкой версий
             const updateDiagCount = (force = false) => {
@@ -6331,23 +6527,30 @@
                     }
                 }
 
-                const fullStat = el('ar-diag-full-stat');
-                if (fullStat) {
-                    fullStat.textContent = I18n.t('diag.statSummary', { errText, recText });
+                const healthSummary = el('ar-diag-health-summary');
+                if (healthSummary) {
+                    healthSummary.textContent = String(errors);
+                    healthSummary.classList.toggle('has-errors', errors > 0);
+                    healthSummary.title = I18n.t('diag.statSummary', { errText, recText });
                 }
+                const allCount = el('ar-diag-filter-all-count');
+                const errorCount = el('ar-diag-filter-errors-count');
+                if (allCount) allCount.textContent = total;
+                if (errorCount) errorCount.textContent = errors;
+                el('ar-diag-filter-errors')?.classList.toggle('has-errors', errors > 0);
+                updateCheckSummary();
             };
 
             const ownedUpdateBadge = (force) => updateDiagCount(force);
             const ownedRenderDiag = () => {
-                updateDiagCount(true);
                 const diag = el('ar-view-diag');
                 if (diag && diag.style.display !== 'none') {
-                    renderFullDiag();
+                    scheduleRender();
                 }
             };
 
-            window._hha_updateDiagBadge = window._applomat_updateDiagBadge = window._hh_ar_updateDiagBadge = ownedUpdateBadge;
-            window._hha_renderDiagnostics = ownedRenderDiag;
+            window._hhApplyAssistantUpdateDiagBadge = ownedUpdateBadge;
+            window._hhApplyAssistantRenderDiagnostics = ownedRenderDiag;
             updateDiagCount(true);
 
             // Выгрузка полного диагностического лога в файл
@@ -6361,8 +6564,10 @@
             // Очистка постоянного лога
             const handleClearAllDiag = () => {
                 if (confirm(I18n.t('confirm.clearDiag'))) {
+                    cancelScheduledRender();
                     DiagLog.clear();
                     Metrics.clear();
+                    viewOffset = 0;
                     expandedGroups.clear();
                     const fullBox = el('ar-diag-full-box');
                     if (fullBox) fullBox.innerHTML = '';
@@ -6377,7 +6582,11 @@
             const healthButton = el('ar-health-btn');
             if (healthButton) healthButton.onclick = openFullDiag;
             const checkButton = el('ar-diag-full-check');
-            if (checkButton) checkButton.onclick = runHealthCheck;
+            if (checkButton) checkButton.onclick = () => {
+                runHealthCheck();
+                lastCheckSummary = { key: 'diag.checkSummaryOk', params: { passed: 3 } };
+                updateCheckSummary();
+            };
 
             renderImpl = renderFullDiag;
             updateImpl = updateDiagCount;
@@ -6391,21 +6600,19 @@
             if (diag && diag.style.display !== 'none') renderImpl();
         }
         function destroy() {
+            cancelScheduledImpl();
             renderImpl = () => {};
             updateImpl = () => {};
+            cancelScheduledImpl = () => {};
             lastRenderedVersion = -1;
             lastRenderedLang = '';
             expandedGroups.clear();
             try {
-                delete window._hha_renderDiagnostics;
-                delete window._hha_updateDiagBadge;
-                delete window._applomat_updateDiagBadge;
-                delete window._hh_ar_updateDiagBadge;
+                delete window._hhApplyAssistantRenderDiagnostics;
+                delete window._hhApplyAssistantUpdateDiagBadge;
             } catch (e) {
-                window._hha_renderDiagnostics = undefined;
-                window._hha_updateDiagBadge = undefined;
-                window._applomat_updateDiagBadge = undefined;
-                window._hh_ar_updateDiagBadge = undefined;
+                window._hhApplyAssistantRenderDiagnostics = undefined;
+                window._hhApplyAssistantUpdateDiagBadge = undefined;
             }
         }
         return { mount, render, update, refresh, destroy };
@@ -6417,7 +6624,17 @@
 
         const textBindings = [
             ['ar-work-mode-label', 'panel.modeTitle'],
-            ['ar-limit-label', 'panel.limitLabel'],
+            ['ar-work-mode-lbl-safe', 'panel.modeScaleSlower'],
+            ['ar-work-mode-lbl-turbo', 'panel.modeScaleFaster'],
+            ['ar-mode-help-safe-title', 'panel.modeHelpSafeTitle'],
+            ['ar-mode-help-safe-text', 'panel.modeHelpSafeText'],
+            ['ar-mode-help-balanced-title', 'panel.modeHelpBalancedTitle'],
+            ['ar-mode-help-balanced-text', 'panel.modeHelpBalancedText'],
+            ['ar-mode-help-fast-title', 'panel.modeHelpFastTitle'],
+            ['ar-mode-help-fast-text', 'panel.modeHelpFastText'],
+            ['ar-mode-help-turbo-title', 'panel.modeHelpTurboTitle'],
+            ['ar-mode-help-turbo-text', 'panel.modeHelpTurboText'],
+            ['ar-limit-label', 'panel.limitShort'],
             ['ar-cover-card-title', 'cover.title'],
             ['ar-apply-reject-label', 'cover.rejectWarningLabel'],
             ['ar-start-btn-text', 'panel.startBtn'],
@@ -6436,7 +6653,9 @@
             ['ar-diag-view-title', 'diag.title'],
             ['ar-diag-full-save', 'diag.downloadLog'],
             ['ar-diag-full-check', 'diag.checkSelectors'],
-            ['ar-diag-errors-only-text', 'diag.errorsOnly'],
+            ['ar-diag-filter-all-text', 'diag.filterAll'],
+            ['ar-diag-filter-errors-text', 'diag.filterErrors'],
+            ['ar-diag-auto-scroll-text', 'diag.autoScroll'],
             ['ar-diag-more-text', 'diag.moreBtn'],
             ['ar-diag-full-clear-box', 'diag.clearView'],
             ['ar-diag-full-clear-all', 'diag.clearAll']
@@ -6460,6 +6679,17 @@
             const mainPanel = el('ar-main-panel');
             if (mainPanel) mainPanel.setAttribute('lang', currentLang);
 
+            const diagSearch = el('ar-diag-search');
+            if (diagSearch) {
+                diagSearch.placeholder = I18n.t('diag.searchPlaceholder');
+                diagSearch.setAttribute('aria-label', I18n.t('diag.searchLabel'));
+            }
+            const diagSearchClear = el('ar-diag-search-clear');
+            if (diagSearchClear) {
+                diagSearchClear.title = I18n.t('diag.clearSearch');
+                diagSearchClear.setAttribute('aria-label', I18n.t('diag.clearSearch'));
+            }
+
             const toggle = el('ar-toggle-btn');
             if (toggle) {
                 toggle.setAttribute('lang', currentLang);
@@ -6482,23 +6712,38 @@
                 if (node) node.title = I18n.t(key);
             }
 
-            const minimizeTitle = I18n.t('panel.minimizeTitle');
-            for (const id of ['ar-minimize-btn', 'ar-minimize-diag-btn']) {
+            const iconMarkup = {
+                minimize: `<span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.75 8.25 10 12.5l4.25-4.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg></span>`,
+                help: `<span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><path d="M8.6 7.75a1.94 1.94 0 1 1 2.49 2.87c-.7.28-1.09.8-1.09 1.43" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="10" cy="14.35" r=".9" fill="currentColor"/></svg></span>`,
+                remove: `<span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7.25 4.75h5.5M8 4.75v-.5A1.25 1.25 0 0 1 9.25 3h1.5A1.25 1.25 0 0 1 12 4.25v.5m-6 1.5h8l-.52 8.06A1.5 1.5 0 0 1 11.98 16H8.02a1.5 1.5 0 0 1-1.5-1.69L6 6.25Z" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.85 8.75v4.1M11.15 8.75v4.1" stroke="currentColor" stroke-width="1.55" stroke-linecap="round"/></svg></span>`
+            };
+            const setIconButton = (id, markup, label) => {
                 const node = el(id);
-                if (node) {
-                    node.title = minimizeTitle;
-                    node.setAttribute('aria-label', minimizeTitle);
-                }
-            }
+                if (!node) return;
+                node.classList.add('ar-icon-only');
+                node.innerHTML = markup;
+                node.title = label;
+                node.setAttribute('aria-label', label);
+            };
+
+            const minimizeTitle = I18n.t('panel.minimizeTitle');
+            setIconButton('ar-minimize-btn', iconMarkup.minimize, minimizeTitle);
+            setIconButton('ar-minimize-diag-btn', iconMarkup.minimize, minimizeTitle);
+            setIconButton('ar-work-mode-help-btn', iconMarkup.help, I18n.t('panel.modeHelpAria'));
 
             const currentPresetKey = PRESETS[config.preset] ? config.preset : DEFAULT_PRESET;
             const modeLabel = presetLabel(currentPresetKey);
             const modeState = el('ar-work-mode-state');
-            if (modeState) modeState.textContent = modeLabel;
+            if (modeState) {
+                modeState.classList.remove('is-changing');
+                modeState.textContent = modeLabel;
+                void modeState.offsetWidth;
+                modeState.classList.add('is-changing');
+            }
             const safeLabel = el('ar-work-mode-lbl-safe');
-            if (safeLabel) safeLabel.textContent = presetLabel('safe');
+            if (safeLabel) safeLabel.textContent = I18n.t('panel.modeScaleSlower');
             const turboLabel = el('ar-work-mode-lbl-turbo');
-            if (turboLabel) turboLabel.textContent = presetLabel('turbo');
+            if (turboLabel) turboLabel.textContent = I18n.t('panel.modeScaleFaster');
 
             const slider = el('ar-work-mode-slider');
             if (slider) {
@@ -6507,8 +6752,8 @@
             }
             const help = el('ar-work-mode-help-btn');
             if (help) {
-                help.title = I18n.t('panel.modeHelpTitle');
                 help.setAttribute('aria-label', I18n.t('panel.modeHelpAria'));
+                help.title = I18n.t('panel.modeHelpAria');
             }
             const cover = el('ar-cover-text');
             if (cover) cover.placeholder = I18n.t('cover.placeholder');
@@ -6529,7 +6774,7 @@
                     if (!targetLang || targetLang === I18n.getLanguage()) return;
                     I18n.setLanguage(targetLang);
                     refresh();
-                    log(I18n.t('logs.modeSet', { mode: (config.preset === 'turbo' ? '↯ ' : '') + presetLabel(config.preset) }));
+                    log(I18n.t('logs.modeSet', { mode: presetLabel(config.preset) }));
                 }, { signal: uiSignal });
             });
         }
@@ -6558,7 +6803,7 @@
         if (oldToggle) oldToggle.remove();
         const oldPanel = document.getElementById('ar-main-panel');
         if (oldPanel) oldPanel.remove();
-        document.documentElement.classList.remove('hh-ar-open', 'hh-ar-anim');
+        document.documentElement.classList.remove('hha-open', 'hha-anim');
     }
 
     function setupUI() {
@@ -6573,15 +6818,12 @@
 
         const lang = I18n.getLanguage();
 
-        // Свёрнутое состояние - вертикальная вкладка applomat
+        // Свёрнутое состояние - вертикальная вкладка HH Apply Assistant
         const toggleBtn = document.createElement('button');
         toggleBtn.id = 'ar-toggle-btn';
         toggleBtn.type = 'button';
         toggleBtn.setAttribute('lang', lang);
-        toggleBtn.innerHTML = `
-            <span class="ar-tab-dot" aria-hidden="true"></span>
-            <span class="ar-tab-text">applomat</span>
-        `;
+        toggleBtn.innerHTML = '<span class="ar-tab-text">Apply Assistant</span>';
         toggleBtn.title = I18n.t('panel.expandTitle');
         toggleBtn.setAttribute('aria-label', I18n.t('panel.expandTitle'));
         toggleBtn.style.display = 'none';
@@ -6621,17 +6863,66 @@
 
         WorkModeSlider.mount({ el, uiSignal });
 
+        const helpWrap = el('ar-work-mode-help-wrap');
+        const helpBtn = el('ar-work-mode-help-btn');
+        const helpPopover = el('ar-work-mode-popover');
+        if (helpWrap && helpBtn && helpPopover) {
+            let helpPinned = false;
+            let helpHover = false;
+            let helpFocus = false;
+            let escapeClosed = false;
+            const renderHelpPopover = () => {
+                const open = !escapeClosed && (helpPinned || helpHover || helpFocus);
+                helpWrap.classList.toggle('is-pinned', helpPinned);
+                helpWrap.classList.toggle('is-open', open);
+                helpBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+                helpPopover.setAttribute('aria-hidden', open ? 'false' : 'true');
+            };
+            helpWrap.addEventListener('mouseenter', () => { helpHover = true; escapeClosed = false; renderHelpPopover(); }, { signal: uiSignal });
+            helpWrap.addEventListener('mouseleave', () => { helpHover = false; renderHelpPopover(); }, { signal: uiSignal });
+            helpWrap.addEventListener('focusin', () => { helpFocus = true; escapeClosed = false; renderHelpPopover(); }, { signal: uiSignal });
+            helpWrap.addEventListener('focusout', () => {
+                setTimeout(() => { helpFocus = helpWrap.contains(document.activeElement); renderHelpPopover(); }, 0);
+            }, { signal: uiSignal });
+            helpBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                escapeClosed = false;
+                helpPinned = !helpPinned;
+                renderHelpPopover();
+            }, { signal: uiSignal });
+            document.addEventListener('click', (event) => {
+                if (helpPinned && !helpWrap.contains(event.target)) {
+                    helpPinned = false;
+                    renderHelpPopover();
+                }
+            }, { signal: uiSignal });
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape' && (helpPinned || helpHover || helpFocus)) {
+                    helpPinned = false;
+                    escapeClosed = true;
+                    renderHelpPopover();
+                }
+            }, { signal: uiSignal });
+        }
+
         // ---------- Сохранение настроек ----------
         const saveSettings = () => {
-            config = Settings.normalize({
+            const nextConfig = Settings.normalize({
                 ...config,
                 coverText: el('ar-cover-text').value,
                 useCover: el('ar-use-cover-check').checked,
                 applyOnRejectWarning: el('ar-apply-reject-check').checked,
                 limit: el('ar-limit-input').value
             });
+            if (!persistSettings(nextConfig)) {
+                el('ar-cover-text').value = config.coverText;
+                el('ar-use-cover-check').checked = config.useCover;
+                el('ar-apply-reject-check').checked = config.applyOnRejectWarning;
+                el('ar-limit-input').value = config.limit;
+                renderCoverState();
+                return;
+            }
             el('ar-limit-input').value = config.limit;
-            Settings.save(config);
             log(I18n.t('logs.settingsSaved'));
         };
         ['ar-cover-text', 'ar-use-cover-check', 'ar-apply-reject-check', 'ar-limit-input']
@@ -6662,7 +6953,7 @@
         const toggleVisibility = (isOpen) => {
             panel.style.display = isOpen ? 'flex' : 'none';
             toggleBtn.style.display = isOpen ? 'none' : 'flex';
-            rootEl.classList.toggle('hh-ar-open', isOpen);
+            rootEl.classList.toggle('hha-open', isOpen);
             storage.localSet(KEYS.uiOpen, isOpen ? '1' : '0');
             WorkModeSlider.onVisibilityChange(isOpen);
         };
@@ -6672,7 +6963,7 @@
         toggleBtn.onclick = () => toggleVisibility(true);
 
         toggleVisibility(storage.localGet(KEYS.uiOpen) !== '0');
-        setTimeout(() => rootEl.classList.add('hh-ar-anim'), 60);
+        setTimeout(() => rootEl.classList.add('hha-anim'), 60);
 
     }
 
@@ -6814,7 +7105,7 @@
         }
     }
     // ─────────────────────────────────────────────────────────────
-    //  14. ЭКСПОРТ РУЧНОГО СПИСКА (интерактивный HTML applomat)
+    //  14. ЭКСПОРТ РУЧНОГО СПИСКА (интерактивный HTML HH Apply Assistant)
     // ─────────────────────────────────────────────────────────────
 
     function exportManualListHtml() {
@@ -7003,20 +7294,11 @@
                 let sortKey = 'ts_desc';
                 let filterText = '';
                 let viewMode = 'new';
-                const PROCESSED_KEY = 'applomat_manual_processed';
-                const LEGACY_PROCESSED_KEY = 'hh_ar_manual_processed';
+                const PROCESSED_KEY = 'hh_apply_assistant_v4_manual_processed';
                 let processed = {};
                 try {
                     const raw = localStorage.getItem(PROCESSED_KEY);
-                    if (raw) {
-                        processed = JSON.parse(raw) || {};
-                    } else {
-                        const legacyRaw = localStorage.getItem(LEGACY_PROCESSED_KEY);
-                        if (legacyRaw) {
-                            processed = JSON.parse(legacyRaw) || {};
-                            try { localStorage.setItem(PROCESSED_KEY, JSON.stringify(processed)); } catch (_) {}
-                        }
-                    }
+                    if (raw) processed = JSON.parse(raw) || {};
                     if (!processed || typeof processed !== 'object' || Array.isArray(processed)) processed = {};
                 } catch (e) {
                     processed = {};
@@ -7266,20 +7548,20 @@
             </script>
             </body></html>`;
 
-        downloadFile('applomat_manual_list.html', content, 'text/html;charset=utf-8');
+        downloadFile('hh_apply_assistant_manual_queue.html', content, 'text/html;charset=utf-8');
         log(I18n.t('logs.htmlExported'));
     }
     // ─────────────────────────────────────────────────────────────
     //  15. ЗАПУСК И ГЛОБАЛЬНЫЕ ОБРАБОТЧИКИ
     // ─────────────────────────────────────────────────────────────
 
-    // Перехват необработанных ошибок: отделяем собственные ошибки applomat от шума HeadHunter и сторонних скриптов.
-    let applomatErrCount = 0;
+    // Перехват необработанных ошибок: отделяем собственные ошибки HH Apply Assistant от шума HeadHunter и сторонних скриптов.
+    let assistantErrCount = 0;
     let externalErrCount = 0;
-    const APPLOMAT_ERR_LIMIT = 50;
+    const ASSISTANT_ERR_LIMIT = 50;
     const EXTERNAL_ERR_LIMIT = 5;
 
-    function isApplomatError(e, isPromise = false) {
+    function isHHApplyAssistantError(e, isPromise = false) {
         const errObj = isPromise ? e.reason : (e.error || e);
         const stack = (errObj && typeof errObj.stack === 'string') ? errObj.stack : '';
         const filename = (!isPromise && typeof e.filename === 'string') ? e.filename : '';
@@ -7288,47 +7570,47 @@
             : (e.message || String(errObj || ''));
         const combined = `${filename} ${stack} ${message}`;
 
-        // Характерные маркеры кода applomat
-        const applomatMarkers = [
-            'applomat', 'hh_ar_', 'startLoop', 'processVacancy', 'applyToVacancy',
+        // Характерные маркеры кода HH Apply Assistant
+        const assistantMarkers = [
+            'HH Apply Assistant', 'hh_apply_assistant_', 'startLoop', 'processVacancy', 'applyToVacancy',
             'realisticClick', 'fillCoverLetter', 'checkResponseTrap', 'watchdogTick',
             'setupUI', 'PanelController', 'WorkModeSlider', 'DiagnosticsView', 'DiagLog', 'interruptibleWait', 'fnv1a32', 'buildPanelHtml',
             'exportManualListHtml', 'runHealthCheck'
         ];
-        return applomatMarkers.some(m => combined.includes(m));
+        return assistantMarkers.some(m => combined.includes(m));
     }
 
     window.addEventListener('error', (e) => {
         try {
-            const isInternal = isApplomatError(e, false);
+            const isInternal = isHHApplyAssistantError(e, false);
             const where = e.filename ? ` @ ${e.filename}:${e.lineno || 0}:${e.colno || 0}` : '';
             if (isInternal) {
-                if (applomatErrCount >= APPLOMAT_ERR_LIMIT) return;
-                applomatErrCount++;
+                if (assistantErrCount >= ASSISTANT_ERR_LIMIT) return;
+                assistantErrCount++;
                 log(I18n.t('logs.jsError', { msg: e.message || 'Error', where }), true);
             } else {
                 if (externalErrCount >= EXTERNAL_ERR_LIMIT) return;
                 externalErrCount++;
                 DiagLog.push(`[External hh.ru error]: ${(e.message || 'Error').slice(0, 300)}${where}`, false);
-                console.warn('[applomat] External hh.ru error:', e.message, where);
+                console.warn('[HH Apply Assistant] External hh.ru error:', e.message, where);
             }
         } catch (_) { /* ignore */ }
     });
 
     window.addEventListener('unhandledrejection', (e) => {
         try {
-            const isInternal = isApplomatError(e, true);
+            const isInternal = isHHApplyAssistantError(e, true);
             const r = e.reason;
             const text = r && (r.stack || r.message) ? (r.stack || r.message) : String(r);
             if (isInternal) {
-                if (applomatErrCount >= APPLOMAT_ERR_LIMIT) return;
-                applomatErrCount++;
+                if (assistantErrCount >= ASSISTANT_ERR_LIMIT) return;
+                assistantErrCount++;
                 log(I18n.t('logs.unhandledRejection', { msg: String(text).slice(0, 500) }), true);
             } else {
                 if (externalErrCount >= EXTERNAL_ERR_LIMIT) return;
                 externalErrCount++;
                 DiagLog.push(`[External unhandled rejection]: ${String(text).slice(0, 300)}`, false);
-                console.warn('[applomat] External unhandled rejection hh.ru:', text);
+                console.warn('[HH Apply Assistant] External unhandled rejection hh.ru:', text);
             }
         } catch (_) { /* ignore */ }
     });
@@ -7380,6 +7662,19 @@
         });
         domReadyObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
+
+    // При восстановлении страницы из bfcache возвращается старый JS runtime со старым
+    // leaseId. Новый startLoop синхронно меняет runId до первого await и получает новое
+    // поколение lease, поэтому continuations замороженной страницы не могут продолжиться.
+    window.addEventListener('pageshow', (event) => {
+        if (!event.persisted || !State.amIRunning()) return;
+        if (activeAbortController) {
+            try { activeAbortController.abort(); } catch (e) {}
+        }
+        isLoopActive = false;
+        handlingResponsePage = false;
+        startLoop();
+    });
 
     // Очищаем instance lock при закрытии вкладки - но только когда прогон не активен:
     // прогон живёт через полные навигации (список → вакансия → список), и лок должен
