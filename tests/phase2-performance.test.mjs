@@ -92,6 +92,7 @@ class FakeElement {
         this.clientHeight = 200;
         this.disabled = false;
         this.checked = false;
+        this.listeners = new Map();
     }
 
     get textContent() { return this._textContent; }
@@ -129,7 +130,17 @@ class FakeElement {
         this.parentElement.children = this.parentElement.children.filter(child => child !== this);
         this.parentElement = null;
     }
-    click() { this.onclick?.({ stopPropagation() {} }); }
+    addEventListener(type, listener) {
+        const listeners = this.listeners.get(type) || [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+    }
+    dispatch(type) {
+        const event = { target: this, stopPropagation() {}, preventDefault() {} };
+        this[`on${type}`]?.(event);
+        (this.listeners.get(type) || []).forEach(listener => listener(event));
+    }
+    click() { this.dispatch('click'); }
     focus() {}
     matches() { return false; }
     closest() { return null; }
@@ -376,8 +387,10 @@ test('diagnostic log updates coalesce full renders and preserve controls', () =>
     const { hooks, document, clock } = createHarness();
     const ids = [
         'ar-view-main', 'ar-view-diag', 'ar-diag-full-box', 'ar-diag-back-btn',
-        'ar-diag-full-errors-only', 'ar-health-badge', 'ar-health-btn', 'ar-diag-full-stat',
-        'ar-diag-full-clear-all', 'ar-diag-full-dropdown'
+        'ar-diag-filter-all', 'ar-diag-filter-errors', 'ar-diag-filter-all-count',
+        'ar-diag-filter-errors-count', 'ar-diag-search', 'ar-diag-search-clear',
+        'ar-diag-auto-scroll', 'ar-diag-health-summary', 'ar-diag-check-status',
+        'ar-health-badge', 'ar-health-btn', 'ar-diag-full-clear-all', 'ar-diag-full-dropdown'
     ];
     ids.forEach(id => document.elementsById.set(id, new FakeElement(document)));
     const el = id => document.getElementById(id);
@@ -385,7 +398,7 @@ test('diagnostic log updates coalesce full renders and preserve controls', () =>
     const viewDiag = el('ar-view-diag');
     const fullBox = el('ar-diag-full-box');
     const badge = el('ar-health-badge');
-    const errorsOnly = el('ar-diag-full-errors-only');
+    const errorsOnly = el('ar-diag-filter-errors');
     hooks.DiagnosticsView.mount({ el, uiSignal: new AbortController().signal });
 
     el('ar-health-btn').onclick();
@@ -410,19 +423,17 @@ test('diagnostic log updates coalesce full renders and preserve controls', () =>
     assert.equal(findByClass(fullBox, 'ar-log-group-children').length, 0);
 
     hooks.log('failure', true);
-    errorsOnly.checked = true;
-    errorsOnly.onchange();
+    errorsOnly.click();
     clock.advance(16);
     const messages = findByClass(fullBox, 'ar-log-message').map(node => node.textContent);
     assert.deepEqual(messages, ['failure']);
-    assert.match(el('ar-diag-full-stat').textContent, /ошиб|запис/i);
+    assert.equal(el('ar-diag-filter-errors-count').textContent, '1');
 
     hooks.I18n.setLanguage('en');
     hooks.DiagnosticsView.refresh();
-    assert.match(el('ar-diag-full-stat').textContent, /error|entr(?:y|ies)|record/i);
+    assert.match(el('ar-diag-health-summary').title, /error|entr(?:y|ies)|record/i);
 
-    errorsOnly.checked = false;
-    errorsOnly.onchange();
+    el('ar-diag-filter-all').click();
     el('ar-diag-full-clear-all').onclick();
     clock.advance(16);
     assert.equal(hooks.DiagLog.getAll().length, 1, 'clear keeps only its own confirmation entry');
