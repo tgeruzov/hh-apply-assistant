@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HH docking geometry fixture</title>
+<style>
+html,body{margin:0;min-width:0;font:14px Arial,sans-serif;background:#f4f5f6}
+#HH-React-Root{width:100%;min-width:0}
+.supernova-navi-container{position:sticky;top:0;width:100%;background:#08090a;color:#fff;z-index:2}
+.supernova-navi-wrapper,.supernova-navi-inner-wrapper,.supernova-navi{width:100%;min-width:0}
+.supernova-navi{display:flex;align-items:center;gap:8px;padding:12px;overflow:hidden}
+.supernova-navi a,.supernova-navi button{flex:0 1 auto;min-width:0;white-space:nowrap}
+.HH-MainContent,.main-content{width:100%;min-width:0}
+.main-content{display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,30%);gap:16px;padding:16px;min-height:1200px}
+.search-controls{display:flex;flex-wrap:wrap;gap:8px;min-width:0}
+.search-controls input{flex:1 1 260px;min-width:0}
+.map{min-width:0;height:320px;background:#dce7ef}
+.sticky-buttonbar_float-top{position:fixed;right:16px;bottom:18px}
+.notification-manager{position:fixed;right:24px;top:76px}
+.sticky-vacancy-header-container-sticky--fixture{position:fixed;left:0;top:48px;width:100%;height:36px;background:#fff3bf;display:flex;justify-content:flex-end}
+button,input,a,[role="button"]{padding:7px;border:1px solid #aaa;background:#fff;color:#111}
+*{box-sizing:border-box}
+</style>
+<script>
+localStorage.setItem('hh_apply_assistant_v4_ui_open','1');
+localStorage.setItem('hh_apply_assistant_v4_is_active','0');
+localStorage.setItem('hh_apply_assistant_v4_manual_queue',JSON.stringify([
+  {vid:'1355693974',title:'Менеджер по продажам курсов обучения',url:'https://hh.ru/vacancy/1355693974',ts:Date.now()},
+  {vid:'135550694',title:'Менеджер по продажам удалённая работа',url:'https://hh.ru/vacancy/135550694',ts:Date.now()}
+]));
+</script>
+</head>
+<body>
+<div id="HH-React-Root" class="XHH-ReactRoot">
+  <div data-qa="lux-container lux-container-rendered">
+    <div class="supernova-navi-container"><div class="supernova-navi-wrapper"><div class="supernova-navi-inner-wrapper"><nav class="supernova-navi">
+      <a href="#" data-qa="mainmenu_myResumes">Мои резюме</a>
+      <a href="#" data-qa="mainmenu_responses">Отклики</a>
+      <a href="#" data-qa="mainmenu_favoriteVacancies">Избранное</a>
+      <button data-qa="mainmenu_applicantProfile">Профиль</button>
+      <button data-qa="search-button">Найти</button>
+    </nav></div></div></div>
+    <div class="HH-MainContent HH-Supernova-MainContent"><main class="main-content" data-qa="main-content">
+      <section><div class="search-controls">
+        <input data-qa="search-input" value="JavaScript developer">
+        <button data-qa="search-button">Найти</button>
+        <button data-qa="reset-filters">Сбросить</button>
+        <button data-qa="serp-settings">Фильтры</button>
+        <button data-qa="vacancy-response-link-top">Откликнуться</button>
+      </div><article><a href="#" data-qa="serp-item__title">Vacancy card</a></article></section>
+      <aside class="map"><button data-qa="map-button">Map control</button></aside>
+    </main></div>
+  </div>
+</div>
+<button class="sticky-buttonbar_float-top" data-qa="vacancy-response-link-bottom">Sticky apply</button>
+<button class="notification-manager" data-qa="notifications">Notifications</button>
+<div class="sticky-vacancy-header-container-sticky--fixture"><button data-qa="vacancy-actions">Vacancy actions</button></div>
+<script src="/script.js"></script>
+</body>
+</html>
