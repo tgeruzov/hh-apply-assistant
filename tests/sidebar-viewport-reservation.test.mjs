@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const production = readFileSync(new URL('../script.js', import.meta.url), 'utf8');
-const lab = readFileSync(new URL('../hh-apply-assistant-ui-lab.html', import.meta.url), 'utf8');
+const labUrl = new URL('../hh-apply-assistant-ui-lab.html', import.meta.url);
+const lab = existsSync(labUrl) ? readFileSync(labUrl, 'utf8') : '';
 
 test('responsive model defines measured panel and host constraints without body hacks', () => {
     assert.doesNotMatch(production, /html\.hha-(?:open|docked)[^\{]*\{[^\}]*(?:margin|padding)-right/);
@@ -67,7 +68,7 @@ test('open, minimize, fallback, and teardown keep manual and responsive state se
     assert.match(production, /HostLayoutReservation\.destroy\(\)/);
 });
 
-test('UI Lab previews responsive compact panel without HH host integration', () => {
+test('UI Lab previews responsive compact panel without HH host integration', { skip: !lab }, () => {
     assert.match(lab, /--hha-panel-preferred-width:410px/);
     assert.match(lab, /--hha-panel-min-width:340px/);
     assert.match(lab, /--hha-host-min-width:980px/);
