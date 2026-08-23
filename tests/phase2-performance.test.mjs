@@ -506,10 +506,10 @@ test('heuristics perform geometry checks only after semantic filtering', () => {
 test('diagnostic log updates coalesce full renders and preserve controls', () => {
     const { hooks, document, clock } = createHarness();
     const ids = [
-        'ar-view-main', 'ar-view-diag', 'ar-diag-full-box', 'ar-diag-back-btn',
+        'ar-main-panel', 'ar-view-main', 'ar-view-diag', 'ar-diag-full-box', 'ar-diag-back-btn',
         'ar-diag-filter-all', 'ar-diag-filter-errors', 'ar-diag-filter-all-count',
         'ar-diag-filter-errors-count', 'ar-diag-search', 'ar-diag-search-clear',
-        'ar-diag-auto-scroll', 'ar-diag-health-summary', 'ar-diag-check-status',
+        'ar-diag-auto-scroll', 'ar-diag-check-status',
         'ar-health-badge', 'ar-health-btn', 'ar-diag-full-clear-all', 'ar-diag-full-dropdown'
     ];
     ids.forEach(id => document.elementsById.set(id, new FakeElement(document)));
@@ -519,6 +519,9 @@ test('diagnostic log updates coalesce full renders and preserve controls', () =>
     const fullBox = el('ar-diag-full-box');
     const badge = el('ar-health-badge');
     const errorsOnly = el('ar-diag-filter-errors');
+    el('ar-main-panel').style.display = 'flex';
+    viewMain.style.display = 'flex';
+    viewDiag.style.display = 'none';
     hooks.DiagnosticsView.mount({ el, uiSignal: new AbortController().signal });
 
     el('ar-health-btn').onclick();
@@ -527,20 +530,34 @@ test('diagnostic log updates coalesce full renders and preserve controls', () =>
     fullBox.innerHTMLWrites = 0;
     badge.textContentWrites = 0;
 
-    hooks.log('repeat');
-    hooks.log('repeat');
-    hooks.log('repeat');
+    for (let index = 0; index < 1000; index++) hooks.log('repeat');
     assert.equal(fullBox.innerHTMLWrites, 0, 'log should schedule rather than synchronously rebuild');
     clock.advance(16);
-    assert.equal(fullBox.innerHTMLWrites, 1, 'three log writes should coalesce into one full render');
-    assert.equal(badge.textContentWrites, 3, 'badge should update once per log entry');
+    assert.equal(fullBox.innerHTMLWrites, 1, '1000 log writes should coalesce into one full render');
+    assert.equal(badge.textContentWrites, 1000, 'badge should update once per log entry');
     const repeatBadges = findByClass(fullBox, 'ar-log-repeat');
     assert.equal(repeatBadges.length, 1);
-    assert.match(repeatBadges[0].textContent, /×3/);
+    assert.match(repeatBadges[0].textContent, /×1000/);
+    assert.equal(findByClass(fullBox, 'ar-log-child').length, 0, 'collapsed repeats should not mount child rows');
     repeatBadges[0].click();
     assert.equal(findByClass(fullBox, 'ar-log-group-children').length, 1);
+    assert.equal(findByClass(fullBox, 'ar-log-child').length, 1000);
     findByClass(fullBox, 'ar-log-repeat')[0].click();
     assert.equal(findByClass(fullBox, 'ar-log-group-children').length, 0);
+    assert.equal(findByClass(fullBox, 'ar-log-child').length, 0, 'collapse should release child rows');
+
+    const searchInput = el('ar-diag-search');
+    const writesBeforeSearch = fullBox.innerHTMLWrites;
+    for (const query of ['e', 'er', 'err', 'erro', 'error']) {
+        searchInput.value = query;
+        searchInput.dispatch('input');
+    }
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeSearch);
+    clock.advance(139);
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeSearch);
+    clock.advance(1);
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeSearch + 1, 'rapid search input should cause one heavy render');
+    el('ar-diag-search-clear').click();
 
     hooks.log('failure', true);
     errorsOnly.click();
@@ -549,9 +566,18 @@ test('diagnostic log updates coalesce full renders and preserve controls', () =>
     assert.deepEqual(messages, ['failure']);
     assert.equal(el('ar-diag-filter-errors-count').textContent, '1');
 
+    const writesBeforeLanguageRefresh = fullBox.innerHTMLWrites;
+    searchInput.value = 'error';
+    searchInput.dispatch('input');
     hooks.I18n.setLanguage('en');
     hooks.DiagnosticsView.refresh();
-    assert.match(el('ar-diag-health-summary').title, /error|entr(?:y|ies)|record/i);
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeLanguageRefresh + 1,
+        'language refresh should replace the pending search render');
+    clock.advance(140);
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeLanguageRefresh + 1,
+        'language refresh should prevent a second delayed render');
+    el('ar-diag-search-clear').click();
+    assert.equal(el('ar-diag-filter-all-count').textContent, '1000');
 
     el('ar-diag-filter-all').click();
     el('ar-diag-full-clear-all').onclick();
@@ -561,4 +587,139 @@ test('diagnostic log updates coalesce full renders and preserve controls', () =>
     el('ar-diag-back-btn').onclick();
     assert.equal(viewDiag.style.display, 'none');
     assert.equal(viewMain.style.display, 'flex');
+});
+
+test('Diagnostics keeps slow and burst sources, counts, groups, and RU/EN exports bounded to 1000', () => {
+    const { hooks, document, clock } = createHarness();
+    const ids = [
+        'ar-main-panel', 'ar-view-main', 'ar-view-diag', 'ar-diag-full-box', 'ar-diag-back-btn',
+        'ar-diag-filter-all', 'ar-diag-filter-errors', 'ar-diag-filter-all-count',
+        'ar-diag-filter-errors-count', 'ar-diag-search', 'ar-diag-search-clear',
+        'ar-diag-auto-scroll', 'ar-diag-check-status', 'ar-health-badge', 'ar-health-btn',
+        'ar-diag-full-clear-all', 'ar-diag-full-dropdown'
+    ];
+    ids.forEach(id => document.elementsById.set(id, new FakeElement(document)));
+    const el = id => document.getElementById(id);
+    el('ar-main-panel').style.display = 'flex';
+    el('ar-view-main').style.display = 'flex';
+    el('ar-view-diag').style.display = 'none';
+    hooks.DiagnosticsView.mount({ el, uiSignal: new AbortController().signal });
+    el('ar-health-btn').onclick();
+
+    const slowEntries = [];
+    for (let index = 0; index < 1005; index++) {
+        const isError = index % 17 === 0;
+        slowEntries.push({ index, isError });
+        hooks.log(`slow ${index}`, isError);
+        assert.ok(Number(el('ar-diag-filter-all-count').textContent) <= 1000);
+    }
+    const boundedSlow = slowEntries.slice(-1000);
+    const expectedErrors = boundedSlow.filter(entry => entry.isError).length;
+    assert.deepEqual({ ...hooks.DiagLog.getStats() }, {
+        total: 1000,
+        errors: expectedErrors,
+        version: 1005
+    });
+    assert.equal(el('ar-diag-filter-all-count').textContent, '1000');
+    assert.equal(el('ar-diag-filter-errors-count').textContent, String(expectedErrors));
+    clock.advance(16);
+    assert.equal(findByClass(el('ar-diag-full-box'), 'ar-log-row').length, 1000);
+
+    for (const language of ['ru', 'en']) {
+        hooks.I18n.setLanguage(language);
+        hooks.DiagnosticsView.refresh();
+        const report = hooks.buildDiagnosticReport();
+        assert.equal((report.match(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\]/gm) || []).length, 1000);
+        assert.equal(el('ar-diag-filter-all-count').textContent, '1000');
+        assert.equal(el('ar-diag-filter-errors-count').textContent, String(expectedErrors));
+    }
+
+    hooks.DiagLog.clear();
+    hooks.DiagnosticsView.refresh();
+    for (let index = 0; index < 1250; index++) hooks.log('burst');
+    assert.equal(hooks.DiagLog.getAll().length, 1000);
+    assert.equal(hooks.DiagLog.getStats().errors, 0);
+    assert.equal(el('ar-diag-filter-all-count').textContent, '1000');
+    clock.advance(16);
+    const repeatBadges = findByClass(el('ar-diag-full-box'), 'ar-log-repeat');
+    assert.equal(repeatBadges.length, 1);
+    assert.match(repeatBadges[0].textContent, /×1000/);
+    assert.equal((hooks.buildDiagnosticReport().match(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\]/gm) || []).length, 1000);
+});
+
+test('hidden Diagnostics stays dirty without rendering and catches up exactly once per reopen', () => {
+    const { hooks, document, clock } = createHarness();
+    const ids = [
+        'ar-main-panel', 'ar-view-main', 'ar-view-diag', 'ar-diag-full-box', 'ar-diag-back-btn',
+        'ar-diag-filter-all', 'ar-diag-filter-errors', 'ar-diag-filter-all-count',
+        'ar-diag-filter-errors-count', 'ar-diag-search', 'ar-diag-search-clear',
+        'ar-diag-auto-scroll', 'ar-diag-check-status',
+        'ar-health-badge', 'ar-health-btn', 'ar-diag-full-clear-all', 'ar-diag-full-dropdown'
+    ];
+    ids.forEach(id => document.elementsById.set(id, new FakeElement(document)));
+    const el = id => document.getElementById(id);
+    const panel = el('ar-main-panel');
+    const viewMain = el('ar-view-main');
+    const viewDiag = el('ar-view-diag');
+    const fullBox = el('ar-diag-full-box');
+    panel.style.display = 'flex';
+    viewMain.style.display = 'flex';
+    viewDiag.style.display = 'none';
+
+    const firstController = new AbortController();
+    hooks.DiagnosticsView.mount({ el, uiSignal: firstController.signal });
+    el('ar-health-btn').onclick();
+    const searchInput = el('ar-diag-search');
+    searchInput.value = 'kept';
+    searchInput.dispatch('input');
+    const writesBeforeBack = fullBox.innerHTMLWrites;
+    el('ar-diag-back-btn').onclick();
+    clock.advance(140);
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeBack, 'Back should cancel the pending search render');
+    assert.equal(fullBox.childElementCount, 0, 'Back should release heavy log DOM');
+    assert.equal(searchInput.value, 'kept', 'Back should preserve search state');
+    fullBox.innerHTMLWrites = 0;
+
+    for (let index = 0; index < 100; index++) hooks.log(`kept hidden ${index}`);
+    clock.advance(16);
+    assert.equal(fullBox.innerHTMLWrites, 0, '100 hidden logs should trigger zero heavy renders');
+
+    el('ar-health-btn').onclick();
+    assert.equal(fullBox.innerHTMLWrites, 1, 'reopening Diagnostics should perform one catch-up render');
+
+    panel.style.display = 'none';
+    hooks.DiagnosticsView.onVisibilityChange();
+    fullBox.innerHTMLWrites = 0;
+    for (let index = 0; index < 100; index++) hooks.log(`kept minimized ${index}`);
+    clock.advance(16);
+    assert.equal(fullBox.innerHTMLWrites, 0);
+    panel.style.display = 'flex';
+    hooks.DiagnosticsView.onVisibilityChange();
+    assert.equal(fullBox.innerHTMLWrites, 1, 'expanding the panel should catch up once');
+
+    document.hidden = true;
+    document.dispatch('visibilitychange');
+    fullBox.innerHTMLWrites = 0;
+    for (let index = 0; index < 100; index++) hooks.log(`kept background ${index}`);
+    clock.advance(16);
+    assert.equal(fullBox.innerHTMLWrites, 0);
+    document.hidden = false;
+    document.dispatch('visibilitychange');
+    assert.equal(fullBox.innerHTMLWrites, 1, 'returning to the document should catch up once');
+
+    searchInput.value = 'pending destroy';
+    searchInput.dispatch('input');
+    const writesBeforeDestroy = fullBox.innerHTMLWrites;
+    firstController.abort();
+    hooks.DiagnosticsView.destroy();
+    clock.advance(140);
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeDestroy, 'destroy should cancel the pending search render');
+    const secondController = new AbortController();
+    hooks.DiagnosticsView.mount({ el, uiSignal: secondController.signal });
+    assert.equal(document.listeners.get('visibilitychange')?.length, 1, 'remount should not duplicate visibility handlers');
+    fullBox.innerHTMLWrites = 0;
+    hooks.DiagnosticsView.onVisibilityChange();
+    assert.equal(fullBox.innerHTMLWrites, 1, 'remount should render the current state once');
+    secondController.abort();
+    hooks.DiagnosticsView.destroy();
 });

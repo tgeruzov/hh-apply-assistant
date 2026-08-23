@@ -181,6 +181,9 @@ function createHarness({
         returnToList,
         saveCurrentForManual,
         persistSentCount,
+        setStatus,
+        restoreStatusAfterMount,
+        getCurrentStatusState: () => ({ ...currentStatusState }),
         getConfig: () => ({ ...config }),
         runtime: () => ({ currentRunId, isLoopActive, stopSignal, handlingResponsePage, hasAbortController: !!activeAbortController })
     };
@@ -198,6 +201,34 @@ test('production source uses only the canonical v4 namespace and brand', () => {
     assert.match(SCRIPT_SOURCE, /const STORAGE_PREFIX = 'hh_apply_assistant_v4_'/);
     assert.match(SCRIPT_SOURCE, /HH Apply Assistant v4\.0\.0/);
     assert.doesNotMatch(SCRIPT_SOURCE, /hh_ar_v2_|hh_ar_manual_processed|LEGACY_PROCESSED_KEY|applomat/i);
+});
+
+test('SPA remount status restoration preserves terminal states and rejects stale running state', () => {
+    const { hooks } = createHarness();
+    hooks.State.setRunning(false);
+
+    for (const terminal of [
+        ['stopped', undefined],
+        ['done', undefined],
+        ['error', undefined],
+        ['stopped', 'status.captchaStopped']
+    ]) {
+        hooks.setStatus(...terminal);
+        hooks.restoreStatusAfterMount();
+        const restored = hooks.getCurrentStatusState();
+        assert.equal(restored.statusKey, terminal[0]);
+        assert.equal(restored.customKeyOrText, terminal[1]);
+    }
+
+    hooks.setStatus('running', 'status.waitingToReturn');
+    hooks.restoreStatusAfterMount();
+    assert.equal(hooks.getCurrentStatusState().statusKey, 'idle');
+    assert.equal(hooks.getCurrentStatusState().customKeyOrText, undefined);
+
+    hooks.setStatus('done');
+    hooks.State.setRunning(true);
+    hooks.restoreStatusAfterMount();
+    assert.equal(hooks.getCurrentStatusState().statusKey, 'running');
 });
 
 test('previous namespace data is ignored without cleanup or migration', () => {

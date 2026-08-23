@@ -93,6 +93,7 @@ class FakeElement {
         this.clientWidth = 70;
         this.offsetWidth = 10;
         this.textContent = '';
+        this.listeners = new Map();
     }
     appendChild(child) {
         if (child?.isFragment) {
@@ -113,8 +114,20 @@ class FakeElement {
         if (node === this) return true;
         return this.children.some(child => child.contains?.(node));
     }
-    addEventListener() {}
-    removeEventListener() {}
+    addEventListener(type, listener) {
+        const listeners = this.listeners.get(type) || [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+    }
+    removeEventListener(type, listener) {
+        const listeners = this.listeners.get(type) || [];
+        this.listeners.set(type, listeners.filter(candidate => candidate !== listener));
+    }
+    dispatch(type, init = {}) {
+        const event = { target: this, stopPropagation() {}, preventDefault() {}, ...init };
+        this[`on${type}`]?.(event);
+        (this.listeners.get(type) || []).forEach(listener => listener(event));
+    }
     setAttribute(name, value) { this[name] = String(value); }
     focus() {}
     getAnimations() { return []; }
@@ -123,7 +136,8 @@ class FakeElement {
         const animation = {
             element: this,
             onfinish: null,
-            cancel() {},
+            cancelled: false,
+            cancel() { this.cancelled = true; },
             finish() { this.onfinish?.(); }
         };
         this.ownerDocument.animations.push(animation);
@@ -278,6 +292,8 @@ function createHarness({ preset = 'balanced' } = {}) {
         document,
         panel,
         mainView,
+        slider,
+        gridStrip,
         el,
         uiController
     };
@@ -372,5 +388,93 @@ test('Safe, Balanced and Fast modes never schedule Turbo pulse work', () => {
         harness.hooks.WorkModeSlider.mount({ el: harness.el, uiSignal: harness.uiController.signal });
         harness.scheduler.flushAnimationFrames();
         assert.equal(harness.scheduler.timeouts.size, 0, `${preset} should not schedule Turbo timers`);
+        assert.equal(harness.document.cellCreations, 0, `${preset} should not mount Turbo cells`);
+        harness.scheduler.fireResize();
+        harness.scheduler.fireResize();
+        harness.scheduler.fireResize();
+        harness.scheduler.flushAnimationFrames();
+        assert.equal(harness.document.cellCreations, 0, `${preset} resize should not rebuild Turbo cells`);
     }
+});
+
+test('Turbo grid mounts lazily, survives the exit transition, and cleans up after 220ms', () => {
+    const harness = createHarness({ preset: 'fast' });
+    harness.hooks.WorkModeSlider.mount({ el: harness.el, uiSignal: harness.uiController.signal });
+    harness.scheduler.flushAnimationFrames();
+    assert.equal(harness.gridStrip.children.length, 0);
+
+    harness.slider.dispatch('keydown', { key: 'End' });
+    const mountedCellCount = harness.gridStrip.children.length;
+    assert.ok(mountedCellCount > 0, 'entering Turbo should create the grid');
+    assert.equal(harness.slider.classList.contains('has-turbo-grid'), true);
+
+    harness.slider.dispatch('keydown', { key: 'ArrowLeft' });
+    assert.equal(harness.gridStrip.children.length, mountedCellCount, 'grid should remain during Turbo exit');
+    const cleanupTimer = [...harness.scheduler.timeouts.values()].find(timer => timer.delay === 220);
+    assert.ok(cleanupTimer, 'Turbo exit should schedule the existing 220ms cleanup boundary');
+    cleanupTimer.fn();
+    assert.equal(harness.gridStrip.children.length, 0);
+    assert.equal(harness.slider.classList.contains('has-turbo-grid'), false);
+});
+
+test('stale Turbo exit cleanup cannot delete a grid after rapid re-entry', () => {
+    const harness = createHarness({ preset: 'fast' });
+    harness.hooks.WorkModeSlider.mount({ el: harness.el, uiSignal: harness.uiController.signal });
+    harness.scheduler.flushAnimationFrames();
+
+    harness.slider.dispatch('keydown', { key: 'End' });
+    harness.slider.dispatch('keydown', { key: 'ArrowLeft' });
+    const staleCleanup = [...harness.scheduler.timeouts.values()].find(timer => timer.delay === 220);
+    assert.ok(staleCleanup);
+
+    harness.slider.dispatch('keydown', { key: 'End' });
+    const activeCellCount = harness.gridStrip.children.length;
+    assert.ok(activeCellCount > 0);
+    staleCleanup.fn();
+    assert.equal(harness.gridStrip.children.length, activeCellCount);
+    assert.equal(harness.slider.classList.contains('has-turbo-grid'), true);
+});
+
+test('visible Turbo resize bursts coalesce to one grid rebuild per animation frame', () => {
+    const harness = createHarness({ preset: 'turbo' });
+    harness.hooks.WorkModeSlider.mount({ el: harness.el, uiSignal: harness.uiController.signal });
+    harness.scheduler.flushAnimationFrames();
+    const cellsPerGrid = harness.gridStrip.children.length;
+    const creationsBeforeResize = harness.document.cellCreations;
+
+    harness.scheduler.fireResize();
+    harness.scheduler.fireResize();
+    harness.scheduler.fireResize();
+    harness.scheduler.flushAnimationFrames();
+
+    assert.equal(harness.document.cellCreations, creationsBeforeResize + cellsPerGrid);
+});
+
+test('100 Safe to Turbo cycles leave no active grid work after cleanup', () => {
+    const harness = createHarness({ preset: 'safe' });
+    harness.hooks.WorkModeSlider.mount({ el: harness.el, uiSignal: harness.uiController.signal });
+    harness.scheduler.flushAnimationFrames();
+
+    let expectedCellCount = 0;
+    for (let cycle = 0; cycle < 100; cycle++) {
+        harness.slider.dispatch('keydown', { key: 'End' });
+        expectedCellCount ||= harness.gridStrip.children.length;
+        assert.equal(harness.gridStrip.children.length, expectedCellCount);
+
+        harness.slider.dispatch('keydown', { key: 'Home' });
+        const cleanupEntry = [...harness.scheduler.timeouts.entries()].find(([, timer]) => timer.delay === 220);
+        assert.ok(cleanupEntry, `cycle ${cycle + 1} should schedule grid cleanup`);
+        harness.scheduler.timeouts.delete(cleanupEntry[0]);
+        cleanupEntry[1].fn();
+        assert.equal(harness.gridStrip.children.length, 0);
+    }
+
+    harness.hooks.WorkModeSlider.destroy();
+    assert.equal(harness.gridStrip.children.length, 0);
+    const turboLifecycleDelays = [...harness.scheduler.timeouts.values()]
+        .map(timer => timer.delay)
+        .filter(delay => [80, 220, 255, 400, 600].includes(delay));
+    assert.deepEqual(turboLifecycleDelays, []);
+    assert.equal(harness.scheduler.rafs.size, 0);
+    assert.ok(harness.document.animations.every(animation => animation.cancelled));
 });
