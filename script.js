@@ -15,6 +15,28 @@
 (function () {
     'use strict';
 
+    // Повторная инъекция userscript в тот же document не должна создавать второй runtime.
+    // Полная навигация получает новый window, а SPA/bfcache продолжают использовать эту запись.
+    const RUNTIME_KEY = '__hhApplyAssistantV4Runtime';
+    const existingRuntime = window[RUNTIME_KEY];
+    if (existingRuntime && existingRuntime.active) return;
+
+    const runtimeRecord = {
+        active: true,
+        version: '4.0.0',
+        watchdogIntervalId: null,
+        domReadyObserver: null,
+        globalListeners: [],
+        teardown: null
+    };
+    window[RUNTIME_KEY] = runtimeRecord;
+
+    function addRuntimeListener(target, type, handler, options) {
+        if (!target || typeof target.addEventListener !== 'function') return;
+        target.addEventListener(type, handler, options);
+        runtimeRecord.globalListeners.push({ target, type, handler, options });
+    }
+
     // ─────────────────────────────────────────────────────────────
     //  1. КОНСТАНТЫ И КОНФИГУРАЦИЯ
     // ─────────────────────────────────────────────────────────────
@@ -53,6 +75,7 @@
         scrollStepMs: 200,        // шаг человеческого скролла
         waitForModalMs: 8000,     // ожидание реакции после клика Откликнуться
         confirmWaitMs: 6000,      // ожидание подтверждения после отправки формы
+        responsePagePendingMs: 16000, // обычный full-page submit ждём без повторного клика
         instanceLockTtl: 30000,   // TTL кросс-вкладочной блокировки
         forceSubmitAttempts: 3    // попыток дожать отправку при предупреждении об отказе
     };
@@ -68,7 +91,6 @@
         applyBtn: '[data-qa="vacancy-serp__vacancy_response"], button[data-qa="vacancy-serp__vacancy_response"]',
         // Кнопки "Откликнуться" на странице самой вакансии (верхняя/нижняя)
         vacancyApply: '[data-qa="vacancy-response-link-top"], a[data-qa="vacancy-response-link-top"], [data-qa="vacancy-response-link-bottom"], a[data-qa="vacancy-response-link-bottom"]',
-        topApply: '[data-qa="vacancy-response-link-top"], a[data-qa="vacancy-response-link-top"]',
         // Сценарий А: резюме уже отправлено, предлагается прикрепить сопроводительное
         attachCoverBtn: '[data-qa="responded-success-attach-cover-letter"]',
         // Кнопка/переключатель "прикрепить сопроводительное" ВНУТРИ формы отклика (до отправки):
@@ -2029,7 +2051,7 @@
             switch (key) {
                 case 'applyBtn':
                 case 'vacancyApply':
-                case 'topApply': {
+                {
                     const elements = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     const matchText = /откликнуться|отклик без резюме|перейти к отклику|apply|respond|no resume necessary|apply now/i;
                     for (const el of elements) {
@@ -2056,15 +2078,6 @@
                     const activeEls = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     for (const el of activeEls) {
                         if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
-                            return el;
-                        }
-                    }
-                    // Если не нашли, ищем среди span и div (как фоллбек)
-                    const staticEls = Array.from(root.querySelectorAll('span, div'));
-                    for (const el of staticEls) {
-                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
-                            // Исключаем контейнеры, если внутри них есть другие интерактивные элементы или textarea
-                            if (el.querySelector('button, a, textarea, input, select')) continue;
                             return el;
                         }
                     }
@@ -2124,7 +2137,7 @@
                 }
                 case 'rejectWarning': {
                     const elements = Array.from(root.querySelectorAll('div, span, p, h1, h2, h3'));
-                    const matchText = /отказ|не подходит|будет отказ|reject|unsuitable|decline|likely to get a rejection/i;
+                    const matchText = /(?:скорее всего|вероятн\w*|возможен|может быть)\W{0,30}отказ|(?:likely|probably|may)\W{0,30}(?:reject|declin)|likely to get a rejection/i;
                     for (const el of elements) {
                         if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             return el;
@@ -2134,7 +2147,7 @@
                 }
                 case 'responseChat': {
                     const elements = Array.from(root.querySelectorAll('a, button'));
-                    const matchText = /сообщение|чат|переписке|перейти к|message|chat|topic/i;
+                    const matchText = /перейти (?:в|к) (?:чат|переписк\w*|сообщени\w*)|написать сообщени\w*|открыть чат|(?:go|open|view) (?:the )?(?:chat|conversation|topic)|message (?:the )?employer/i;
                     for (const el of elements) {
                         if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             return el;
@@ -2277,8 +2290,22 @@
         });
     }
 
+    function mutationBelongsToAssistantUI(mutation) {
+        if (!mutation) return false;
+        if (isAutoResponderUI(mutation.target)) return true;
+        const changedNodes = [
+            ...Array.from(mutation.addedNodes || []),
+            ...Array.from(mutation.removedNodes || [])
+        ];
+        return changedNodes.length > 0 && changedNodes.every(node => {
+            if (node?.nodeType === 1) return isAutoResponderUI(node);
+            return isAutoResponderUI(node?.parentElement || mutation.target);
+        });
+    }
+
     // Ждём выполнения условия (возвращающего не-false значение или truthy результат).
-    // Реагирует на MutationObserver, интервал и таймер, поддерживает мгновенную отмену по AbortSignal / stopSignal.
+    // DOM-события только планируют один коротко отложенный check; собственный UI игнорируется,
+    // а редкий polling сохраняет совместимость с delayed modal и SPA без постоянного rAF-сканирования.
     async function waitForCondition(checkFn, timeout = TUNING.waitForModalMs, signal) {
         const sig = signal || activeAbortController?.signal;
         if (stopSignal || sig?.aborted) return false;
@@ -2293,7 +2320,6 @@
             let onAbort = null;
             let observer = null;
             let scheduledId = null;
-            let isRaf = false;
             let finished = false;
 
             const finish = (result) => {
@@ -2303,11 +2329,7 @@
                 if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
                 if (observer) { observer.disconnect(); observer = null; }
                 if (scheduledId) {
-                    if (isRaf && typeof cancelAnimationFrame === 'function') {
-                        cancelAnimationFrame(scheduledId);
-                    } else {
-                        clearTimeout(scheduledId);
-                    }
+                    clearTimeout(scheduledId);
                     scheduledId = null;
                 }
                 if (onAbort && sig) {
@@ -2336,27 +2358,27 @@
             };
 
             if (typeof MutationObserver !== 'undefined') {
-                observer = new MutationObserver(() => {
+                observer = new MutationObserver((mutations) => {
                     if (finished || stopSignal || sig?.aborted) {
                         finish(false);
                         return;
                     }
+                    if (mutations?.length && mutations.every(mutationBelongsToAssistantUI)) return;
                     if (!scheduledId) {
-                        if (typeof requestAnimationFrame === 'function') {
-                            isRaf = true;
-                            scheduledId = requestAnimationFrame(executeCheck);
-                        } else {
-                            isRaf = false;
-                            scheduledId = setTimeout(executeCheck, 0);
-                        }
+                        scheduledId = setTimeout(executeCheck, 40);
                     }
                 });
                 try {
-                    observer.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true });
+                    observer.observe(document.documentElement || document, {
+                        childList: true,
+                        subtree: true,
+                        attributes: true,
+                        attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'aria-busy', 'disabled', 'data-state', 'data-qa']
+                    });
                 } catch (e) {}
             }
 
-            pollTimer = setInterval(executeCheck, 150);
+            pollTimer = setInterval(executeCheck, 300);
 
             timer = setTimeout(() => finish(false), timeout);
         });
@@ -2381,7 +2403,7 @@
 
     // Отслеживаем реальные координаты мыши пользователя, чтобы траектория начиналась оттуда
     let lastMousePos = { x: 0, y: 0 };
-    window.addEventListener('mousemove', (e) => {
+    addRuntimeListener(window, 'mousemove', (e) => {
         lastMousePos.x = e.clientX;
         lastMousePos.y = e.clientY;
     }, { passive: true });
@@ -2503,8 +2525,8 @@
 
     const Page = {
         isVacancy: () => location.pathname.startsWith('/vacancy/'),
-        isResponseForm: () => location.href.includes('/applicant/vacancy_response'),
-        isSearchList: () => location.href.includes('/search/vacancy'),
+        isResponseForm: () => location.pathname.startsWith('/applicant/vacancy_response'),
+        isSearchList: () => location.pathname.startsWith('/search/vacancy'),
         isSearch: () => location.href.includes('/search/vacancy') || location.pathname.startsWith('/search')
     };
 
@@ -2560,12 +2582,18 @@
         return qa(scopeSelector).find(el => !isAutoResponderUI(el) && isVisible(el)) || null;
     }
 
+    function hasReliableRejectWarning() {
+        if (isVisible(queryExact('rejectWarning'))) return true;
+        const scope = getResponseDetectionScope();
+        return !!(scope && queryHeuristic('rejectWarning', scope));
+    }
+
     function hasResponseTextConfirmation(root) {
         try {
             const nodes = (root || document).querySelectorAll('h1,h2,h3,p,div,span');
             for (const el of nodes) {
-                const t = el.childElementCount === 0 ? (el.textContent || '') : '';
-                if (t && /(?:резюме доставлено|resume delivered|application sent|response sent)/i.test(t.trim()) && isVisible(el)) return true;
+                const t = el.childElementCount === 0 ? collapseSpaces(el.textContent || '') : '';
+                if (t && t.length <= 240 && /(?:резюме доставлено|resume delivered|application sent|response sent)/i.test(t) && isVisible(el)) return true;
             }
         } catch (e) { /* ignore */ }
         return false;
@@ -2579,7 +2607,7 @@
     }
 
     // Признак успешно отправленного отклика: появилась ссылка на чат или текст "резюме доставлено".
-    function isResponseConfirmed() {
+    function isResponseConfirmed({ allowDocumentStrongText = false } = {}) {
         if (hasExactResponseConfirmation(document)) return true;
 
         const scope = getResponseDetectionScope();
@@ -2589,9 +2617,10 @@
             if (hasResponseTextConfirmation(scope)) return true;
         }
 
-        const chat = queryHeuristic('responseChat', document);
-        if (chat && isVisible(chat)) return true;
-        return hasResponseTextConfirmation(document);
+        // Document-wide strong text допустим только в post-submit confirmation phase.
+        // Initial response detection никогда не передаёт этот флаг.
+        if (allowDocumentStrongText && hasResponseTextConfirmation(document)) return true;
+        return false;
     }
 
     // На эту вакансию уже откликались ранее (не ошибка - ничего делать не нужно, просто пропускаем).
@@ -2604,8 +2633,11 @@
                 if (/already applied|уже отклик|отклик уже|response already/.test(t)) return true;
             }
         }
-        const chat = query('responseChat');
-        return !!(chat && isVisible(chat));
+        const exactChat = queryExact('responseChat');
+        if (exactChat && isVisible(exactChat)) return true;
+        const scope = getResponseDetectionScope();
+        const scopedChat = scope ? queryHeuristic('responseChat', scope) : null;
+        return !!(scopedChat && isVisible(scopedChat));
     }
 
     // Причина, по которой отклик в модалке не проходит (определяется со стороны hh.ru, не баг скрипта):
@@ -2613,7 +2645,7 @@
     //  - 'resume-hidden'   - нужно изменить видимость резюме, иначе отклик заблокирован;
     //  - ''                - причина не распознана.
     function detectModalBlockReason() {
-        if (query('rejectWarning')) return 'reject-warning';
+        if (hasReliableRejectWarning()) return 'reject-warning';
         const c = q('[data-qa="modal-content-scroll-container"], [data-qa="modal-content"]');
         if (c && isVisible(c)) {
             const t = (c.textContent || '').toLowerCase();
@@ -2882,13 +2914,10 @@
 
     const EXECUTION_STATUS = Object.freeze({
         SUCCESS: 'SUCCESS',
-        MANUAL: 'MANUAL',
         SKIPPED: 'SKIPPED',
         NAVIGATED: 'NAVIGATED',
         STOPPED: 'STOPPED',
-        CAPTCHA: 'CAPTCHA',
-        RETRY: 'RETRY',
-        FATAL: 'FATAL'
+        CAPTCHA: 'CAPTCHA'
     });
 
     const EXECUTION_REASON = Object.freeze({
@@ -3033,7 +3062,7 @@
         return false;
     }
 
-    function detectResponseOutcomeOnce(runId = currentRunId) {
+    function detectResponseOutcomeOnce(runId = currentRunId, includeCompatibilityFallback = true) {
         if (!isRunCurrent(runId)) return 'STOPPED';
         // Капча/анти-бот появилась прямо в ответ на клик - ловим сразу (не дожидаясь
         // тика watchdog), пока оверлей ещё на экране и до навигации назад к списку.
@@ -3047,21 +3076,25 @@
         if (isVisible(queryExact('attachCoverBtn'))) return 'SCENARIO_A';
         if (hasExactResponseConfirmation(document)) return 'SCENARIO_C';
 
-        // Scoped fallback: ограничиваем эвристики активной формой или модальным окном.
-        const scope = getResponseDetectionScope();
-        if (scope) {
-            const scopedOutcome = detectResponseOutcomeInRoot(scope, true);
-            if (scopedOutcome) return scopedOutcome;
-        }
+        if (!includeCompatibilityFallback) return false;
 
-        // Expensive compatibility fallback: широкий поиск остаётся последним уровнем.
-        return detectResponseOutcomeInRoot(document, false);
+        // Compatibility fallback разрешён только внутри response-specific формы/модалки.
+        // Слабый document-wide текст больше не может самостоятельно завершить отклик.
+        const scope = getResponseDetectionScope();
+        if (!scope) return false;
+        return detectResponseOutcomeInRoot(scope, true);
     }
 
     // Динамически определяем, что произошло после клика "Откликнуться".
     // Возвращает: 'STOPPED' | 'QUESTIONS' | 'RELOCATION' | 'SCENARIO_A' | 'SCENARIO_B' | 'SCENARIO_C' | 'TIMEOUT'
     async function resolveResponseOutcome(timeout, runId = currentRunId) {
-        const outcome = await waitForCondition(() => detectResponseOutcomeOnce(runId), timeout);
+        let lastFallbackAt = -Infinity;
+        const outcome = await waitForCondition(() => {
+            const now = Date.now();
+            const includeFallback = now - lastFallbackAt >= 750;
+            if (includeFallback) lastFallbackAt = now;
+            return detectResponseOutcomeOnce(runId, includeFallback);
+        }, timeout);
         if (!isRunCurrent(runId)) return 'STOPPED';
         return outcome || 'TIMEOUT';
     }
@@ -3153,6 +3186,7 @@
     async function forceSubmitReject(maxAttempts = TUNING.forceSubmitAttempts, opts = {}) {
         const onPage = !!opts.onResponsePage;
         const runId = opts.runId || currentRunId;
+        const allowDocumentStrongText = !!opts.allowDocumentStrongText;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             if (!isRunCurrent(runId)) return 'STOPPED';
             const submit = query('letterSubmit');
@@ -3166,7 +3200,7 @@
                 if (!isRunCurrent(runId)) return 'STOPPED';
                 // В модалке уход на /applicant/vacancy_response = редирект на тест; на самой странице отклика - нет.
                 if (!onPage && Page.isResponseForm()) return 'QUESTIONS';
-                if (isResponseConfirmed()) return 'CONFIRMED';
+                if (isResponseConfirmed({ allowDocumentStrongText })) return 'CONFIRMED';
                 return false;
             }, 3500);
             if (res === 'STOPPED' || !isRunCurrent(runId)) return 'STOPPED';
@@ -3177,11 +3211,11 @@
     }
 
     // Ожидание подтверждения после отправки: 'QUESTIONS' | 'CONFIRMED' | 'STOPPED' | false.
-    async function awaitSubmitConfirmation(timeout = TUNING.confirmWaitMs, runId = currentRunId) {
+    async function awaitSubmitConfirmation(timeout = TUNING.confirmWaitMs, runId = currentRunId, { allowDocumentStrongText = false } = {}) {
         return waitForCondition(() => {
             if (!isRunCurrent(runId)) return 'STOPPED';
             if (Page.isResponseForm()) return 'QUESTIONS';
-            return isResponseConfirmed();
+            return isResponseConfirmed({ allowDocumentStrongText });
         }, timeout);
     }
 
@@ -3250,6 +3284,24 @@
         return true;
     }
 
+    // Классификация выполняется только после того, как fillLetterAndSubmit подтвердил
+    // инициированный submit текущего run. Само исчезновение response route успехом не является.
+    function detectPostSubmitPageOutcome(runId, { allowDocumentStrongText = false } = {}) {
+        if (!isRunCurrent(runId)) return 'STOPPED';
+        if (detectCaptcha()) return 'CAPTCHA';
+
+        if (Page.isSearchList()) return 'TRUSTED_NAVIGATION';
+
+        if (Page.isVacancy()) {
+            return isResponseConfirmed({ allowDocumentStrongText }) ? 'CONFIRMED' : false;
+        }
+
+        if (!Page.isResponseForm()) return 'UNTRUSTED_NAVIGATION';
+        if (pageLooksLikeTest()) return 'QUESTIONS';
+        if (isResponseConfirmed({ allowDocumentStrongText })) return 'CONFIRMED';
+        return false;
+    }
+
     // Отправка отклика с полностраничной формы /applicant/vacancy_response (не тест).
     // Сюда попадают в т.ч. вакансии с предупреждением Скорее всего, будет отказ, отрисованные страницей.
     async function submitResponsePage(vid, backUrl, runId = currentRunId, trapToken = null) {
@@ -3261,7 +3313,7 @@
         handlingResponsePage = true;
         let savedForManual = false;
         let confirmed = false;
-        const reject = !!query('rejectWarning');
+        const reject = hasReliableRejectWarning();
         if (reject) Metrics.bump('reject.seen.page');
         try {
             if (reject && !config.applyOnRejectWarning) {
@@ -3272,6 +3324,7 @@
             } else {
                 log(I18n.t('logs.responsePageFilling', { reject: reject ? I18n.t('logs.responsePageRejectNote') : '' }));
                 captureResponseDom('response-page-form');
+                const allowDocumentStrongText = !hasResponseTextConfirmation(document);
                 const submitted = await fillLetterAndSubmit({ withCover: config.useCover, runId });
                 if (!isRunCurrent(runId)) return;
                 if (!submitted) {
@@ -3282,25 +3335,25 @@
                 } else {
                     let redirectedToQuestions = false;
 
-                    const ok = await waitForCondition(() => {
-                        if (!isRunCurrent(runId)) return 'STOPPED';
-                        if (detectCaptcha()) return 'CAPTCHA';
-                        if (pageLooksLikeTest()) return 'QUESTIONS';
-                        if (isResponseConfirmed()) return 'CONFIRMED';
-                        return false;
-                    }, TUNING.confirmWaitMs);
+                    const confirmationTimeout = reject ? TUNING.confirmWaitMs : TUNING.responsePagePendingMs;
+                    const ok = await waitForCondition(
+                        () => detectPostSubmitPageOutcome(runId, { allowDocumentStrongText }),
+                        confirmationTimeout
+                    );
 
                     if (!isRunCurrent(runId)) return;
                     if (ok === 'CAPTCHA') {
                         haltForCaptcha();
                         return;
                     }
-                    if (ok === 'CONFIRMED') {
+                    if (ok === 'CONFIRMED' || ok === 'TRUSTED_NAVIGATION') {
                         confirmed = true;
                     } else if (ok === 'QUESTIONS') {
                         redirectedToQuestions = true;
-                    } else if (isRunCurrent(runId)) {
-                        const forced = await forceSubmitReject(TUNING.forceSubmitAttempts, { onResponsePage: true, runId });
+                    } else if (ok !== 'UNTRUSTED_NAVIGATION' && reject && config.applyOnRejectWarning && hasReliableRejectWarning() && isRunCurrent(runId)) {
+                        // Повторный submit допустим только для всё ещё явно видимого reject-warning.
+                        // Обычный full-page submit всегда остаётся single-click, даже при медленном ответе.
+                        const forced = await forceSubmitReject(TUNING.forceSubmitAttempts, { onResponsePage: true, runId, allowDocumentStrongText });
                         if (forced === 'STOPPED' || !isRunCurrent(runId)) return;
                         if (forced === 'REDIRECT') {
                             redirectedToQuestions = true;
@@ -3461,7 +3514,7 @@
         if (!isRunCurrent(runId)) return 'STOPPED';
         // Зафиксируем, была ли плашка Скорее всего, будет отказ, чтобы понимать,
         // отправляются ли такие вакансии (успех считается ниже) или проваливаются.
-        const rejectSeen = !!query('rejectWarning');
+        const rejectSeen = hasReliableRejectWarning();
         if (rejectSeen) Metrics.bump('reject.seen.modal');
         // Если откликаться при предупреждении об отказе выключено - не отправляем такие,
         // а откладываем в ручной список (иначе realisticClick отправил бы их с первого клика).
@@ -3478,6 +3531,7 @@
             return 'RETURNED';
         }
         log(I18n.t('logs.scenarioBModal', { reject: rejectSeen ? I18n.t('logs.scenarioBRejectNote') : '', cover: config.useCover ? I18n.t('logs.scenarioBCoverNote') : I18n.t('logs.scenarioBNoCoverNote') }));
+        const allowDocumentStrongText = !hasResponseTextConfirmation(document);
         const submitted = await fillLetterAndSubmit({ withCover: config.useCover, runId });
         if (!isRunCurrent(runId)) return 'STOPPED';
         if (!submitted) {
@@ -3492,7 +3546,7 @@
             returnToList(vid, { markProcessed: true, runId });
             return 'RETURNED';
         }
-        const conf = await awaitSubmitConfirmation(TUNING.confirmWaitMs, runId);
+        const conf = await awaitSubmitConfirmation(TUNING.confirmWaitMs, runId, { allowDocumentStrongText });
         if (!isRunCurrent(runId)) return 'STOPPED';
         if (conf === 'QUESTIONS' || Page.isResponseForm()) return markRedirect(vid);
         if (conf === 'CONFIRMED' || conf === true) {
@@ -3509,7 +3563,7 @@
         // Предупреждение Скорее всего, будет отказ: если включён форс - дожимаем отправку.
         if (reason === 'reject-warning' && config.applyOnRejectWarning) {
             log(I18n.t('logs.scenarioBForcing'));
-            const forced = await forceSubmitReject(TUNING.forceSubmitAttempts, { onResponsePage: false, runId });
+            const forced = await forceSubmitReject(TUNING.forceSubmitAttempts, { onResponsePage: false, runId, allowDocumentStrongText });
             if (forced === 'STOPPED' || !isRunCurrent(runId)) return 'STOPPED';
             if (forced === 'REDIRECT') return markRedirect(vid);
             if (forced === 'OK') {
@@ -3768,15 +3822,26 @@
     //  11. ГЛАВНЫЙ ЦИКЛ И WATCHDOG
     // ─────────────────────────────────────────────────────────────
 
+    function clearRunningState(context) {
+        if (State.setRunning(false)) return true;
+        Metrics.bump('storage.is_active.cleanup.failed');
+        log(`[CRITICAL_STORAGE_WRITE_FAILED] is_active cleanup: ${context || 'unknown'}`, true);
+        return false;
+    }
+
     function finalizeRun(runId, statusKey, msg) {
         if (runId !== currentRunId) return;
         isLoopActive = false;
         if (!Page.isResponseForm()) {
             handlingResponsePage = false;
         }
-        State.setRunning(false);
+        if (activeAbortController) {
+            try { activeAbortController.abort(); } catch (e) {}
+            activeAbortController = null;
+        }
+        const runningCleared = clearRunningState('finalize');
         State.releaseInstanceLock(TAB_ID);
-        setStatus(statusKey);
+        setStatus(runningCleared ? statusKey : 'error');
         if (msg) log(msg);
     }
 
@@ -4075,7 +4140,8 @@
     // Watchdog: следит за URL. Если попали на страницу отклика/теста - обрабатываем её;
     // после возврата на список при необходимости обновляем страницу.
     function startWatchdog() {
-        setInterval(() => {
+        if (runtimeRecord.watchdogIntervalId !== null) return;
+        runtimeRecord.watchdogIntervalId = setInterval(() => {
             try {
                 watchdogTick();
             } catch (e) {
@@ -4083,6 +4149,40 @@
             }
         }, 1000);
     }
+
+    function teardownRuntime() {
+        if (!runtimeRecord.active) return;
+        runtimeRecord.active = false;
+        currentRunId++;
+        stopSignal = true;
+        isLoopActive = false;
+        handlingResponsePage = false;
+        if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
+        clearTrapLockTimer();
+        if (activeAbortController) {
+            try { activeAbortController.abort(); } catch (e) {}
+            activeAbortController = null;
+        }
+        if (runtimeRecord.watchdogIntervalId !== null) {
+            clearInterval(runtimeRecord.watchdogIntervalId);
+            runtimeRecord.watchdogIntervalId = null;
+        }
+        if (runtimeRecord.domReadyObserver) {
+            try { runtimeRecord.domReadyObserver.disconnect(); } catch (e) {}
+            runtimeRecord.domReadyObserver = null;
+        }
+        for (const listener of runtimeRecord.globalListeners.splice(0)) {
+            try { listener.target.removeEventListener(listener.type, listener.handler, listener.options); } catch (e) {}
+        }
+        try { PanelController.destroy(); } catch (e) {}
+        clearRunningState('runtime-teardown');
+        State.releaseInstanceLock(TAB_ID);
+        if (window[RUNTIME_KEY] === runtimeRecord) {
+            try { delete window[RUNTIME_KEY]; } catch (e) { window[RUNTIME_KEY] = null; }
+        }
+    }
+
+    runtimeRecord.teardown = teardownRuntime;
 
     function watchdogTick() {
         // Панель могла быть выброшена из DOM (SPA-перерисовка) - восстанавливаем.
@@ -7972,7 +8072,7 @@
         return assistantMarkers.some(m => combined.includes(m));
     }
 
-    window.addEventListener('error', (e) => {
+    addRuntimeListener(window, 'error', (e) => {
         try {
             const isInternal = isHHApplyAssistantError(e, false);
             const where = e.filename ? ` @ ${e.filename}:${e.lineno || 0}:${e.colno || 0}` : '';
@@ -7989,7 +8089,7 @@
         } catch (_) { /* ignore */ }
     });
 
-    window.addEventListener('unhandledrejection', (e) => {
+    addRuntimeListener(window, 'unhandledrejection', (e) => {
         try {
             const isInternal = isHHApplyAssistantError(e, true);
             const r = e.reason;
@@ -8051,16 +8151,18 @@
         const domReadyObserver = new MutationObserver((mutations, obs) => {
             if (document.body) {
                 obs.disconnect();
+                runtimeRecord.domReadyObserver = null;
                 bootstrap();
             }
         });
+        runtimeRecord.domReadyObserver = domReadyObserver;
         domReadyObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
 
     // При восстановлении страницы из bfcache возвращается старый JS runtime со старым
     // leaseId. Новый startLoop синхронно меняет runId до первого await и получает новое
     // поколение lease, поэтому continuations замороженной страницы не могут продолжиться.
-    window.addEventListener('pageshow', (event) => {
+    addRuntimeListener(window, 'pageshow', (event) => {
         if (!event.persisted || !State.amIRunning()) return;
         if (activeAbortController) {
             try { activeAbortController.abort(); } catch (e) {}
@@ -8075,16 +8177,16 @@
     // переживать их до авто-возобновления (1.5 с в bootstrap), иначе другая вкладка
     // успеет захватить его в этом окне. Мёртвые вкладки, закрытые посреди прогона,
     // освобождаются по TTL (TUNING.instanceLockTtl).
-    window.addEventListener('beforeunload', () => {
+    addRuntimeListener(window, 'beforeunload', () => {
         DiagLog.flush();
         Metrics.flush();
         if (!State.amIRunning()) State.releaseInstanceLock(TAB_ID);
     });
-    window.addEventListener('pagehide', () => {
+    addRuntimeListener(window, 'pagehide', () => {
         DiagLog.flush();
         Metrics.flush();
     });
-    window.addEventListener('unload', () => {
+    addRuntimeListener(window, 'unload', () => {
         DiagLog.flush();
         Metrics.flush();
         if (!State.amIRunning()) State.releaseInstanceLock(TAB_ID);

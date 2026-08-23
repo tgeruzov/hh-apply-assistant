@@ -93,6 +93,7 @@ class FakeElement {
         this.disabled = false;
         this.checked = false;
         this.listeners = new Map();
+        this.isConnected = true;
     }
 
     get textContent() { return this._textContent; }
@@ -130,10 +131,14 @@ class FakeElement {
         this.parentElement.children = this.parentElement.children.filter(child => child !== this);
         this.parentElement = null;
     }
-    addEventListener(type, listener) {
+    addEventListener(type, listener, options = {}) {
         const listeners = this.listeners.get(type) || [];
         listeners.push(listener);
         this.listeners.set(type, listeners);
+        options?.signal?.addEventListener('abort', () => {
+            const current = this.listeners.get(type) || [];
+            this.listeners.set(type, current.filter(candidate => candidate !== listener));
+        }, { once: true });
     }
     dispatch(type) {
         const event = { target: this, stopPropagation() {}, preventDefault() {} };
@@ -166,6 +171,7 @@ class FakeDocument {
         this.documentElement.lang = 'ru';
         this.body = new FakeElement(this, 'body');
         this.elementsById = new Map();
+        this.listeners = new Map();
     }
     setSelector(selector, elements) {
         this.selectorMap.set(selector, Array.isArray(elements) ? elements : [elements]);
@@ -200,7 +206,18 @@ class FakeDocument {
     }
     createTextNode(text) { return new FakeElement(this, 'span', { text }); }
     getElementById(id) { return this.elementsById.get(id) || null; }
-    addEventListener() {}
+    addEventListener(type, listener, options = {}) {
+        const listeners = this.listeners.get(type) || [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+        options?.signal?.addEventListener('abort', () => {
+            const current = this.listeners.get(type) || [];
+            this.listeners.set(type, current.filter(candidate => candidate !== listener));
+        }, { once: true });
+    }
+    dispatch(type) {
+        (this.listeners.get(type) || []).forEach(listener => listener({ target: this }));
+    }
 }
 
 function createHarness({ href = 'https://hh.ru/vacancy/42' } = {}) {
@@ -256,12 +273,15 @@ function createHarness({ href = 'https://hh.ru/vacancy/42' } = {}) {
         I18n,
         DiagLog,
         DiagnosticsView,
+        buildDiagnosticReport,
         log,
         query,
+        hasResponseTextConfirmation,
         isResponseConfirmed,
         pageLooksLikeTest,
         detectModalBlockReason,
         detectResponseOutcomeOnce: typeof detectResponseOutcomeOnce === 'function' ? detectResponseOutcomeOnce : null,
+        detectPostSubmitPageOutcome,
         resolveResponseOutcome
     };
     return;
@@ -338,7 +358,11 @@ test('response outcomes, confirmation, reject and questionnaire semantics stay i
     assert.equal(successBanner.hooks.detectResponseOutcomeOnce(0), 'SCENARIO_C');
 
     const textFallback = createHarness();
-    textFallback.document.setSelector('h1,h2,h3,p,div,span', element(textFallback.document, 'Resume delivered'));
+    const responseModal = element(textFallback.document, 'Response modal');
+    const deliveredText = element(textFallback.document, 'Resume delivered');
+    responseModal.appendChild(deliveredText);
+    textFallback.document.setSelector(RESPONSE_SCOPE_SELECTOR, responseModal);
+    textFallback.document.setSelector('h1,h2,h3,p,div,span', deliveredText);
     assert.equal(textFallback.hooks.detectResponseOutcomeOnce(0), 'SCENARIO_C');
 });
 
@@ -355,7 +379,7 @@ test('response wait preserves timeout and stopped outcomes', async () => {
     assert.equal(await stoppedResult, 'STOPPED');
 });
 
-test('response fallback is scoped to the active modal before the document-wide fallback', () => {
+test('response compatibility fallback is scoped to the active modal', () => {
     const { hooks, document } = createHarness();
     const modal = element(document, 'Response modal');
     const send = element(document, 'Send');
@@ -365,6 +389,102 @@ test('response fallback is scoped to the active modal before the document-wide f
     document.setSelector('button, a, [role="button"]', send);
     document.setSelector('button, input[type="submit"], [role="button"]', send);
     assert.equal(hooks.detectResponseOutcomeOnce(0), 'SCENARIO_B');
+});
+
+test('document-wide vacancy copy cannot become a terminal response outcome', () => {
+    for (const text of [
+        'Перейти к компании',
+        'Сопроводительное письмо приветствуется',
+        'Эта вакансия вам не подходит'
+    ]) {
+        const { hooks, document } = createHarness();
+        const copy = element(document, text);
+        document.setSelector('a, button', copy);
+        document.setSelector('button, a, [role="button"]', copy);
+        document.setSelector('span, div', copy);
+        document.setSelector('div, span, p, h1, h2, h3', copy);
+        document.setSelector('h1,h2,h3,p,div,span', copy);
+        assert.equal(hooks.detectResponseOutcomeOnce(0), false, text);
+        assert.equal(hooks.detectModalBlockReason(), '', text);
+        assert.equal(hooks.isResponseConfirmed(), false, text);
+        assert.equal(hooks.isResponseConfirmed({ allowDocumentStrongText: true }), false, text);
+    }
+});
+
+test('strong document text is opt-in for post-submit confirmation and ignored by initial detection', () => {
+    for (const text of ['Resume delivered', 'Application sent']) {
+        const { hooks, document } = createHarness();
+        const copy = element(document, text);
+        document.setSelector('h1,h2,h3,p,div,span', copy);
+
+        assert.equal(hooks.hasResponseTextConfirmation(document), true, text);
+        assert.equal(hooks.isResponseConfirmed(), false, text);
+        assert.equal(hooks.detectResponseOutcomeOnce(0), false, text);
+        assert.equal(hooks.isResponseConfirmed({ allowDocumentStrongText: true }), true, text);
+    }
+});
+
+test('strong document text requires a short leaf container', () => {
+    const nested = createHarness();
+    const parent = element(nested.document, 'Resume delivered');
+    parent.appendChild(element(nested.document, 'nested'));
+    nested.document.setSelector('h1,h2,h3,p,div,span', parent);
+    assert.equal(nested.hooks.hasResponseTextConfirmation(nested.document), false);
+    assert.equal(nested.hooks.isResponseConfirmed({ allowDocumentStrongText: true }), false);
+
+    const oversized = createHarness();
+    const longCopy = element(oversized.document, `Resume delivered ${'x'.repeat(241)}`);
+    oversized.document.setSelector('h1,h2,h3,p,div,span', longCopy);
+    assert.equal(oversized.hooks.hasResponseTextConfirmation(oversized.document), false);
+    assert.equal(oversized.hooks.isResponseConfirmed({ allowDocumentStrongText: true }), false);
+});
+
+test('post-submit route classifier trusts search, requires vacancy confirmation and rejects unrelated routes', () => {
+    const search = createHarness({ href: 'https://hh.ru/search/vacancy?text=qa' });
+    assert.equal(search.hooks.detectPostSubmitPageOutcome(0), 'TRUSTED_NAVIGATION');
+
+    const vacancy = createHarness({ href: 'https://hh.ru/vacancy/42' });
+    assert.equal(vacancy.hooks.detectPostSubmitPageOutcome(0), false);
+    vacancy.document.setSelector(
+        '[data-qa="vacancy-response-success"], .vacancy-response-success',
+        element(vacancy.document, 'Success')
+    );
+    assert.equal(vacancy.hooks.detectPostSubmitPageOutcome(0), 'CONFIRMED');
+
+    for (const href of [
+        'https://hh.ru/account/login',
+        'https://hh.ru/account/login?backurl=/search/vacancy&return=/applicant/vacancy_response',
+        'https://hh.ru/error',
+        'https://hh.ru/employer/123'
+    ]) {
+        const unrelated = createHarness({ href });
+        const misleading = element(unrelated.document, 'Application sent');
+        unrelated.document.setSelector('h1,h2,h3,p,div,span', misleading);
+        assert.equal(
+            unrelated.hooks.detectPostSubmitPageOutcome(0, { allowDocumentStrongText: true }),
+            'UNTRUSTED_NAVIGATION',
+            href
+        );
+    }
+});
+
+test('post-submit route classifier fences stopped and stale runs before route success', () => {
+    const stopped = createHarness({ href: 'https://hh.ru/search/vacancy' });
+    stopped.hooks.State.setRunning(false);
+    assert.equal(stopped.hooks.detectPostSubmitPageOutcome(0), 'STOPPED');
+
+    const stale = createHarness({ href: 'https://hh.ru/search/vacancy' });
+    assert.equal(stale.hooks.detectPostSubmitPageOutcome(99), 'STOPPED');
+});
+
+test('fast response detector skips compatibility scans until explicitly requested', () => {
+    const { hooks, document } = createHarness();
+    for (let index = 0; index < 20; index++) {
+        assert.equal(hooks.detectResponseOutcomeOnce(0, false), false);
+    }
+    assert.equal(document.count(RESPONSE_SCOPE_SELECTOR), 0);
+    assert.equal(document.count('button, a, [role="button"]'), 0);
+    assert.equal(document.count('div, span, p, h1, h2, h3'), 0);
 });
 
 test('selector instrumentation does not repeat an already successful query', () => {
