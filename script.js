@@ -990,7 +990,7 @@
     const DEFAULTS = {
         coverText: TRANSLATIONS[DEFAULT_LANGUAGE].cover.defaultText,
         useCover: true,
-        applyOnRejectWarning: true,
+        applyOnRejectWarning: false,
         skipHidden: true,
         preset: DEFAULT_PRESET,
         limit: 50
@@ -1101,12 +1101,40 @@
 
     const storage = {
         localGet: (key) => { try { return localStorage.getItem(key); } catch (e) { return null; } },
+        localRead: (key) => { try { return { ok: true, value: localStorage.getItem(key) }; } catch (e) { return { ok: false, value: null }; } },
         localSet: (key, value) => { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } },
         localRemove: (key) => { try { localStorage.removeItem(key); return true; } catch (e) { return false; } },
         sessionGet: (key) => { try { return sessionStorage.getItem(key); } catch (e) { return null; } },
+        sessionRead: (key) => { try { return { ok: true, value: sessionStorage.getItem(key) }; } catch (e) { return { ok: false, value: null }; } },
         sessionSet: (key, value) => { try { sessionStorage.setItem(key, value); return true; } catch (e) { return false; } },
         sessionRemove: (key) => { try { sessionStorage.removeItem(key); return true; } catch (e) { return false; } }
     };
+
+    function writeSessionVerified(key, value) {
+        const expected = String(value);
+        if (!storage.sessionSet(key, expected)) return false;
+        const check = storage.sessionRead(key);
+        return check.ok && check.value === expected;
+    }
+
+    function removeSessionVerified(key) {
+        if (!storage.sessionRemove(key)) return false;
+        const check = storage.sessionRead(key);
+        return check.ok && check.value === null;
+    }
+
+    function writeLocalVerified(key, value) {
+        const expected = String(value);
+        if (!storage.localSet(key, expected)) return false;
+        const check = storage.localRead(key);
+        return check.ok && check.value === expected;
+    }
+
+    function removeLocalVerified(key) {
+        if (!storage.localRemove(key)) return false;
+        const check = storage.localRead(key);
+        return check.ok && check.value === null;
+    }
 
     // ─────────────────────────────────────────────────────────────
     //  4. НАСТРОЙКИ
@@ -1120,7 +1148,7 @@
             return {
                 coverText: String(merged.coverText ?? defaultCover).slice(0, 5000),
                 useCover: merged.useCover !== false,
-                applyOnRejectWarning: merged.applyOnRejectWarning !== false,
+                applyOnRejectWarning: merged.applyOnRejectWarning === true,
                 skipHidden: merged.skipHidden !== false,
                 preset: PRESETS[merged.preset] ? merged.preset : DEFAULT_PRESET,
                 limit: clamp(Math.round(toNum(merged.limit, DEFAULTS.limit)), 1, 500)
@@ -1703,34 +1731,44 @@
     }
 
     const State = {
-        getProcessedIDs: () => {
-            const arr = parseJson(storage.sessionGet(KEYS.history), []);
-            return new Set(Array.isArray(arr) ? arr : []);
+        readProcessedIDs: () => {
+            const read = storage.sessionRead(KEYS.history);
+            if (!read.ok) return { ok: false, value: new Set() };
+            const arr = parseJson(read.value, []);
+            return { ok: true, value: new Set(Array.isArray(arr) ? arr : []) };
         },
+        getProcessedIDs: () => State.readProcessedIDs().value,
         addProcessedID: (id) => {
             if (!id) return true;
-            const s = State.getProcessedIDs();
+            const current = State.readProcessedIDs();
+            if (!current.ok) return false;
+            const s = current.value;
             s.add(id);
-            return storage.sessionSet(KEYS.history, JSON.stringify([...s]));
+            return writeSessionVerified(KEYS.history, JSON.stringify([...s]));
         },
-        clearProcessedIDs: () => storage.sessionRemove(KEYS.history),
+        clearProcessedIDs: () => removeSessionVerified(KEYS.history),
 
         // Счётчик успешно отправленных откликов - переживает переходы между страницами,
         // поэтому лимит работает на весь прогон, а не сбрасывается на каждой загрузке.
-        getSentCount: () => {
-            const n = parseInt(storage.sessionGet(KEYS.sentCount) || '0', 10);
-            return Number.isFinite(n) ? n : 0;
+        readSentCount: () => {
+            const read = storage.sessionRead(KEYS.sentCount);
+            if (!read.ok) return { ok: false, value: 0 };
+            const n = parseInt(read.value || '0', 10);
+            return { ok: true, value: Number.isFinite(n) ? n : 0 };
         },
+        getSentCount: () => State.readSentCount().value,
         incSentCount: () => {
-            const next = State.getSentCount() + 1;
-            if (!storage.sessionSet(KEYS.sentCount, String(next))) return null;
+            const current = State.readSentCount();
+            if (!current.ok) return null;
+            const next = current.value + 1;
+            if (!writeSessionVerified(KEYS.sentCount, String(next))) return null;
             Stats.bump('success');
             return next;
         },
-        resetSentCount: () => storage.sessionRemove(KEYS.sentCount),
+        resetSentCount: () => removeSessionVerified(KEYS.sentCount),
 
         amIRunning: () => storage.sessionGet(KEYS.isRunning) === '1',
-        setRunning: (state) => state ? storage.sessionSet(KEYS.isRunning, '1') : storage.sessionRemove(KEYS.isRunning),
+        setRunning: (state) => state ? writeSessionVerified(KEYS.isRunning, '1') : removeSessionVerified(KEYS.isRunning),
 
         setReturnUrl: (url) => storage.sessionSet(KEYS.returnUrl, url || location.href),
         getReturnUrl: () => storage.sessionGet(KEYS.returnUrl),
@@ -1902,11 +1940,11 @@
                     list.unshift(normalizedEntry);
                     // ограничим длину списка, чтобы не раздувался
                     if (list.length > 500) list.length = 500;
-                    const saved = storage.localSet(KEYS.manualList, JSON.stringify(list));
+                    const saved = writeLocalVerified(KEYS.manualList, JSON.stringify(list));
                     return saved ? 'ADDED' : 'FAILED';
                 } else if ((!exists.title || exists.title === 'Название недоступно' || exists.title === 'Title unavailable') && normalizedEntry.title && normalizedEntry.title !== 'Название недоступно' && normalizedEntry.title !== 'Title unavailable') {
                     exists.title = normalizedEntry.title;
-                    const saved = storage.localSet(KEYS.manualList, JSON.stringify(list));
+                    const saved = writeLocalVerified(KEYS.manualList, JSON.stringify(list));
                     return saved ? 'UPDATED' : 'FAILED';
                 }
                 return 'EXISTS';
@@ -1918,7 +1956,7 @@
         removeManualEntry: (vid) => {
             try {
                 const list = State.getManualList().filter(e => e.vid !== vid);
-                return storage.localSet(KEYS.manualList, JSON.stringify(list));
+                return writeLocalVerified(KEYS.manualList, JSON.stringify(list));
             } catch (e) {
                 console.warn('[HH Apply Assistant] removeManualEntry error', e);
                 return false;
@@ -1926,8 +1964,7 @@
         },
         clearManualList: () => {
             try {
-                storage.localRemove(KEYS.manualList);
-                return true;
+                return removeLocalVerified(KEYS.manualList);
             } catch (e) {
                 console.warn('[HH Apply Assistant] clearManualList error', e);
                 return false;
@@ -1936,7 +1973,9 @@
     };
 
     function ensureCurrentRunLimit() {
-        const sent = State.getSentCount();
+        const sentState = State.readSentCount();
+        if (!sentState.ok) return false;
+        const sent = sentState.value;
         if (sent <= config.limit) return true;
         return persistSettings({ ...config, limit: Math.min(500, sent) });
     }
@@ -3862,7 +3901,10 @@
         }
         activeAbortController = new AbortController();
         stopSignal = false;
-        State.setRunning(true);
+        if (!State.setRunning(true)) {
+            haltForPersistenceFailure('start', 'is_active');
+            return;
+        }
         setStatus('running');
 
         // Жёстко занимаем instance lock: не запускаемся, если работает другая вкладка.
@@ -3879,23 +3921,36 @@
         if (!acquired) {
             if (runId === currentRunId) {
                 isLoopActive = false;
+                stopSignal = true;
+                if (activeAbortController) {
+                    try { activeAbortController.abort(); } catch (e) {}
+                    activeAbortController = null;
+                }
                 log(I18n.t('logs.tabBusy'), true);
-                State.setRunning(false);
-                setStatus('error', 'status.busyTab');
+                const runningCleared = clearRunningState('instance-lock-acquire');
+                setStatus('error', runningCleared ? 'status.busyTab' : undefined);
             }
             return;
         }
 
         // Свежий запуск пользователем - сбрасываем сквозной счётчик и статистику прогона.
         if (!wasRunning) {
-            State.resetSentCount();
+            if (!State.resetSentCount()) {
+                haltForPersistenceFailure('start', 'sentCount.reset');
+                return;
+            }
             Stats.reset();
             log(I18n.t('logs.newRun', { mode: presetLabel(config.preset) }));
         }
 
         try {
             // Лимит уже достигнут - завершаем прогон.
-            if (State.getSentCount() >= config.limit) {
+            const initialSent = State.readSentCount();
+            if (!initialSent.ok) {
+                haltForPersistenceFailure('start', 'sentCount.read');
+                return;
+            }
+            if (initialSent.value >= config.limit) {
                 finalizeRun(runId, 'done', I18n.t('logs.limitReached', { limit: config.limit }));
                 return;
             }
@@ -3937,14 +3992,19 @@
                 allBtns = queryAll('applyBtn');
             }
 
-            const processed = State.getProcessedIDs();
+            const processedState = State.readProcessedIDs();
+            if (!processedState.ok) {
+                haltForPersistenceFailure('search', 'history.read');
+                return;
+            }
+            const processed = processedState.value;
 
             let targets = allBtns.filter(b => {
                 if (config.skipHidden && !isVisible(b)) return false;
                 return !processed.has(getVacancyID(b));
             });
 
-            log(I18n.t('logs.vacanciesFound', { total: allBtns.length, targets: targets.length, sent: State.getSentCount(), limit: config.limit }));
+            log(I18n.t('logs.vacanciesFound', { total: allBtns.length, targets: targets.length, sent: initialSent.value, limit: config.limit }));
 
             let rescanCount = 0;
             const MAX_RESCANS = 3;
@@ -3952,7 +4012,12 @@
             while (targets.length > 0) {
                 if (stopSignal || runId !== currentRunId) break;
                 const btn = targets.shift();
-                if (State.getSentCount() >= config.limit) {
+                const sentState = State.readSentCount();
+                if (!sentState.ok) {
+                    haltForPersistenceFailure('search', 'sentCount.read');
+                    return;
+                }
+                if (sentState.value >= config.limit) {
                     finalizeRun(runId, 'done', I18n.t('logs.limitReached', { limit: config.limit }));
                     return;
                 }
@@ -3964,7 +4029,12 @@
                     log(I18n.t('logs.buttonDisappeared'), true);
                     if (rescanCount < MAX_RESCANS) {
                         rescanCount++;
-                        const currentProcessed = State.getProcessedIDs();
+                        const currentProcessedState = State.readProcessedIDs();
+                        if (!currentProcessedState.ok) {
+                            haltForPersistenceFailure('search-rescan', 'history.read');
+                            return;
+                        }
+                        const currentProcessed = currentProcessedState.value;
                         const freshBtns = queryAll('applyBtn');
                         targets = freshBtns.filter(b => {
                             if (config.skipHidden && !isVisible(b)) return false;
@@ -4019,7 +4089,12 @@
                 return;
             }
             if (!Page.isResponseForm()) {
-                finalizeRun(runId, 'done', I18n.t('logs.runCompleted', { count: State.getSentCount() }));
+                const finalSent = State.readSentCount();
+                if (!finalSent.ok) {
+                    haltForPersistenceFailure('finalize', 'sentCount.read');
+                    return;
+                }
+                finalizeRun(runId, 'done', I18n.t('logs.runCompleted', { count: finalSent.value }));
             }
         } catch (e) {
             console.warn('[HH Apply Assistant] startLoop error', e);
@@ -4038,8 +4113,8 @@
             activeAbortController = null;
         }
         isLoopActive = false;
-        State.setRunning(false);
-        setStatus('stopped');
+        const runningCleared = clearRunningState('stop');
+        setStatus(runningCleared ? 'stopped' : 'error');
         State.releaseInstanceLock(TAB_ID);
         log(I18n.t('logs.stoppedByUser'));
     }
@@ -4077,7 +4152,7 @@
             activeAbortController = null;
         }
         isLoopActive = false;
-        State.setRunning(false);
+        clearRunningState('captcha');
         State.releaseInstanceLock(TAB_ID);
         setStatus('error', 'status.captchaStopped');
         log(I18n.t('logs.captchaHalt'), true);
@@ -4097,7 +4172,7 @@
             activeAbortController = null;
         }
         isLoopActive = false;
-        State.setRunning(false);
+        clearRunningState('lost-instance-lock');
         setStatus('error', 'status.busyTab');
         log(I18n.t('logs.instanceLockLost'), true);
     }
@@ -4126,7 +4201,7 @@
             activeAbortController = null;
         }
         isLoopActive = false;
-        State.setRunning(false);
+        clearRunningState(`persistence-${storageArea}`);
         State.releaseInstanceLock(TAB_ID);
         if (storageArea === 'manual') {
             setStatus('error', 'status.storageFailed');
@@ -6202,7 +6277,11 @@
         function mount({ el }) {
             el('ar-clear-manual').onclick = () => {
                 if (confirm(I18n.t('confirm.clearManual'))) {
-                    State.clearManualList();
+                    if (!State.clearManualList()) {
+                        Metrics.bump('storage.manual.clear.failed');
+                        log('[CRITICAL_STORAGE_WRITE_FAILED] manual_queue: clear', true);
+                        return;
+                    }
                     renderManualList();
                     log(I18n.t('logs.manualCleared'));
                 }
@@ -6286,7 +6365,11 @@
                     removeBtn.setAttribute('aria-label', I18n.t('panel.manualRemoveTitle'));
                     removeBtn.onclick = () => {
                         if (!confirm(I18n.t('confirm.removeManual'))) return;
-                        State.removeManualEntry(item.vid);
+                        if (!State.removeManualEntry(item.vid)) {
+                            Metrics.bump('storage.manual.remove.failed');
+                            log(`[CRITICAL_STORAGE_WRITE_FAILED] manual_queue: remove ${item.vid}`, true);
+                            return;
+                        }
                         renderManualList();
                     };
 
@@ -7368,8 +7451,13 @@
 
         el('ar-reset-history').onclick = () => {
             if (confirm(I18n.t('confirm.resetHistory'))) {
-                State.clearProcessedIDs();
-                State.resetSentCount();
+                const historyCleared = State.clearProcessedIDs();
+                const sentCleared = State.resetSentCount();
+                if (!historyCleared || !sentCleared) {
+                    Metrics.bump('storage.history.reset.failed');
+                    log('[CRITICAL_STORAGE_WRITE_FAILED] processed_ids/sent_count: reset', true);
+                    return;
+                }
                 Stats.reset();
                 StatsView.render();
                 log(I18n.t('logs.historyReset'));

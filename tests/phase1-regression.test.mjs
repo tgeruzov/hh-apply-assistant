@@ -14,6 +14,7 @@ const PREVIOUS_PREFIX = 'hh_ar_v2_';
 
 const KEYS = {
     settings: V4_PREFIX + 'settings',
+    isRunning: V4_PREFIX + 'is_active',
     trap: 'hh_apply_assistant_v4_trap_lock',
     history: 'hh_apply_assistant_v4_processed_ids',
     sent: 'hh_apply_assistant_v4_sent_count',
@@ -28,19 +29,25 @@ class FakeStorage {
         this.values = new Map(Object.entries(initial).map(([key, value]) => [key, String(value)]));
         this.failSet = new Set();
         this.failRemove = new Set();
+        this.failGet = new Set();
+        this.ignoreSet = new Set();
+        this.ignoreRemove = new Set();
     }
 
     getItem(key) {
+        if (this.failGet.has(key)) throw new Error(`getItem failed: ${key}`);
         return this.values.has(key) ? this.values.get(key) : null;
     }
 
     setItem(key, value) {
         if (this.failSet.has(key)) throw new Error(`setItem failed: ${key}`);
+        if (this.ignoreSet.has(key)) return;
         this.values.set(key, String(value));
     }
 
     removeItem(key) {
         if (this.failRemove.has(key)) throw new Error(`removeItem failed: ${key}`);
+        if (this.ignoreRemove.has(key)) return;
         this.values.delete(key);
     }
 }
@@ -175,7 +182,7 @@ function createHarness({
         saveCurrentForManual,
         persistSentCount,
         getConfig: () => ({ ...config }),
-        runtime: () => ({ currentRunId, isLoopActive, stopSignal, handlingResponsePage })
+        runtime: () => ({ currentRunId, isLoopActive, stopSignal, handlingResponsePage, hasAbortController: !!activeAbortController })
     };
     return;
 `;
@@ -350,6 +357,91 @@ test('Start -> Stop -> Start keeps stale run invalidated', async () => {
     assert.equal(hooks.runtime().stopSignal, false);
 });
 
+test('Start fails closed when is_active cannot be persisted and recovers on the next Start', async () => {
+    const { hooks, clock, sessionStorage, localStorage } = createHarness({
+        href: 'https://hh.ru/applicant/vacancy_response?vacancyId=42'
+    });
+    sessionStorage.failSet.add(KEYS.isRunning);
+    await hooks.startLoop();
+
+    assert.equal(hooks.State.amIRunning(), false);
+    assert.equal(hooks.runtime().isLoopActive, false);
+    assert.equal(hooks.runtime().stopSignal, true);
+    assert.equal(hooks.runtime().hasAbortController, false);
+    assert.equal(localStorage.getItem(V4_PREFIX + 'instance_lock'), null);
+
+    sessionStorage.failSet.delete(KEYS.isRunning);
+    const recovered = hooks.startLoop();
+    clock.advance(60);
+    await recovered;
+    assert.equal(hooks.State.amIRunning(), true);
+    assert.equal(hooks.runtime().isLoopActive, false);
+    assert.equal(hooks.runtime().stopSignal, false);
+});
+
+test('fresh Start fails closed when sent_count reset cannot be persisted', async () => {
+    const { hooks, clock, sessionStorage, localStorage } = createHarness({
+        href: 'https://hh.ru/applicant/vacancy_response?vacancyId=42'
+    });
+    sessionStorage.failRemove.add(KEYS.sent);
+    const pending = hooks.startLoop();
+    clock.advance(60);
+    await pending;
+
+    assert.equal(hooks.State.amIRunning(), false);
+    assert.equal(hooks.runtime().isLoopActive, false);
+    assert.equal(hooks.runtime().stopSignal, true);
+    assert.equal(hooks.runtime().hasAbortController, false);
+    assert.equal(localStorage.getItem(V4_PREFIX + 'instance_lock'), null);
+});
+
+test('critical storage writes require read-back instead of trusting a silent no-op', () => {
+    const sessionStorage = new FakeStorage();
+    sessionStorage.ignoreSet.add(KEYS.history);
+    const history = createHarness({ sessionStorage });
+    assert.equal(history.hooks.State.addProcessedID('v_44'), false);
+
+    const localStorage = new FakeStorage({
+        [KEYS.manual]: JSON.stringify([{ vid: 'v_44', url: 'https://hh.ru/vacancy/44' }])
+    });
+    localStorage.ignoreRemove.add(KEYS.manual);
+    const manual = createHarness({ localStorage });
+    assert.equal(manual.hooks.State.clearManualList(), false);
+    assert.notEqual(localStorage.getItem(KEYS.manual), null);
+});
+
+test('processed_ids and sent_count reads fail closed before a replacement write', () => {
+    const historyStorage = new FakeStorage({ [KEYS.history]: JSON.stringify(['v_existing']) });
+    historyStorage.failGet.add(KEYS.history);
+    const history = createHarness({ sessionStorage: historyStorage });
+    assert.equal(history.hooks.State.addProcessedID('v_new'), false);
+    historyStorage.failGet.delete(KEYS.history);
+    assert.deepEqual(JSON.parse(historyStorage.getItem(KEYS.history)), ['v_existing']);
+
+    const sentStorage = new FakeStorage({ [KEYS.sent]: '8' });
+    sentStorage.failGet.add(KEYS.sent);
+    const sent = createHarness({ sessionStorage: sentStorage });
+    assert.equal(sent.hooks.State.incSentCount(), null);
+    assert.equal(sent.hooks.Stats.getAll().success, 0);
+    sentStorage.failGet.delete(KEYS.sent);
+    assert.equal(sentStorage.getItem(KEYS.sent), '8');
+});
+
+test('critical running-state cleanup leaves no active local runtime when storage removal fails', () => {
+    const { hooks, sessionStorage } = createHarness();
+    assert.equal(hooks.State.setRunning(true), true);
+    sessionStorage.failRemove.add(KEYS.isRunning);
+    hooks.stopRun();
+
+    assert.equal(hooks.runtime().isLoopActive, false);
+    assert.equal(hooks.runtime().stopSignal, true);
+    assert.equal(hooks.runtime().hasAbortController, false);
+    assert.equal(hooks.State.amIRunning(), true, 'failed storage cleanup remains diagnosable');
+
+    sessionStorage.failRemove.delete(KEYS.isRunning);
+    assert.equal(hooks.State.setRunning(false), true);
+});
+
 test('processed history reports successful and failed writes', () => {
     const successful = createHarness();
     assert.equal(successful.hooks.State.addProcessedID('v_1'), true);
@@ -425,4 +517,18 @@ test('manual Stats counts ADDED but not EXISTS or UPDATED', () => {
     updated.hooks.State.setLastVacancyMeta('v_77', 'Engineer');
     assert.equal(updated.hooks.saveCurrentForManual('v_77', 'questions'), true);
     assert.equal(updated.hooks.Stats.getAll().manual, 0);
+});
+
+test('manual clear and remove report storage failures', () => {
+    const localStorage = new FakeStorage({
+        [KEYS.manual]: JSON.stringify([{ vid: 'v_90', url: 'https://hh.ru/vacancy/90' }])
+    });
+    const { hooks } = createHarness({ localStorage });
+
+    localStorage.failRemove.add(KEYS.manual);
+    assert.equal(hooks.State.clearManualList(), false);
+    localStorage.failRemove.delete(KEYS.manual);
+
+    localStorage.failSet.add(KEYS.manual);
+    assert.equal(hooks.State.removeManualEntry('v_90'), false);
 });
