@@ -93,6 +93,7 @@ class FakeElement {
         this.disabled = false;
         this.checked = false;
         this.listeners = new Map();
+        this.isConnected = true;
     }
 
     get textContent() { return this._textContent; }
@@ -130,10 +131,14 @@ class FakeElement {
         this.parentElement.children = this.parentElement.children.filter(child => child !== this);
         this.parentElement = null;
     }
-    addEventListener(type, listener) {
+    addEventListener(type, listener, options = {}) {
         const listeners = this.listeners.get(type) || [];
         listeners.push(listener);
         this.listeners.set(type, listeners);
+        options?.signal?.addEventListener('abort', () => {
+            const current = this.listeners.get(type) || [];
+            this.listeners.set(type, current.filter(candidate => candidate !== listener));
+        }, { once: true });
     }
     dispatch(type) {
         const event = { target: this, stopPropagation() {}, preventDefault() {} };
@@ -166,6 +171,7 @@ class FakeDocument {
         this.documentElement.lang = 'ru';
         this.body = new FakeElement(this, 'body');
         this.elementsById = new Map();
+        this.listeners = new Map();
     }
     setSelector(selector, elements) {
         this.selectorMap.set(selector, Array.isArray(elements) ? elements : [elements]);
@@ -200,7 +206,18 @@ class FakeDocument {
     }
     createTextNode(text) { return new FakeElement(this, 'span', { text }); }
     getElementById(id) { return this.elementsById.get(id) || null; }
-    addEventListener() {}
+    addEventListener(type, listener, options = {}) {
+        const listeners = this.listeners.get(type) || [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+        options?.signal?.addEventListener('abort', () => {
+            const current = this.listeners.get(type) || [];
+            this.listeners.set(type, current.filter(candidate => candidate !== listener));
+        }, { once: true });
+    }
+    dispatch(type) {
+        (this.listeners.get(type) || []).forEach(listener => listener({ target: this }));
+    }
 }
 
 function createHarness({ href = 'https://hh.ru/vacancy/42' } = {}) {
@@ -256,12 +273,15 @@ function createHarness({ href = 'https://hh.ru/vacancy/42' } = {}) {
         I18n,
         DiagLog,
         DiagnosticsView,
+        buildDiagnosticReport,
         log,
         query,
+        hasResponseTextConfirmation,
         isResponseConfirmed,
         pageLooksLikeTest,
         detectModalBlockReason,
         detectResponseOutcomeOnce: typeof detectResponseOutcomeOnce === 'function' ? detectResponseOutcomeOnce : null,
+        detectPostSubmitPageOutcome,
         resolveResponseOutcome
     };
     return;
@@ -338,7 +358,11 @@ test('response outcomes, confirmation, reject and questionnaire semantics stay i
     assert.equal(successBanner.hooks.detectResponseOutcomeOnce(0), 'SCENARIO_C');
 
     const textFallback = createHarness();
-    textFallback.document.setSelector('h1,h2,h3,p,div,span', element(textFallback.document, 'Resume delivered'));
+    const responseModal = element(textFallback.document, 'Response modal');
+    const deliveredText = element(textFallback.document, 'Resume delivered');
+    responseModal.appendChild(deliveredText);
+    textFallback.document.setSelector(RESPONSE_SCOPE_SELECTOR, responseModal);
+    textFallback.document.setSelector('h1,h2,h3,p,div,span', deliveredText);
     assert.equal(textFallback.hooks.detectResponseOutcomeOnce(0), 'SCENARIO_C');
 });
 
@@ -355,7 +379,7 @@ test('response wait preserves timeout and stopped outcomes', async () => {
     assert.equal(await stoppedResult, 'STOPPED');
 });
 
-test('response fallback is scoped to the active modal before the document-wide fallback', () => {
+test('response compatibility fallback is scoped to the active modal', () => {
     const { hooks, document } = createHarness();
     const modal = element(document, 'Response modal');
     const send = element(document, 'Send');
@@ -365,6 +389,102 @@ test('response fallback is scoped to the active modal before the document-wide f
     document.setSelector('button, a, [role="button"]', send);
     document.setSelector('button, input[type="submit"], [role="button"]', send);
     assert.equal(hooks.detectResponseOutcomeOnce(0), 'SCENARIO_B');
+});
+
+test('document-wide vacancy copy cannot become a terminal response outcome', () => {
+    for (const text of [
+        'Перейти к компании',
+        'Сопроводительное письмо приветствуется',
+        'Эта вакансия вам не подходит'
+    ]) {
+        const { hooks, document } = createHarness();
+        const copy = element(document, text);
+        document.setSelector('a, button', copy);
+        document.setSelector('button, a, [role="button"]', copy);
+        document.setSelector('span, div', copy);
+        document.setSelector('div, span, p, h1, h2, h3', copy);
+        document.setSelector('h1,h2,h3,p,div,span', copy);
+        assert.equal(hooks.detectResponseOutcomeOnce(0), false, text);
+        assert.equal(hooks.detectModalBlockReason(), '', text);
+        assert.equal(hooks.isResponseConfirmed(), false, text);
+        assert.equal(hooks.isResponseConfirmed({ allowDocumentStrongText: true }), false, text);
+    }
+});
+
+test('strong document text is opt-in for post-submit confirmation and ignored by initial detection', () => {
+    for (const text of ['Resume delivered', 'Application sent']) {
+        const { hooks, document } = createHarness();
+        const copy = element(document, text);
+        document.setSelector('h1,h2,h3,p,div,span', copy);
+
+        assert.equal(hooks.hasResponseTextConfirmation(document), true, text);
+        assert.equal(hooks.isResponseConfirmed(), false, text);
+        assert.equal(hooks.detectResponseOutcomeOnce(0), false, text);
+        assert.equal(hooks.isResponseConfirmed({ allowDocumentStrongText: true }), true, text);
+    }
+});
+
+test('strong document text requires a short leaf container', () => {
+    const nested = createHarness();
+    const parent = element(nested.document, 'Resume delivered');
+    parent.appendChild(element(nested.document, 'nested'));
+    nested.document.setSelector('h1,h2,h3,p,div,span', parent);
+    assert.equal(nested.hooks.hasResponseTextConfirmation(nested.document), false);
+    assert.equal(nested.hooks.isResponseConfirmed({ allowDocumentStrongText: true }), false);
+
+    const oversized = createHarness();
+    const longCopy = element(oversized.document, `Resume delivered ${'x'.repeat(241)}`);
+    oversized.document.setSelector('h1,h2,h3,p,div,span', longCopy);
+    assert.equal(oversized.hooks.hasResponseTextConfirmation(oversized.document), false);
+    assert.equal(oversized.hooks.isResponseConfirmed({ allowDocumentStrongText: true }), false);
+});
+
+test('post-submit route classifier trusts search, requires vacancy confirmation and rejects unrelated routes', () => {
+    const search = createHarness({ href: 'https://hh.ru/search/vacancy?text=qa' });
+    assert.equal(search.hooks.detectPostSubmitPageOutcome(0), 'TRUSTED_NAVIGATION');
+
+    const vacancy = createHarness({ href: 'https://hh.ru/vacancy/42' });
+    assert.equal(vacancy.hooks.detectPostSubmitPageOutcome(0), false);
+    vacancy.document.setSelector(
+        '[data-qa="vacancy-response-success"], .vacancy-response-success',
+        element(vacancy.document, 'Success')
+    );
+    assert.equal(vacancy.hooks.detectPostSubmitPageOutcome(0), 'CONFIRMED');
+
+    for (const href of [
+        'https://hh.ru/account/login',
+        'https://hh.ru/account/login?backurl=/search/vacancy&return=/applicant/vacancy_response',
+        'https://hh.ru/error',
+        'https://hh.ru/employer/123'
+    ]) {
+        const unrelated = createHarness({ href });
+        const misleading = element(unrelated.document, 'Application sent');
+        unrelated.document.setSelector('h1,h2,h3,p,div,span', misleading);
+        assert.equal(
+            unrelated.hooks.detectPostSubmitPageOutcome(0, { allowDocumentStrongText: true }),
+            'UNTRUSTED_NAVIGATION',
+            href
+        );
+    }
+});
+
+test('post-submit route classifier fences stopped and stale runs before route success', () => {
+    const stopped = createHarness({ href: 'https://hh.ru/search/vacancy' });
+    stopped.hooks.State.setRunning(false);
+    assert.equal(stopped.hooks.detectPostSubmitPageOutcome(0), 'STOPPED');
+
+    const stale = createHarness({ href: 'https://hh.ru/search/vacancy' });
+    assert.equal(stale.hooks.detectPostSubmitPageOutcome(99), 'STOPPED');
+});
+
+test('fast response detector skips compatibility scans until explicitly requested', () => {
+    const { hooks, document } = createHarness();
+    for (let index = 0; index < 20; index++) {
+        assert.equal(hooks.detectResponseOutcomeOnce(0, false), false);
+    }
+    assert.equal(document.count(RESPONSE_SCOPE_SELECTOR), 0);
+    assert.equal(document.count('button, a, [role="button"]'), 0);
+    assert.equal(document.count('div, span, p, h1, h2, h3'), 0);
 });
 
 test('selector instrumentation does not repeat an already successful query', () => {
@@ -386,10 +506,10 @@ test('heuristics perform geometry checks only after semantic filtering', () => {
 test('diagnostic log updates coalesce full renders and preserve controls', () => {
     const { hooks, document, clock } = createHarness();
     const ids = [
-        'ar-view-main', 'ar-view-diag', 'ar-diag-full-box', 'ar-diag-back-btn',
+        'ar-main-panel', 'ar-view-main', 'ar-view-diag', 'ar-diag-full-box', 'ar-diag-back-btn',
         'ar-diag-filter-all', 'ar-diag-filter-errors', 'ar-diag-filter-all-count',
         'ar-diag-filter-errors-count', 'ar-diag-search', 'ar-diag-search-clear',
-        'ar-diag-auto-scroll', 'ar-diag-health-summary', 'ar-diag-check-status',
+        'ar-diag-auto-scroll', 'ar-diag-check-status',
         'ar-health-badge', 'ar-health-btn', 'ar-diag-full-clear-all', 'ar-diag-full-dropdown'
     ];
     ids.forEach(id => document.elementsById.set(id, new FakeElement(document)));
@@ -399,6 +519,9 @@ test('diagnostic log updates coalesce full renders and preserve controls', () =>
     const fullBox = el('ar-diag-full-box');
     const badge = el('ar-health-badge');
     const errorsOnly = el('ar-diag-filter-errors');
+    el('ar-main-panel').style.display = 'flex';
+    viewMain.style.display = 'flex';
+    viewDiag.style.display = 'none';
     hooks.DiagnosticsView.mount({ el, uiSignal: new AbortController().signal });
 
     el('ar-health-btn').onclick();
@@ -407,20 +530,34 @@ test('diagnostic log updates coalesce full renders and preserve controls', () =>
     fullBox.innerHTMLWrites = 0;
     badge.textContentWrites = 0;
 
-    hooks.log('repeat');
-    hooks.log('repeat');
-    hooks.log('repeat');
+    for (let index = 0; index < 1000; index++) hooks.log('repeat');
     assert.equal(fullBox.innerHTMLWrites, 0, 'log should schedule rather than synchronously rebuild');
     clock.advance(16);
-    assert.equal(fullBox.innerHTMLWrites, 1, 'three log writes should coalesce into one full render');
-    assert.equal(badge.textContentWrites, 3, 'badge should update once per log entry');
+    assert.equal(fullBox.innerHTMLWrites, 1, '1000 log writes should coalesce into one full render');
+    assert.equal(badge.textContentWrites, 1000, 'badge should update once per log entry');
     const repeatBadges = findByClass(fullBox, 'ar-log-repeat');
     assert.equal(repeatBadges.length, 1);
-    assert.match(repeatBadges[0].textContent, /×3/);
+    assert.match(repeatBadges[0].textContent, /×1000/);
+    assert.equal(findByClass(fullBox, 'ar-log-child').length, 0, 'collapsed repeats should not mount child rows');
     repeatBadges[0].click();
     assert.equal(findByClass(fullBox, 'ar-log-group-children').length, 1);
+    assert.equal(findByClass(fullBox, 'ar-log-child').length, 1000);
     findByClass(fullBox, 'ar-log-repeat')[0].click();
     assert.equal(findByClass(fullBox, 'ar-log-group-children').length, 0);
+    assert.equal(findByClass(fullBox, 'ar-log-child').length, 0, 'collapse should release child rows');
+
+    const searchInput = el('ar-diag-search');
+    const writesBeforeSearch = fullBox.innerHTMLWrites;
+    for (const query of ['e', 'er', 'err', 'erro', 'error']) {
+        searchInput.value = query;
+        searchInput.dispatch('input');
+    }
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeSearch);
+    clock.advance(139);
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeSearch);
+    clock.advance(1);
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeSearch + 1, 'rapid search input should cause one heavy render');
+    el('ar-diag-search-clear').click();
 
     hooks.log('failure', true);
     errorsOnly.click();
@@ -429,9 +566,18 @@ test('diagnostic log updates coalesce full renders and preserve controls', () =>
     assert.deepEqual(messages, ['failure']);
     assert.equal(el('ar-diag-filter-errors-count').textContent, '1');
 
+    const writesBeforeLanguageRefresh = fullBox.innerHTMLWrites;
+    searchInput.value = 'error';
+    searchInput.dispatch('input');
     hooks.I18n.setLanguage('en');
     hooks.DiagnosticsView.refresh();
-    assert.match(el('ar-diag-health-summary').title, /error|entr(?:y|ies)|record/i);
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeLanguageRefresh + 1,
+        'language refresh should replace the pending search render');
+    clock.advance(140);
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeLanguageRefresh + 1,
+        'language refresh should prevent a second delayed render');
+    el('ar-diag-search-clear').click();
+    assert.equal(el('ar-diag-filter-all-count').textContent, '1000');
 
     el('ar-diag-filter-all').click();
     el('ar-diag-full-clear-all').onclick();
@@ -441,4 +587,139 @@ test('diagnostic log updates coalesce full renders and preserve controls', () =>
     el('ar-diag-back-btn').onclick();
     assert.equal(viewDiag.style.display, 'none');
     assert.equal(viewMain.style.display, 'flex');
+});
+
+test('Diagnostics keeps slow and burst sources, counts, groups, and RU/EN exports bounded to 1000', () => {
+    const { hooks, document, clock } = createHarness();
+    const ids = [
+        'ar-main-panel', 'ar-view-main', 'ar-view-diag', 'ar-diag-full-box', 'ar-diag-back-btn',
+        'ar-diag-filter-all', 'ar-diag-filter-errors', 'ar-diag-filter-all-count',
+        'ar-diag-filter-errors-count', 'ar-diag-search', 'ar-diag-search-clear',
+        'ar-diag-auto-scroll', 'ar-diag-check-status', 'ar-health-badge', 'ar-health-btn',
+        'ar-diag-full-clear-all', 'ar-diag-full-dropdown'
+    ];
+    ids.forEach(id => document.elementsById.set(id, new FakeElement(document)));
+    const el = id => document.getElementById(id);
+    el('ar-main-panel').style.display = 'flex';
+    el('ar-view-main').style.display = 'flex';
+    el('ar-view-diag').style.display = 'none';
+    hooks.DiagnosticsView.mount({ el, uiSignal: new AbortController().signal });
+    el('ar-health-btn').onclick();
+
+    const slowEntries = [];
+    for (let index = 0; index < 1005; index++) {
+        const isError = index % 17 === 0;
+        slowEntries.push({ index, isError });
+        hooks.log(`slow ${index}`, isError);
+        assert.ok(Number(el('ar-diag-filter-all-count').textContent) <= 1000);
+    }
+    const boundedSlow = slowEntries.slice(-1000);
+    const expectedErrors = boundedSlow.filter(entry => entry.isError).length;
+    assert.deepEqual({ ...hooks.DiagLog.getStats() }, {
+        total: 1000,
+        errors: expectedErrors,
+        version: 1005
+    });
+    assert.equal(el('ar-diag-filter-all-count').textContent, '1000');
+    assert.equal(el('ar-diag-filter-errors-count').textContent, String(expectedErrors));
+    clock.advance(16);
+    assert.equal(findByClass(el('ar-diag-full-box'), 'ar-log-row').length, 1000);
+
+    for (const language of ['ru', 'en']) {
+        hooks.I18n.setLanguage(language);
+        hooks.DiagnosticsView.refresh();
+        const report = hooks.buildDiagnosticReport();
+        assert.equal((report.match(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\]/gm) || []).length, 1000);
+        assert.equal(el('ar-diag-filter-all-count').textContent, '1000');
+        assert.equal(el('ar-diag-filter-errors-count').textContent, String(expectedErrors));
+    }
+
+    hooks.DiagLog.clear();
+    hooks.DiagnosticsView.refresh();
+    for (let index = 0; index < 1250; index++) hooks.log('burst');
+    assert.equal(hooks.DiagLog.getAll().length, 1000);
+    assert.equal(hooks.DiagLog.getStats().errors, 0);
+    assert.equal(el('ar-diag-filter-all-count').textContent, '1000');
+    clock.advance(16);
+    const repeatBadges = findByClass(el('ar-diag-full-box'), 'ar-log-repeat');
+    assert.equal(repeatBadges.length, 1);
+    assert.match(repeatBadges[0].textContent, /×1000/);
+    assert.equal((hooks.buildDiagnosticReport().match(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\]/gm) || []).length, 1000);
+});
+
+test('hidden Diagnostics stays dirty without rendering and catches up exactly once per reopen', () => {
+    const { hooks, document, clock } = createHarness();
+    const ids = [
+        'ar-main-panel', 'ar-view-main', 'ar-view-diag', 'ar-diag-full-box', 'ar-diag-back-btn',
+        'ar-diag-filter-all', 'ar-diag-filter-errors', 'ar-diag-filter-all-count',
+        'ar-diag-filter-errors-count', 'ar-diag-search', 'ar-diag-search-clear',
+        'ar-diag-auto-scroll', 'ar-diag-check-status',
+        'ar-health-badge', 'ar-health-btn', 'ar-diag-full-clear-all', 'ar-diag-full-dropdown'
+    ];
+    ids.forEach(id => document.elementsById.set(id, new FakeElement(document)));
+    const el = id => document.getElementById(id);
+    const panel = el('ar-main-panel');
+    const viewMain = el('ar-view-main');
+    const viewDiag = el('ar-view-diag');
+    const fullBox = el('ar-diag-full-box');
+    panel.style.display = 'flex';
+    viewMain.style.display = 'flex';
+    viewDiag.style.display = 'none';
+
+    const firstController = new AbortController();
+    hooks.DiagnosticsView.mount({ el, uiSignal: firstController.signal });
+    el('ar-health-btn').onclick();
+    const searchInput = el('ar-diag-search');
+    searchInput.value = 'kept';
+    searchInput.dispatch('input');
+    const writesBeforeBack = fullBox.innerHTMLWrites;
+    el('ar-diag-back-btn').onclick();
+    clock.advance(140);
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeBack, 'Back should cancel the pending search render');
+    assert.equal(fullBox.childElementCount, 0, 'Back should release heavy log DOM');
+    assert.equal(searchInput.value, 'kept', 'Back should preserve search state');
+    fullBox.innerHTMLWrites = 0;
+
+    for (let index = 0; index < 100; index++) hooks.log(`kept hidden ${index}`);
+    clock.advance(16);
+    assert.equal(fullBox.innerHTMLWrites, 0, '100 hidden logs should trigger zero heavy renders');
+
+    el('ar-health-btn').onclick();
+    assert.equal(fullBox.innerHTMLWrites, 1, 'reopening Diagnostics should perform one catch-up render');
+
+    panel.style.display = 'none';
+    hooks.DiagnosticsView.onVisibilityChange();
+    fullBox.innerHTMLWrites = 0;
+    for (let index = 0; index < 100; index++) hooks.log(`kept minimized ${index}`);
+    clock.advance(16);
+    assert.equal(fullBox.innerHTMLWrites, 0);
+    panel.style.display = 'flex';
+    hooks.DiagnosticsView.onVisibilityChange();
+    assert.equal(fullBox.innerHTMLWrites, 1, 'expanding the panel should catch up once');
+
+    document.hidden = true;
+    document.dispatch('visibilitychange');
+    fullBox.innerHTMLWrites = 0;
+    for (let index = 0; index < 100; index++) hooks.log(`kept background ${index}`);
+    clock.advance(16);
+    assert.equal(fullBox.innerHTMLWrites, 0);
+    document.hidden = false;
+    document.dispatch('visibilitychange');
+    assert.equal(fullBox.innerHTMLWrites, 1, 'returning to the document should catch up once');
+
+    searchInput.value = 'pending destroy';
+    searchInput.dispatch('input');
+    const writesBeforeDestroy = fullBox.innerHTMLWrites;
+    firstController.abort();
+    hooks.DiagnosticsView.destroy();
+    clock.advance(140);
+    assert.equal(fullBox.innerHTMLWrites, writesBeforeDestroy, 'destroy should cancel the pending search render');
+    const secondController = new AbortController();
+    hooks.DiagnosticsView.mount({ el, uiSignal: secondController.signal });
+    assert.equal(document.listeners.get('visibilitychange')?.length, 1, 'remount should not duplicate visibility handlers');
+    fullBox.innerHTMLWrites = 0;
+    hooks.DiagnosticsView.onVisibilityChange();
+    assert.equal(fullBox.innerHTMLWrites, 1, 'remount should render the current state once');
+    secondController.abort();
+    hooks.DiagnosticsView.destroy();
 });

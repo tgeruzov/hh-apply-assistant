@@ -15,6 +15,28 @@
 (function () {
     'use strict';
 
+    // Повторная инъекция userscript в тот же document не должна создавать второй runtime.
+    // Полная навигация получает новый window, а SPA/bfcache продолжают использовать эту запись.
+    const RUNTIME_KEY = '__hhApplyAssistantV4Runtime';
+    const existingRuntime = window[RUNTIME_KEY];
+    if (existingRuntime && existingRuntime.active) return;
+
+    const runtimeRecord = {
+        active: true,
+        version: '4.0.0',
+        watchdogIntervalId: null,
+        domReadyObserver: null,
+        globalListeners: [],
+        teardown: null
+    };
+    window[RUNTIME_KEY] = runtimeRecord;
+
+    function addRuntimeListener(target, type, handler, options) {
+        if (!target || typeof target.addEventListener !== 'function') return;
+        target.addEventListener(type, handler, options);
+        runtimeRecord.globalListeners.push({ target, type, handler, options });
+    }
+
     // ─────────────────────────────────────────────────────────────
     //  1. КОНСТАНТЫ И КОНФИГУРАЦИЯ
     // ─────────────────────────────────────────────────────────────
@@ -53,6 +75,7 @@
         scrollStepMs: 200,        // шаг человеческого скролла
         waitForModalMs: 8000,     // ожидание реакции после клика Откликнуться
         confirmWaitMs: 6000,      // ожидание подтверждения после отправки формы
+        responsePagePendingMs: 16000, // обычный full-page submit ждём без повторного клика
         instanceLockTtl: 30000,   // TTL кросс-вкладочной блокировки
         forceSubmitAttempts: 3    // попыток дожать отправку при предупреждении об отказе
     };
@@ -68,7 +91,6 @@
         applyBtn: '[data-qa="vacancy-serp__vacancy_response"], button[data-qa="vacancy-serp__vacancy_response"]',
         // Кнопки "Откликнуться" на странице самой вакансии (верхняя/нижняя)
         vacancyApply: '[data-qa="vacancy-response-link-top"], a[data-qa="vacancy-response-link-top"], [data-qa="vacancy-response-link-bottom"], a[data-qa="vacancy-response-link-bottom"]',
-        topApply: '[data-qa="vacancy-response-link-top"], a[data-qa="vacancy-response-link-top"]',
         // Сценарий А: резюме уже отправлено, предлагается прикрепить сопроводительное
         attachCoverBtn: '[data-qa="responded-success-attach-cover-letter"]',
         // Кнопка/переключатель "прикрепить сопроводительное" ВНУТРИ формы отклика (до отправки):
@@ -107,7 +129,7 @@
                     label: 'Безопасный'
                 },
                 balanced: {
-                    label: 'Оптимальный'
+                    label: 'Баланс'
                 },
                 fast: {
                     label: 'Быстрый'
@@ -124,8 +146,10 @@
                 defaultText: 'Добрый день! Заинтересовала ваша вакансия. Опыт релевантен, подробности в резюме. Буду рад обратной связи!',
                 title: 'Сопроводительное письмо',
                 placeholder: 'Текст сопроводительного письма...',
-                rejectWarningLabel: 'Откликаться несмотря на предупреждение',
-                rejectWarningTitle: 'Дожимать отклик на вакансиях, где hh предупреждает о вероятном отказе'
+                rejectWarningLabel: 'Откликаться при предупреждении HH',
+                rejectWarningHelpAria: 'О настройке отклика при предупреждении HH',
+                rejectWarningHelpTitle: 'Что делает эта настройка',
+                rejectWarningHelpText: 'Если hh.ru покажет предупреждение о вероятном отказе, ассистент всё равно отправит отклик.'
             },
             status: {
                 idle: 'Ожидание',
@@ -144,26 +168,28 @@
             panel: {
                 minimizeTitle: 'Свернуть панель',
                 expandTitle: 'Развернуть HH Apply Assistant',
+                expandRunningTitle: 'HH Apply Assistant работает · развернуть',
                 langSwitchLabel: 'Язык интерфейса',
                 modeTitle: 'Режим работы',
                 modeHelpAria: 'О режимах работы',
-                modeHelpTitle: 'Безопасный, Оптимальный, Быстрый и Турбо режимы',
-                modeScaleSlower: 'Медленнее',
-                modeScaleFaster: 'Быстрее',
-                modeHelpSafeTitle: 'Safe',
-                modeHelpSafeText: 'Самый спокойный режим · длинные паузы',
-                modeHelpBalancedTitle: 'Balanced',
-                modeHelpBalancedText: 'Оптимальный баланс скорости и пауз',
-                modeHelpFastTitle: 'Fast',
-                modeHelpFastText: 'Быстрее · короткие паузы',
-                modeHelpTurboTitle: 'Turbo',
-                modeHelpTurboText: 'Максимальная скорость · минимальные задержки',
+                modeHelpTitle: 'Ориентировочная производительность',
+                modeHelpSafeTitle: 'Безопасный',
+                modeHelpSafeText: '≈ 0,5–1 отклик/мин',
+                modeHelpBalancedTitle: 'Баланс',
+                modeHelpBalancedText: '≈ 1–2 отклика/мин',
+                modeHelpFastTitle: 'Быстрый',
+                modeHelpFastText: '≈ 2–4 отклика/мин',
+                modeHelpTurboTitle: 'Турбо',
+                modeHelpTurboText: '≈ 6–12 откликов/мин',
+                modeHelpNote: 'Скорость ориентировочная: загрузка страниц и время ответа HH могут заметно влиять на результат.',
+                autosaveIdle: 'Изменения сохраняются автоматически',
+                autosaveSaved: 'Сохранено',
                 limitLabel: 'Лимит откликов за запуск',
                 limitShort: 'Лимит',
                 startBtn: 'Запустить отклики',
                 stopBtn: 'Остановить',
                 resetHistory: 'Сбросить историю',
-                resetHistoryTitle: 'Сбросить историю отправленных откликов и статистику',
+                resetHistoryTitle: 'Сбросить историю обработанных вакансий, счётчик и статистику запуска (лимит не изменится)',
                 diagnostics: 'Диагностика',
                 diagnosticsTitle: 'Открыть диагностику и лог',
                 statsTitle: 'Статистика запуска',
@@ -183,7 +209,7 @@
                 manualUnsafeUrl: 'Ссылка не прошла проверку безопасности',
                 manualRemoveTitle: 'Удалить из очереди',
                 manualRemove: 'Удалить',
-                manualMore: 'Открыть очередь ({count}) →',
+                manualMore: 'Вся очередь ({count}) ↗',
                 manualMoreTitle: 'Открыть интерактивную страницу со всей очередью вакансий'
             },
             diag: {
@@ -192,10 +218,11 @@
                 title: 'Диагностика',
                 downloadLog: 'Скачать лог',
                 downloadLogTitle: 'Скачать полный диагностический отчет',
-                checkSelectors: 'Проверить селекторы',
+                checkSelectors: 'Проверить страницу',
                 checkSummaryIdle: '',
                 checkSummaryProgress: '{passed}/3',
                 checkSummaryOk: 'OK',
+                filterLabel: 'Фильтры лога',
                 filterAll: 'Все',
                 filterErrors: 'Ошибки',
                 searchPlaceholder: 'Поиск по логам...',
@@ -208,8 +235,7 @@
                 moreBtn: 'Дополнительно',
                 moreTitle: 'Дополнительные действия',
                 clearView: 'Очистить вид',
-                clearAll: 'Очистить сохр. лог и метрики',
-                statSummary: '{errText} · {recText}',
+                clearAll: 'Очистить сохранённый лог и метрики',
                 badgeTitle: '{errText} в диагностическом логе · Открыть диагностику',
                 badgeTitleClean: 'Открыть диагностику и лог',
                 emptyTitle: 'Записей пока нет',
@@ -221,7 +247,7 @@
             },
             confirm: {
                 clearDiag: 'Очистить сохранённый диагностический лог и метрики? (выгрузите файл перед очисткой, если нужен для анализа)',
-                resetHistory: 'Сбросить историю откликов, лимит и статистику текущего запуска?',
+                resetHistory: 'Сбросить историю обработанных вакансий и статистику запуска? Счётчик отправленных откликов также будет обнулён, и ассистент сможет обработать эти вакансии заново. Установленный лимит не изменится.',
                 clearManual: 'Очистить сохранённый список вакансий ручной очереди?',
                 removeManual: 'Удалить эту вакансию из ручной очереди?'
             },
@@ -230,13 +256,13 @@
                 manualOpenBlocked: 'Браузер заблокировал открытие очереди. Разрешите всплывающие окна и повторите попытку.'
             },
             health: {
-                starting: 'Запускаю диагностику селекторов...',
-                applyBtnList: 'Кнопка отклика (list)',
-                vacancyApply: 'Кнопка отклика (vacancy page)',
-                vacancyLink: 'Ссылка вакансии (card)',
+                starting: 'Проверяю текущую страницу...',
+                applyBtnList: 'Кнопка отклика (список)',
+                vacancyApply: 'Кнопка отклика (страница вакансии)',
+                vacancyLink: 'Ссылка вакансии (карточка)',
                 attachCoverBtn: 'Прикрепить письмо (сценарий А)',
                 letterSubmit: 'Кнопка отправки письма',
-                letterTextarea: 'Поле письма (textarea)',
+                letterTextarea: 'Поле сопроводительного письма',
                 reasons: {
                     emptySearch: 'не применимо — список вакансий пуст',
                     onVacancyPage: 'не применимо на странице вакансии',
@@ -252,9 +278,10 @@
                 statusOk: '{name}: OK ({sel})',
                 statusFallback: '{name}: ЭВРИСТИЧЕСКИ НАЙДЕНО (селектор {sel} не сработал)',
                 statusNotFound: '{name}: НЕ НАЙДЕНО ({sel})',
-                summary: 'Healthcheck завершён: {okCount} OK · {skipCount} не применимо · {errText}.',
-                instanceLock: 'Instance lock: tabId={tabId} ts={ts}',
-                instanceLockMissing: 'Instance lock: отсутствует'
+                statusSkipped: 'Пропуск — {name}: {reason}',
+                summary: 'Проверка страницы завершена: {okCount} OK · {skipCount} не применимо · {errText}.',
+                instanceLock: 'Блокировка экземпляра: tabId={tabId}, ts={ts}',
+                instanceLockMissing: 'Блокировка экземпляра: отсутствует'
             },
             plurals: {
                 error: {
@@ -271,7 +298,7 @@
                 }
             },
             logs: {
-                pageLoad: '- Загрузка страницы: {path} (running={running}, sent={sent}/{limit}) -',
+                pageLoad: '- Загрузка страницы: {path} (запуск={running}, отправлено={sent}/{limit}) -',
                 newRun: 'Новый запуск: счётчик откликов сброшен. Режим - {mode}.',
                 limitReached: 'Лимит достигнут ({limit}). Работа завершена.',
                 runCompleted: 'Работа завершена. Отправлено всего: {count}.',
@@ -279,7 +306,7 @@
                 stoppedDuringVacancy: 'Остановлено пользователем во время обработки вакансии.',
                 stoppedProcessing: 'Обработка остановлена пользователем.',
                 settingsSaved: 'Настройки сохранены.',
-                historyReset: 'История откликов, счётчик и статистика сброшены.',
+                historyReset: 'История обработанных вакансий, счётчик отправленных откликов и статистика запуска сброшены. Лимит не изменён.',
                 manualCleared: 'Список ручной очереди очищен.',
                 diagCleared: 'Сохранённый диагностический лог и метрики очищены.',
                 diagExported: 'Диагностический лог выгружен в файл.',
@@ -353,8 +380,8 @@
                 twoStepBackFailed: 'Двухшаговый возврат не сработал. Перехожу на список вакансий.',
                 noVidOnQuestions: 'Не удалось определить ID вакансии на странице с вопросами.',
                 domSnapshot: 'Снимок DOM ({label}): data-qa={dataQa}, textarea={textareas}, taskFields={taskFields}, modalBtns={modalButtons}.',
-                heuristicFallback: '[Heuristics] Резервный поиск для "{key}": обнаружен <{tag}>',
-                heuristicFallbackAll: '[Heuristics] Резервный поиск всех элементов для "{key}": найдено {count}',
+                heuristicFallback: '[Эвристика] Резервный поиск для "{key}": обнаружен <{tag}>',
+                heuristicFallbackAll: '[Эвристика] Резервный поиск всех элементов для "{key}": найдено {count}',
                 jsError: 'JS-ошибка [HH Apply Assistant]: {msg}{where}',
                 unhandledRejection: 'Unhandled rejection [HH Apply Assistant]: {msg}'
             },
@@ -418,6 +445,8 @@
                 },
                 openSelected: 'Открыть выбранные',
                 openSelectedTitle: 'Открыть отмеченные вакансии, по одной вкладке на каждую. Если открылась только первая - разрешите этому файлу всплывающие окна в браузере.',
+                selectAll: 'Выбрать все вакансии',
+                selectVacancy: 'Выбрать вакансию: {title}',
                 resetMarkers: 'Сбросить отметки',
                 resetMarkersTitle: 'Снять отметку открыто со всех вакансий: режим Открытые опустеет, вакансии снова станут Новыми. Сами записи не удаляются.',
                 tableHeaders: {
@@ -467,8 +496,10 @@
                 defaultText: 'Hello! I am very interested in this position. My experience is relevant, and more details can be found in my CV. I look forward to your feedback!',
                 title: 'Cover letter',
                 placeholder: 'Cover letter text...',
-                rejectWarningLabel: 'Apply despite warning',
-                rejectWarningTitle: 'Proceed with application even if hh warns of a likely rejection'
+                rejectWarningLabel: 'Apply when HH warns',
+                rejectWarningHelpAria: 'About applying when HH shows a warning',
+                rejectWarningHelpTitle: 'What this setting does',
+                rejectWarningHelpText: 'If hh.ru shows a warning about a likely rejection, the assistant will still submit the application.'
             },
             status: {
                 idle: 'Idle',
@@ -487,26 +518,28 @@
             panel: {
                 minimizeTitle: 'Collapse panel',
                 expandTitle: 'Expand HH Apply Assistant',
+                expandRunningTitle: 'HH Apply Assistant is running · expand',
                 langSwitchLabel: 'Interface language',
                 modeTitle: 'Work mode',
                 modeHelpAria: 'About work modes',
-                modeHelpTitle: 'Safe, Balanced, Fast and Turbo work modes',
-                modeScaleSlower: 'Slower',
-                modeScaleFaster: 'Faster',
+                modeHelpTitle: 'Estimated performance',
                 modeHelpSafeTitle: 'Safe',
-                modeHelpSafeText: 'Calmest mode · longer pauses',
+                modeHelpSafeText: '≈ 0.5–1 application/min',
                 modeHelpBalancedTitle: 'Balanced',
-                modeHelpBalancedText: 'Optimal balance of speed and pauses',
+                modeHelpBalancedText: '≈ 1–2 applications/min',
                 modeHelpFastTitle: 'Fast',
-                modeHelpFastText: 'Faster · shorter pauses',
+                modeHelpFastText: '≈ 2–4 applications/min',
                 modeHelpTurboTitle: 'Turbo',
-                modeHelpTurboText: 'Maximum speed · minimal delays',
+                modeHelpTurboText: '≈ 6–12 applications/min',
+                modeHelpNote: 'Speed is approximate: page loading and HH response times can significantly affect the result.',
+                autosaveIdle: 'Changes are saved automatically',
+                autosaveSaved: 'Saved',
                 limitLabel: 'Application limit per run',
                 limitShort: 'Limit',
                 startBtn: 'Start applying',
                 stopBtn: 'Stop',
                 resetHistory: 'Reset history',
-                resetHistoryTitle: 'Reset application history and run statistics',
+                resetHistoryTitle: 'Reset processed-vacancy history, sent counter, and run statistics (the limit stays unchanged)',
                 diagnostics: 'Diagnostics',
                 diagnosticsTitle: 'Open diagnostics and log',
                 statsTitle: 'Run statistics',
@@ -526,7 +559,7 @@
                 manualUnsafeUrl: 'URL failed security check',
                 manualRemoveTitle: 'Remove from queue',
                 manualRemove: 'Remove',
-                manualMore: 'Open queue ({count}) →',
+                manualMore: 'Full queue ({count}) ↗',
                 manualMoreTitle: 'Open interactive page with the full vacancy queue'
             },
             diag: {
@@ -535,10 +568,11 @@
                 title: 'Diagnostics',
                 downloadLog: 'Download log',
                 downloadLogTitle: 'Download full diagnostic report',
-                checkSelectors: 'Check selectors',
+                checkSelectors: 'Check page',
                 checkSummaryIdle: '',
                 checkSummaryProgress: '{passed}/3',
                 checkSummaryOk: 'OK',
+                filterLabel: 'Log filters',
                 filterAll: 'All',
                 filterErrors: 'Errors',
                 searchPlaceholder: 'Search logs...',
@@ -552,7 +586,6 @@
                 moreTitle: 'Additional actions',
                 clearView: 'Clear view',
                 clearAll: 'Clear saved log & metrics',
-                statSummary: '{errText} · {recText}',
                 badgeTitle: '{errText} in diagnostic log · Open diagnostics',
                 badgeTitleClean: 'Open diagnostics and log',
                 emptyTitle: 'No entries yet',
@@ -564,7 +597,7 @@
             },
             confirm: {
                 clearDiag: 'Clear saved diagnostic log and metrics? (download the log before clearing if needed for analysis)',
-                resetHistory: 'Reset application history, limit counter, and current run statistics?',
+                resetHistory: 'Reset processed-vacancy history and run statistics? The sent-application counter will also return to zero, so the assistant can process these vacancies again. Your configured limit will stay unchanged.',
                 clearManual: 'Clear saved vacancies from the manual queue?',
                 removeManual: 'Remove this vacancy from the manual queue?'
             },
@@ -573,7 +606,7 @@
                 manualOpenBlocked: 'The browser blocked the queue window. Allow pop-ups and try again.'
             },
             health: {
-                starting: 'Starting selector diagnostics...',
+                starting: 'Checking the current page...',
                 applyBtnList: 'Apply button (list)',
                 vacancyApply: 'Apply button (vacancy page)',
                 vacancyLink: 'Vacancy link (card)',
@@ -595,6 +628,7 @@
                 statusOk: '{name}: OK ({sel})',
                 statusFallback: '{name}: HEURISTICALLY FOUND (selector {sel} missed)',
                 statusNotFound: '{name}: NOT FOUND ({sel})',
+                statusSkipped: 'Skipped — {name}: {reason}',
                 summary: 'Health check complete: {okCount} OK · {skipCount} not applicable · {errText}.',
                 instanceLock: 'Instance lock: tabId={tabId} ts={ts}',
                 instanceLockMissing: 'Instance lock: none'
@@ -622,7 +656,7 @@
                 stoppedDuringVacancy: 'Stopped by user while processing vacancy.',
                 stoppedProcessing: 'Processing stopped by user.',
                 settingsSaved: 'Settings saved.',
-                historyReset: 'Application history, counter, and statistics reset.',
+                historyReset: 'Processed-vacancy history, sent-application counter, and run statistics reset. The configured limit was not changed.',
                 manualCleared: 'Manual queue list cleared.',
                 diagCleared: 'Saved diagnostic log and metrics cleared.',
                 diagExported: 'Diagnostic log exported to file.',
@@ -761,6 +795,8 @@
                 },
                 openSelected: 'Open selected',
                 openSelectedTitle: 'Open checked vacancies in separate tabs. If only the first one opens, enable pop-ups for this file in your browser.',
+                selectAll: 'Select all vacancies',
+                selectVacancy: 'Select vacancy: {title}',
                 resetMarkers: 'Reset markers',
                 resetMarkersTitle: 'Remove opened markers from all vacancies: Opened view will clear and vacancies will reappear under New. Entries are not deleted.',
                 tableHeaders: {
@@ -968,7 +1004,7 @@
     const DEFAULTS = {
         coverText: TRANSLATIONS[DEFAULT_LANGUAGE].cover.defaultText,
         useCover: true,
-        applyOnRejectWarning: true,
+        applyOnRejectWarning: false,
         skipHidden: true,
         preset: DEFAULT_PRESET,
         limit: 50
@@ -1079,12 +1115,40 @@
 
     const storage = {
         localGet: (key) => { try { return localStorage.getItem(key); } catch (e) { return null; } },
+        localRead: (key) => { try { return { ok: true, value: localStorage.getItem(key) }; } catch (e) { return { ok: false, value: null }; } },
         localSet: (key, value) => { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } },
         localRemove: (key) => { try { localStorage.removeItem(key); return true; } catch (e) { return false; } },
         sessionGet: (key) => { try { return sessionStorage.getItem(key); } catch (e) { return null; } },
+        sessionRead: (key) => { try { return { ok: true, value: sessionStorage.getItem(key) }; } catch (e) { return { ok: false, value: null }; } },
         sessionSet: (key, value) => { try { sessionStorage.setItem(key, value); return true; } catch (e) { return false; } },
         sessionRemove: (key) => { try { sessionStorage.removeItem(key); return true; } catch (e) { return false; } }
     };
+
+    function writeSessionVerified(key, value) {
+        const expected = String(value);
+        if (!storage.sessionSet(key, expected)) return false;
+        const check = storage.sessionRead(key);
+        return check.ok && check.value === expected;
+    }
+
+    function removeSessionVerified(key) {
+        if (!storage.sessionRemove(key)) return false;
+        const check = storage.sessionRead(key);
+        return check.ok && check.value === null;
+    }
+
+    function writeLocalVerified(key, value) {
+        const expected = String(value);
+        if (!storage.localSet(key, expected)) return false;
+        const check = storage.localRead(key);
+        return check.ok && check.value === expected;
+    }
+
+    function removeLocalVerified(key) {
+        if (!storage.localRemove(key)) return false;
+        const check = storage.localRead(key);
+        return check.ok && check.value === null;
+    }
 
     // ─────────────────────────────────────────────────────────────
     //  4. НАСТРОЙКИ
@@ -1098,7 +1162,7 @@
             return {
                 coverText: String(merged.coverText ?? defaultCover).slice(0, 5000),
                 useCover: merged.useCover !== false,
-                applyOnRejectWarning: merged.applyOnRejectWarning !== false,
+                applyOnRejectWarning: merged.applyOnRejectWarning === true,
                 skipHidden: merged.skipHidden !== false,
                 preset: PRESETS[merged.preset] ? merged.preset : DEFAULT_PRESET,
                 limit: clamp(Math.round(toNum(merged.limit, DEFAULTS.limit)), 1, 500)
@@ -1164,6 +1228,135 @@
     // Постоянный диагностический лог (переживает навигацию между страницами).
     // Пишем в localStorage, чтобы собрать полную картину работы скрипта через все переходы
     // (список -> вакансия -> список ...) и потом выгрузить одним файлом.
+    const DiagnosticI18n = (() => {
+        const namespaces = ['logs', 'health'];
+        const patternCache = new Map();
+        const staticCache = new Map();
+        const legacyEntries = {
+            ru: [
+                ['health.starting', 'Запускаю диагностику селекторов...'],
+                ['health.applyBtnList', 'Кнопка отклика (list)'],
+                ['health.vacancyApply', 'Кнопка отклика (vacancy page)'],
+                ['health.vacancyLink', 'Ссылка вакансии (card)'],
+                ['health.letterTextarea', 'Поле письма (textarea)'],
+                ['health.summary', 'Healthcheck завершён: {okCount} OK · {skipCount} не применимо · {errText}.'],
+                ['health.instanceLock', 'Instance lock: tabId={tabId} ts={ts}'],
+                ['health.instanceLockMissing', 'Instance lock: отсутствует'],
+                ['logs.pageLoad', '- Загрузка страницы: {path} (running={running}, sent={sent}/{limit}) -'],
+                ['logs.heuristicFallback', '[Heuristics] Резервный поиск для "{key}": обнаружен <{tag}>'],
+                ['logs.heuristicFallbackAll', '[Heuristics] Резервный поиск всех элементов для "{key}": найдено {count}'],
+                ['logs.historyReset', 'История откликов, счётчик и статистика сброшены.']
+            ],
+            en: [
+                ['health.starting', 'Starting selector diagnostics...'],
+                ['logs.historyReset', 'Application history, counter, and statistics reset.']
+            ]
+        };
+        const escapeRx = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+        const collect = (node, prefix, out) => {
+            if (!node || typeof node !== 'object') return;
+            Object.entries(node).forEach(([key, value]) => {
+                const path = prefix ? `${prefix}.${key}` : key;
+                if (typeof value === 'string') out.push({ key: path, template: value });
+                else collect(value, path, out);
+            });
+        };
+
+        const getEntries = (lang) => {
+            const out = [];
+            namespaces.forEach(namespace => collect(TRANSLATIONS[lang]?.[namespace], namespace, out));
+            collect(TRANSLATIONS[lang]?.languages, 'languages', out);
+            collect(TRANSLATIONS[lang]?.presets, 'presets', out);
+            (legacyEntries[lang] || []).forEach(([key, template]) => out.push({ key, template }));
+            return out;
+        };
+
+        const getPatterns = (lang) => {
+            if (patternCache.has(lang)) return patternCache.get(lang);
+            const patterns = getEntries(lang).map(entry => {
+                const params = [];
+                let source = '^';
+                let cursor = 0;
+                entry.template.replace(/\{([a-zA-Z0-9_]+)\}/g, (token, name, offset) => {
+                    source += escapeRx(entry.template.slice(cursor, offset)) + '([\\s\\S]*?)';
+                    params.push(name);
+                    cursor = offset + token.length;
+                    return token;
+                });
+                source += escapeRx(entry.template.slice(cursor)) + '$';
+                return {
+                    ...entry,
+                    params,
+                    literalLength: entry.template.replace(/\{[a-zA-Z0-9_]+\}/g, '').length,
+                    rx: new RegExp(source)
+                };
+            }).sort((a, b) => b.literalLength - a.literalLength);
+            patternCache.set(lang, patterns);
+            return patterns;
+        };
+
+        const getStaticEntries = (lang) => {
+            if (staticCache.has(lang)) return staticCache.get(lang);
+            const entries = getEntries(lang)
+                .filter(entry => !/\{[a-zA-Z0-9_]+\}/.test(entry.template) && entry.template.length >= 3)
+                .sort((a, b) => b.template.length - a.template.length);
+            staticCache.set(lang, entries);
+            return entries;
+        };
+
+        const infer = (message, preferredLang = I18n.getLanguage()) => {
+            const text = String(message || '');
+            const languages = [preferredLang, ...SUPPORTED_LANGUAGES.filter(lang => lang !== preferredLang)];
+            for (const lang of languages) {
+                for (const pattern of getPatterns(lang)) {
+                    const match = pattern.rx.exec(text);
+                    if (!match) continue;
+                    const params = {};
+                    pattern.params.forEach((name, index) => { params[name] = match[index + 1]; });
+                    return { key: pattern.key, params, lang };
+                }
+            }
+            return null;
+        };
+
+        const translateParam = (value, fromLang, toLang) => {
+            let result = String(value ?? '');
+            if (/^(?:true|false)$/i.test(result)) {
+                if (toLang === 'ru') return result.toLowerCase() === 'true' ? 'да' : 'нет';
+                return result.toLowerCase();
+            }
+            if (!fromLang || fromLang === toLang) return result;
+            for (const source of getStaticEntries(fromLang)) {
+                if (!result.includes(source.template)) continue;
+                const target = I18n.t(source.key);
+                if (target !== source.key) result = result.split(source.template).join(target);
+            }
+            return result;
+        };
+
+        const format = (entry) => {
+            if (!entry) return '';
+            const meta = entry.i18nKey
+                ? { key: entry.i18nKey, params: entry.i18nParams || {}, lang: entry.i18nLang || '' }
+                : infer(entry.msg, entry.lang || I18n.getLanguage());
+            if (!meta) return String(entry.msg || '');
+            const currentLang = I18n.getLanguage();
+            const params = {};
+            Object.entries(meta.params || {}).forEach(([name, value]) => {
+                const numericValue = Number.parseInt(String(value), 10);
+                if (name === 'errText' && Number.isFinite(numericValue)) {
+                    params[name] = I18n.plural(numericValue, 'error');
+                    return;
+                }
+                params[name] = translateParam(value, meta.lang, currentLang);
+            });
+            return I18n.t(meta.key, params);
+        };
+
+        return { infer, format };
+    })();
+
     const DiagLog = (() => {
         let _cache = null;
         let _saveTimer = null;
@@ -1175,7 +1368,9 @@
             if (_cache === null) {
                 const raw = storage.localGet(KEYS.diagLog);
                 const parsed = parseJson(raw, []);
-                _cache = Array.isArray(parsed) ? parsed : [];
+                const entries = Array.isArray(parsed) ? parsed : [];
+                _cache = entries.length > DIAG_LOG_MAX ? entries.slice(-DIAG_LOG_MAX) : entries;
+                _isDirty = entries.length > DIAG_LOG_MAX;
                 _errorCount = _cache.reduce((acc, item) => (item && item.lvl === 'ERR' ? acc + 1 : acc), 0);
             }
             return _cache;
@@ -1192,9 +1387,15 @@
                 const json = JSON.stringify(_cache);
                 if (!storage.localSet(KEYS.diagLog, json)) {
                     // Переполнение квоты — агрессивно обрезаем и пробуем снова
+                    const sourceChanged = _cache.length > 300;
                     _cache = _cache.slice(-300);
                     _errorCount = _cache.reduce((acc, item) => (item && item.lvl === 'ERR' ? acc + 1 : acc), 0);
                     storage.localSet(KEYS.diagLog, JSON.stringify(_cache));
+                    if (sourceChanged) {
+                        _version++;
+                        try { window._hhApplyAssistantUpdateDiagBadge?.(true); } catch (e) { /* ignore */ }
+                        try { window._hhApplyAssistantRenderDiagnostics?.(); } catch (e) { /* ignore */ }
+                    }
                 }
                 _isDirty = false;
             } catch (e) {
@@ -1214,19 +1415,28 @@
         return {
             push(msg, isError) {
                 const arr = _ensureLoaded();
-                arr.push({
+                const text = String(msg).slice(0, 1000);
+                const i18n = DiagnosticI18n.infer(text, I18n.getLanguage());
+                const entry = {
                     t: Date.now(),
                     lvl: isError ? 'ERR' : 'INFO',
                     path: (location.pathname + location.search).slice(0, 300),
                     tab: TAB_ID,
-                    msg: String(msg).slice(0, 1000)
-                });
+                    lang: I18n.getLanguage(),
+                    msg: text
+                };
+                if (i18n) {
+                    entry.i18nKey = i18n.key;
+                    entry.i18nParams = i18n.params;
+                    entry.i18nLang = i18n.lang;
+                }
+                arr.push(entry);
                 _version++;
                 if (isError) {
                     _errorCount++;
                 }
-                if (arr.length > DIAG_LOG_MAX + 50) {
-                    _cache = arr.slice(arr.length - DIAG_LOG_MAX);
+                if (arr.length > DIAG_LOG_MAX) {
+                    _cache = arr.slice(-DIAG_LOG_MAX);
                     _errorCount = _cache.reduce((acc, item) => (item && item.lvl === 'ERR' ? acc + 1 : acc), 0);
                 }
                 _isDirty = true;
@@ -1518,7 +1728,7 @@
 
         const body = entries.map(e => {
             const lvl = e.lvl === 'ERR' ? 'ERR ' : 'INFO';
-            return `[${fmtTime(e.t)}] [${lvl}] [tab ${e.tab || '?'}] [${e.path || '?'}] ${e.msg}`;
+            return `[${fmtTime(e.t)}] [${lvl}] [tab ${e.tab || '?'}] [${e.path || '?'}] ${DiagnosticI18n.format(e)}`;
         }).join('\n');
 
         return header + buildMetricsSection() + '\n' + body + '\n' + buildSnapshotsSection();
@@ -1681,34 +1891,44 @@
     }
 
     const State = {
-        getProcessedIDs: () => {
-            const arr = parseJson(storage.sessionGet(KEYS.history), []);
-            return new Set(Array.isArray(arr) ? arr : []);
+        readProcessedIDs: () => {
+            const read = storage.sessionRead(KEYS.history);
+            if (!read.ok) return { ok: false, value: new Set() };
+            const arr = parseJson(read.value, []);
+            return { ok: true, value: new Set(Array.isArray(arr) ? arr : []) };
         },
+        getProcessedIDs: () => State.readProcessedIDs().value,
         addProcessedID: (id) => {
             if (!id) return true;
-            const s = State.getProcessedIDs();
+            const current = State.readProcessedIDs();
+            if (!current.ok) return false;
+            const s = current.value;
             s.add(id);
-            return storage.sessionSet(KEYS.history, JSON.stringify([...s]));
+            return writeSessionVerified(KEYS.history, JSON.stringify([...s]));
         },
-        clearProcessedIDs: () => storage.sessionRemove(KEYS.history),
+        clearProcessedIDs: () => removeSessionVerified(KEYS.history),
 
         // Счётчик успешно отправленных откликов - переживает переходы между страницами,
         // поэтому лимит работает на весь прогон, а не сбрасывается на каждой загрузке.
-        getSentCount: () => {
-            const n = parseInt(storage.sessionGet(KEYS.sentCount) || '0', 10);
-            return Number.isFinite(n) ? n : 0;
+        readSentCount: () => {
+            const read = storage.sessionRead(KEYS.sentCount);
+            if (!read.ok) return { ok: false, value: 0 };
+            const n = parseInt(read.value || '0', 10);
+            return { ok: true, value: Number.isFinite(n) ? n : 0 };
         },
+        getSentCount: () => State.readSentCount().value,
         incSentCount: () => {
-            const next = State.getSentCount() + 1;
-            if (!storage.sessionSet(KEYS.sentCount, String(next))) return null;
+            const current = State.readSentCount();
+            if (!current.ok) return null;
+            const next = current.value + 1;
+            if (!writeSessionVerified(KEYS.sentCount, String(next))) return null;
             Stats.bump('success');
             return next;
         },
-        resetSentCount: () => storage.sessionRemove(KEYS.sentCount),
+        resetSentCount: () => removeSessionVerified(KEYS.sentCount),
 
         amIRunning: () => storage.sessionGet(KEYS.isRunning) === '1',
-        setRunning: (state) => state ? storage.sessionSet(KEYS.isRunning, '1') : storage.sessionRemove(KEYS.isRunning),
+        setRunning: (state) => state ? writeSessionVerified(KEYS.isRunning, '1') : removeSessionVerified(KEYS.isRunning),
 
         setReturnUrl: (url) => storage.sessionSet(KEYS.returnUrl, url || location.href),
         getReturnUrl: () => storage.sessionGet(KEYS.returnUrl),
@@ -1880,11 +2100,11 @@
                     list.unshift(normalizedEntry);
                     // ограничим длину списка, чтобы не раздувался
                     if (list.length > 500) list.length = 500;
-                    const saved = storage.localSet(KEYS.manualList, JSON.stringify(list));
+                    const saved = writeLocalVerified(KEYS.manualList, JSON.stringify(list));
                     return saved ? 'ADDED' : 'FAILED';
                 } else if ((!exists.title || exists.title === 'Название недоступно' || exists.title === 'Title unavailable') && normalizedEntry.title && normalizedEntry.title !== 'Название недоступно' && normalizedEntry.title !== 'Title unavailable') {
                     exists.title = normalizedEntry.title;
-                    const saved = storage.localSet(KEYS.manualList, JSON.stringify(list));
+                    const saved = writeLocalVerified(KEYS.manualList, JSON.stringify(list));
                     return saved ? 'UPDATED' : 'FAILED';
                 }
                 return 'EXISTS';
@@ -1896,7 +2116,7 @@
         removeManualEntry: (vid) => {
             try {
                 const list = State.getManualList().filter(e => e.vid !== vid);
-                return storage.localSet(KEYS.manualList, JSON.stringify(list));
+                return writeLocalVerified(KEYS.manualList, JSON.stringify(list));
             } catch (e) {
                 console.warn('[HH Apply Assistant] removeManualEntry error', e);
                 return false;
@@ -1904,8 +2124,7 @@
         },
         clearManualList: () => {
             try {
-                storage.localRemove(KEYS.manualList);
-                return true;
+                return removeLocalVerified(KEYS.manualList);
             } catch (e) {
                 console.warn('[HH Apply Assistant] clearManualList error', e);
                 return false;
@@ -1914,7 +2133,9 @@
     };
 
     function ensureCurrentRunLimit() {
-        const sent = State.getSentCount();
+        const sentState = State.readSentCount();
+        if (!sentState.ok) return false;
+        const sent = sentState.value;
         if (sent <= config.limit) return true;
         return persistSettings({ ...config, limit: Math.min(500, sent) });
     }
@@ -2029,7 +2250,7 @@
             switch (key) {
                 case 'applyBtn':
                 case 'vacancyApply':
-                case 'topApply': {
+                {
                     const elements = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     const matchText = /откликнуться|отклик без резюме|перейти к отклику|apply|respond|no resume necessary|apply now/i;
                     for (const el of elements) {
@@ -2056,15 +2277,6 @@
                     const activeEls = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     for (const el of activeEls) {
                         if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
-                            return el;
-                        }
-                    }
-                    // Если не нашли, ищем среди span и div (как фоллбек)
-                    const staticEls = Array.from(root.querySelectorAll('span, div'));
-                    for (const el of staticEls) {
-                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
-                            // Исключаем контейнеры, если внутри них есть другие интерактивные элементы или textarea
-                            if (el.querySelector('button, a, textarea, input, select')) continue;
                             return el;
                         }
                     }
@@ -2124,7 +2336,7 @@
                 }
                 case 'rejectWarning': {
                     const elements = Array.from(root.querySelectorAll('div, span, p, h1, h2, h3'));
-                    const matchText = /отказ|не подходит|будет отказ|reject|unsuitable|decline|likely to get a rejection/i;
+                    const matchText = /(?:скорее всего|вероятн\w*|возможен|может быть)\W{0,30}отказ|(?:likely|probably|may)\W{0,30}(?:reject|declin)|likely to get a rejection/i;
                     for (const el of elements) {
                         if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             return el;
@@ -2134,7 +2346,7 @@
                 }
                 case 'responseChat': {
                     const elements = Array.from(root.querySelectorAll('a, button'));
-                    const matchText = /сообщение|чат|переписке|перейти к|message|chat|topic/i;
+                    const matchText = /перейти (?:в|к) (?:чат|переписк\w*|сообщени\w*)|написать сообщени\w*|открыть чат|(?:go|open|view) (?:the )?(?:chat|conversation|topic)|message (?:the )?employer/i;
                     for (const el of elements) {
                         if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
                             return el;
@@ -2277,8 +2489,22 @@
         });
     }
 
+    function mutationBelongsToAssistantUI(mutation) {
+        if (!mutation) return false;
+        if (isAutoResponderUI(mutation.target)) return true;
+        const changedNodes = [
+            ...Array.from(mutation.addedNodes || []),
+            ...Array.from(mutation.removedNodes || [])
+        ];
+        return changedNodes.length > 0 && changedNodes.every(node => {
+            if (node?.nodeType === 1) return isAutoResponderUI(node);
+            return isAutoResponderUI(node?.parentElement || mutation.target);
+        });
+    }
+
     // Ждём выполнения условия (возвращающего не-false значение или truthy результат).
-    // Реагирует на MutationObserver, интервал и таймер, поддерживает мгновенную отмену по AbortSignal / stopSignal.
+    // DOM-события только планируют один коротко отложенный check; собственный UI игнорируется,
+    // а редкий polling сохраняет совместимость с delayed modal и SPA без постоянного rAF-сканирования.
     async function waitForCondition(checkFn, timeout = TUNING.waitForModalMs, signal) {
         const sig = signal || activeAbortController?.signal;
         if (stopSignal || sig?.aborted) return false;
@@ -2293,7 +2519,6 @@
             let onAbort = null;
             let observer = null;
             let scheduledId = null;
-            let isRaf = false;
             let finished = false;
 
             const finish = (result) => {
@@ -2303,11 +2528,7 @@
                 if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
                 if (observer) { observer.disconnect(); observer = null; }
                 if (scheduledId) {
-                    if (isRaf && typeof cancelAnimationFrame === 'function') {
-                        cancelAnimationFrame(scheduledId);
-                    } else {
-                        clearTimeout(scheduledId);
-                    }
+                    clearTimeout(scheduledId);
                     scheduledId = null;
                 }
                 if (onAbort && sig) {
@@ -2336,27 +2557,27 @@
             };
 
             if (typeof MutationObserver !== 'undefined') {
-                observer = new MutationObserver(() => {
+                observer = new MutationObserver((mutations) => {
                     if (finished || stopSignal || sig?.aborted) {
                         finish(false);
                         return;
                     }
+                    if (mutations?.length && mutations.every(mutationBelongsToAssistantUI)) return;
                     if (!scheduledId) {
-                        if (typeof requestAnimationFrame === 'function') {
-                            isRaf = true;
-                            scheduledId = requestAnimationFrame(executeCheck);
-                        } else {
-                            isRaf = false;
-                            scheduledId = setTimeout(executeCheck, 0);
-                        }
+                        scheduledId = setTimeout(executeCheck, 40);
                     }
                 });
                 try {
-                    observer.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true });
+                    observer.observe(document.documentElement || document, {
+                        childList: true,
+                        subtree: true,
+                        attributes: true,
+                        attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'aria-busy', 'disabled', 'data-state', 'data-qa']
+                    });
                 } catch (e) {}
             }
 
-            pollTimer = setInterval(executeCheck, 150);
+            pollTimer = setInterval(executeCheck, 300);
 
             timer = setTimeout(() => finish(false), timeout);
         });
@@ -2381,7 +2602,7 @@
 
     // Отслеживаем реальные координаты мыши пользователя, чтобы траектория начиналась оттуда
     let lastMousePos = { x: 0, y: 0 };
-    window.addEventListener('mousemove', (e) => {
+    addRuntimeListener(window, 'mousemove', (e) => {
         lastMousePos.x = e.clientX;
         lastMousePos.y = e.clientY;
     }, { passive: true });
@@ -2503,8 +2724,8 @@
 
     const Page = {
         isVacancy: () => location.pathname.startsWith('/vacancy/'),
-        isResponseForm: () => location.href.includes('/applicant/vacancy_response'),
-        isSearchList: () => location.href.includes('/search/vacancy'),
+        isResponseForm: () => location.pathname.startsWith('/applicant/vacancy_response'),
+        isSearchList: () => location.pathname.startsWith('/search/vacancy'),
         isSearch: () => location.href.includes('/search/vacancy') || location.pathname.startsWith('/search')
     };
 
@@ -2560,12 +2781,18 @@
         return qa(scopeSelector).find(el => !isAutoResponderUI(el) && isVisible(el)) || null;
     }
 
+    function hasReliableRejectWarning() {
+        if (isVisible(queryExact('rejectWarning'))) return true;
+        const scope = getResponseDetectionScope();
+        return !!(scope && queryHeuristic('rejectWarning', scope));
+    }
+
     function hasResponseTextConfirmation(root) {
         try {
             const nodes = (root || document).querySelectorAll('h1,h2,h3,p,div,span');
             for (const el of nodes) {
-                const t = el.childElementCount === 0 ? (el.textContent || '') : '';
-                if (t && /(?:резюме доставлено|resume delivered|application sent|response sent)/i.test(t.trim()) && isVisible(el)) return true;
+                const t = el.childElementCount === 0 ? collapseSpaces(el.textContent || '') : '';
+                if (t && t.length <= 240 && /(?:резюме доставлено|resume delivered|application sent|response sent)/i.test(t) && isVisible(el)) return true;
             }
         } catch (e) { /* ignore */ }
         return false;
@@ -2579,7 +2806,7 @@
     }
 
     // Признак успешно отправленного отклика: появилась ссылка на чат или текст "резюме доставлено".
-    function isResponseConfirmed() {
+    function isResponseConfirmed({ allowDocumentStrongText = false } = {}) {
         if (hasExactResponseConfirmation(document)) return true;
 
         const scope = getResponseDetectionScope();
@@ -2589,9 +2816,10 @@
             if (hasResponseTextConfirmation(scope)) return true;
         }
 
-        const chat = queryHeuristic('responseChat', document);
-        if (chat && isVisible(chat)) return true;
-        return hasResponseTextConfirmation(document);
+        // Document-wide strong text допустим только в post-submit confirmation phase.
+        // Initial response detection никогда не передаёт этот флаг.
+        if (allowDocumentStrongText && hasResponseTextConfirmation(document)) return true;
+        return false;
     }
 
     // На эту вакансию уже откликались ранее (не ошибка - ничего делать не нужно, просто пропускаем).
@@ -2604,8 +2832,11 @@
                 if (/already applied|уже отклик|отклик уже|response already/.test(t)) return true;
             }
         }
-        const chat = query('responseChat');
-        return !!(chat && isVisible(chat));
+        const exactChat = queryExact('responseChat');
+        if (exactChat && isVisible(exactChat)) return true;
+        const scope = getResponseDetectionScope();
+        const scopedChat = scope ? queryHeuristic('responseChat', scope) : null;
+        return !!(scopedChat && isVisible(scopedChat));
     }
 
     // Причина, по которой отклик в модалке не проходит (определяется со стороны hh.ru, не баг скрипта):
@@ -2613,7 +2844,7 @@
     //  - 'resume-hidden'   - нужно изменить видимость резюме, иначе отклик заблокирован;
     //  - ''                - причина не распознана.
     function detectModalBlockReason() {
-        if (query('rejectWarning')) return 'reject-warning';
+        if (hasReliableRejectWarning()) return 'reject-warning';
         const c = q('[data-qa="modal-content-scroll-container"], [data-qa="modal-content"]');
         if (c && isVisible(c)) {
             const t = (c.textContent || '').toLowerCase();
@@ -2825,6 +3056,16 @@
         params: null
     };
 
+    function syncCollapsedToggleState(toggle = document.getElementById('ar-toggle-btn')) {
+        if (!toggle) return;
+        const running = State.amIRunning();
+        const title = I18n.t(running ? 'panel.expandRunningTitle' : 'panel.expandTitle');
+        toggle.classList.toggle('is-running', running);
+        toggle.setAttribute('data-status', running ? 'running' : currentStatusState.statusKey);
+        toggle.title = title;
+        toggle.setAttribute('aria-label', title);
+    }
+
     function setStatus(statusKey, customKeyOrText, params) {
         const key = STATUS_KEYS.includes(statusKey) ? statusKey : 'idle';
         currentStatusState = { statusKey: key, customKeyOrText, params };
@@ -2871,8 +3112,17 @@
 
         const toggle = document.getElementById('ar-toggle-btn');
         if (toggle) {
-            toggle.classList.toggle('is-running', running);
-            toggle.setAttribute('data-status', key);
+            syncCollapsedToggleState(toggle);
+        }
+    }
+
+    function restoreStatusAfterMount() {
+        if (State.amIRunning()) {
+            setStatus('running');
+        } else if (currentStatusState.statusKey === 'running') {
+            setStatus('idle');
+        } else {
+            setStatus(currentStatusState.statusKey, currentStatusState.customKeyOrText, currentStatusState.params);
         }
     }
 
@@ -2882,13 +3132,10 @@
 
     const EXECUTION_STATUS = Object.freeze({
         SUCCESS: 'SUCCESS',
-        MANUAL: 'MANUAL',
         SKIPPED: 'SKIPPED',
         NAVIGATED: 'NAVIGATED',
         STOPPED: 'STOPPED',
-        CAPTCHA: 'CAPTCHA',
-        RETRY: 'RETRY',
-        FATAL: 'FATAL'
+        CAPTCHA: 'CAPTCHA'
     });
 
     const EXECUTION_REASON = Object.freeze({
@@ -3033,7 +3280,7 @@
         return false;
     }
 
-    function detectResponseOutcomeOnce(runId = currentRunId) {
+    function detectResponseOutcomeOnce(runId = currentRunId, includeCompatibilityFallback = true) {
         if (!isRunCurrent(runId)) return 'STOPPED';
         // Капча/анти-бот появилась прямо в ответ на клик - ловим сразу (не дожидаясь
         // тика watchdog), пока оверлей ещё на экране и до навигации назад к списку.
@@ -3047,21 +3294,25 @@
         if (isVisible(queryExact('attachCoverBtn'))) return 'SCENARIO_A';
         if (hasExactResponseConfirmation(document)) return 'SCENARIO_C';
 
-        // Scoped fallback: ограничиваем эвристики активной формой или модальным окном.
-        const scope = getResponseDetectionScope();
-        if (scope) {
-            const scopedOutcome = detectResponseOutcomeInRoot(scope, true);
-            if (scopedOutcome) return scopedOutcome;
-        }
+        if (!includeCompatibilityFallback) return false;
 
-        // Expensive compatibility fallback: широкий поиск остаётся последним уровнем.
-        return detectResponseOutcomeInRoot(document, false);
+        // Compatibility fallback разрешён только внутри response-specific формы/модалки.
+        // Слабый document-wide текст больше не может самостоятельно завершить отклик.
+        const scope = getResponseDetectionScope();
+        if (!scope) return false;
+        return detectResponseOutcomeInRoot(scope, true);
     }
 
     // Динамически определяем, что произошло после клика "Откликнуться".
     // Возвращает: 'STOPPED' | 'QUESTIONS' | 'RELOCATION' | 'SCENARIO_A' | 'SCENARIO_B' | 'SCENARIO_C' | 'TIMEOUT'
     async function resolveResponseOutcome(timeout, runId = currentRunId) {
-        const outcome = await waitForCondition(() => detectResponseOutcomeOnce(runId), timeout);
+        let lastFallbackAt = -Infinity;
+        const outcome = await waitForCondition(() => {
+            const now = Date.now();
+            const includeFallback = now - lastFallbackAt >= 750;
+            if (includeFallback) lastFallbackAt = now;
+            return detectResponseOutcomeOnce(runId, includeFallback);
+        }, timeout);
         if (!isRunCurrent(runId)) return 'STOPPED';
         return outcome || 'TIMEOUT';
     }
@@ -3153,6 +3404,7 @@
     async function forceSubmitReject(maxAttempts = TUNING.forceSubmitAttempts, opts = {}) {
         const onPage = !!opts.onResponsePage;
         const runId = opts.runId || currentRunId;
+        const allowDocumentStrongText = !!opts.allowDocumentStrongText;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             if (!isRunCurrent(runId)) return 'STOPPED';
             const submit = query('letterSubmit');
@@ -3166,7 +3418,7 @@
                 if (!isRunCurrent(runId)) return 'STOPPED';
                 // В модалке уход на /applicant/vacancy_response = редирект на тест; на самой странице отклика - нет.
                 if (!onPage && Page.isResponseForm()) return 'QUESTIONS';
-                if (isResponseConfirmed()) return 'CONFIRMED';
+                if (isResponseConfirmed({ allowDocumentStrongText })) return 'CONFIRMED';
                 return false;
             }, 3500);
             if (res === 'STOPPED' || !isRunCurrent(runId)) return 'STOPPED';
@@ -3177,11 +3429,11 @@
     }
 
     // Ожидание подтверждения после отправки: 'QUESTIONS' | 'CONFIRMED' | 'STOPPED' | false.
-    async function awaitSubmitConfirmation(timeout = TUNING.confirmWaitMs, runId = currentRunId) {
+    async function awaitSubmitConfirmation(timeout = TUNING.confirmWaitMs, runId = currentRunId, { allowDocumentStrongText = false } = {}) {
         return waitForCondition(() => {
             if (!isRunCurrent(runId)) return 'STOPPED';
             if (Page.isResponseForm()) return 'QUESTIONS';
-            return isResponseConfirmed();
+            return isResponseConfirmed({ allowDocumentStrongText });
         }, timeout);
     }
 
@@ -3250,6 +3502,24 @@
         return true;
     }
 
+    // Классификация выполняется только после того, как fillLetterAndSubmit подтвердил
+    // инициированный submit текущего run. Само исчезновение response route успехом не является.
+    function detectPostSubmitPageOutcome(runId, { allowDocumentStrongText = false } = {}) {
+        if (!isRunCurrent(runId)) return 'STOPPED';
+        if (detectCaptcha()) return 'CAPTCHA';
+
+        if (Page.isSearchList()) return 'TRUSTED_NAVIGATION';
+
+        if (Page.isVacancy()) {
+            return isResponseConfirmed({ allowDocumentStrongText }) ? 'CONFIRMED' : false;
+        }
+
+        if (!Page.isResponseForm()) return 'UNTRUSTED_NAVIGATION';
+        if (pageLooksLikeTest()) return 'QUESTIONS';
+        if (isResponseConfirmed({ allowDocumentStrongText })) return 'CONFIRMED';
+        return false;
+    }
+
     // Отправка отклика с полностраничной формы /applicant/vacancy_response (не тест).
     // Сюда попадают в т.ч. вакансии с предупреждением Скорее всего, будет отказ, отрисованные страницей.
     async function submitResponsePage(vid, backUrl, runId = currentRunId, trapToken = null) {
@@ -3261,7 +3531,7 @@
         handlingResponsePage = true;
         let savedForManual = false;
         let confirmed = false;
-        const reject = !!query('rejectWarning');
+        const reject = hasReliableRejectWarning();
         if (reject) Metrics.bump('reject.seen.page');
         try {
             if (reject && !config.applyOnRejectWarning) {
@@ -3272,6 +3542,7 @@
             } else {
                 log(I18n.t('logs.responsePageFilling', { reject: reject ? I18n.t('logs.responsePageRejectNote') : '' }));
                 captureResponseDom('response-page-form');
+                const allowDocumentStrongText = !hasResponseTextConfirmation(document);
                 const submitted = await fillLetterAndSubmit({ withCover: config.useCover, runId });
                 if (!isRunCurrent(runId)) return;
                 if (!submitted) {
@@ -3282,25 +3553,25 @@
                 } else {
                     let redirectedToQuestions = false;
 
-                    const ok = await waitForCondition(() => {
-                        if (!isRunCurrent(runId)) return 'STOPPED';
-                        if (detectCaptcha()) return 'CAPTCHA';
-                        if (pageLooksLikeTest()) return 'QUESTIONS';
-                        if (isResponseConfirmed()) return 'CONFIRMED';
-                        return false;
-                    }, TUNING.confirmWaitMs);
+                    const confirmationTimeout = reject ? TUNING.confirmWaitMs : TUNING.responsePagePendingMs;
+                    const ok = await waitForCondition(
+                        () => detectPostSubmitPageOutcome(runId, { allowDocumentStrongText }),
+                        confirmationTimeout
+                    );
 
                     if (!isRunCurrent(runId)) return;
                     if (ok === 'CAPTCHA') {
                         haltForCaptcha();
                         return;
                     }
-                    if (ok === 'CONFIRMED') {
+                    if (ok === 'CONFIRMED' || ok === 'TRUSTED_NAVIGATION') {
                         confirmed = true;
                     } else if (ok === 'QUESTIONS') {
                         redirectedToQuestions = true;
-                    } else if (isRunCurrent(runId)) {
-                        const forced = await forceSubmitReject(TUNING.forceSubmitAttempts, { onResponsePage: true, runId });
+                    } else if (ok !== 'UNTRUSTED_NAVIGATION' && reject && config.applyOnRejectWarning && hasReliableRejectWarning() && isRunCurrent(runId)) {
+                        // Повторный submit допустим только для всё ещё явно видимого reject-warning.
+                        // Обычный full-page submit всегда остаётся single-click, даже при медленном ответе.
+                        const forced = await forceSubmitReject(TUNING.forceSubmitAttempts, { onResponsePage: true, runId, allowDocumentStrongText });
                         if (forced === 'STOPPED' || !isRunCurrent(runId)) return;
                         if (forced === 'REDIRECT') {
                             redirectedToQuestions = true;
@@ -3461,7 +3732,7 @@
         if (!isRunCurrent(runId)) return 'STOPPED';
         // Зафиксируем, была ли плашка Скорее всего, будет отказ, чтобы понимать,
         // отправляются ли такие вакансии (успех считается ниже) или проваливаются.
-        const rejectSeen = !!query('rejectWarning');
+        const rejectSeen = hasReliableRejectWarning();
         if (rejectSeen) Metrics.bump('reject.seen.modal');
         // Если откликаться при предупреждении об отказе выключено - не отправляем такие,
         // а откладываем в ручной список (иначе realisticClick отправил бы их с первого клика).
@@ -3478,6 +3749,7 @@
             return 'RETURNED';
         }
         log(I18n.t('logs.scenarioBModal', { reject: rejectSeen ? I18n.t('logs.scenarioBRejectNote') : '', cover: config.useCover ? I18n.t('logs.scenarioBCoverNote') : I18n.t('logs.scenarioBNoCoverNote') }));
+        const allowDocumentStrongText = !hasResponseTextConfirmation(document);
         const submitted = await fillLetterAndSubmit({ withCover: config.useCover, runId });
         if (!isRunCurrent(runId)) return 'STOPPED';
         if (!submitted) {
@@ -3492,7 +3764,7 @@
             returnToList(vid, { markProcessed: true, runId });
             return 'RETURNED';
         }
-        const conf = await awaitSubmitConfirmation(TUNING.confirmWaitMs, runId);
+        const conf = await awaitSubmitConfirmation(TUNING.confirmWaitMs, runId, { allowDocumentStrongText });
         if (!isRunCurrent(runId)) return 'STOPPED';
         if (conf === 'QUESTIONS' || Page.isResponseForm()) return markRedirect(vid);
         if (conf === 'CONFIRMED' || conf === true) {
@@ -3509,7 +3781,7 @@
         // Предупреждение Скорее всего, будет отказ: если включён форс - дожимаем отправку.
         if (reason === 'reject-warning' && config.applyOnRejectWarning) {
             log(I18n.t('logs.scenarioBForcing'));
-            const forced = await forceSubmitReject(TUNING.forceSubmitAttempts, { onResponsePage: false, runId });
+            const forced = await forceSubmitReject(TUNING.forceSubmitAttempts, { onResponsePage: false, runId, allowDocumentStrongText });
             if (forced === 'STOPPED' || !isRunCurrent(runId)) return 'STOPPED';
             if (forced === 'REDIRECT') return markRedirect(vid);
             if (forced === 'OK') {
@@ -3768,15 +4040,26 @@
     //  11. ГЛАВНЫЙ ЦИКЛ И WATCHDOG
     // ─────────────────────────────────────────────────────────────
 
+    function clearRunningState(context) {
+        if (State.setRunning(false)) return true;
+        Metrics.bump('storage.is_active.cleanup.failed');
+        log(`[CRITICAL_STORAGE_WRITE_FAILED] is_active cleanup: ${context || 'unknown'}`, true);
+        return false;
+    }
+
     function finalizeRun(runId, statusKey, msg) {
         if (runId !== currentRunId) return;
         isLoopActive = false;
         if (!Page.isResponseForm()) {
             handlingResponsePage = false;
         }
-        State.setRunning(false);
+        if (activeAbortController) {
+            try { activeAbortController.abort(); } catch (e) {}
+            activeAbortController = null;
+        }
+        const runningCleared = clearRunningState('finalize');
         State.releaseInstanceLock(TAB_ID);
-        setStatus(statusKey);
+        setStatus(runningCleared ? statusKey : 'error');
         if (msg) log(msg);
     }
 
@@ -3797,7 +4080,10 @@
         }
         activeAbortController = new AbortController();
         stopSignal = false;
-        State.setRunning(true);
+        if (!State.setRunning(true)) {
+            haltForPersistenceFailure('start', 'is_active');
+            return;
+        }
         setStatus('running');
 
         // Жёстко занимаем instance lock: не запускаемся, если работает другая вкладка.
@@ -3814,23 +4100,36 @@
         if (!acquired) {
             if (runId === currentRunId) {
                 isLoopActive = false;
+                stopSignal = true;
+                if (activeAbortController) {
+                    try { activeAbortController.abort(); } catch (e) {}
+                    activeAbortController = null;
+                }
                 log(I18n.t('logs.tabBusy'), true);
-                State.setRunning(false);
-                setStatus('error', 'status.busyTab');
+                const runningCleared = clearRunningState('instance-lock-acquire');
+                setStatus('error', runningCleared ? 'status.busyTab' : undefined);
             }
             return;
         }
 
         // Свежий запуск пользователем - сбрасываем сквозной счётчик и статистику прогона.
         if (!wasRunning) {
-            State.resetSentCount();
+            if (!State.resetSentCount()) {
+                haltForPersistenceFailure('start', 'sentCount.reset');
+                return;
+            }
             Stats.reset();
             log(I18n.t('logs.newRun', { mode: presetLabel(config.preset) }));
         }
 
         try {
             // Лимит уже достигнут - завершаем прогон.
-            if (State.getSentCount() >= config.limit) {
+            const initialSent = State.readSentCount();
+            if (!initialSent.ok) {
+                haltForPersistenceFailure('start', 'sentCount.read');
+                return;
+            }
+            if (initialSent.value >= config.limit) {
                 finalizeRun(runId, 'done', I18n.t('logs.limitReached', { limit: config.limit }));
                 return;
             }
@@ -3872,14 +4171,19 @@
                 allBtns = queryAll('applyBtn');
             }
 
-            const processed = State.getProcessedIDs();
+            const processedState = State.readProcessedIDs();
+            if (!processedState.ok) {
+                haltForPersistenceFailure('search', 'history.read');
+                return;
+            }
+            const processed = processedState.value;
 
             let targets = allBtns.filter(b => {
                 if (config.skipHidden && !isVisible(b)) return false;
                 return !processed.has(getVacancyID(b));
             });
 
-            log(I18n.t('logs.vacanciesFound', { total: allBtns.length, targets: targets.length, sent: State.getSentCount(), limit: config.limit }));
+            log(I18n.t('logs.vacanciesFound', { total: allBtns.length, targets: targets.length, sent: initialSent.value, limit: config.limit }));
 
             let rescanCount = 0;
             const MAX_RESCANS = 3;
@@ -3887,7 +4191,12 @@
             while (targets.length > 0) {
                 if (stopSignal || runId !== currentRunId) break;
                 const btn = targets.shift();
-                if (State.getSentCount() >= config.limit) {
+                const sentState = State.readSentCount();
+                if (!sentState.ok) {
+                    haltForPersistenceFailure('search', 'sentCount.read');
+                    return;
+                }
+                if (sentState.value >= config.limit) {
                     finalizeRun(runId, 'done', I18n.t('logs.limitReached', { limit: config.limit }));
                     return;
                 }
@@ -3899,7 +4208,12 @@
                     log(I18n.t('logs.buttonDisappeared'), true);
                     if (rescanCount < MAX_RESCANS) {
                         rescanCount++;
-                        const currentProcessed = State.getProcessedIDs();
+                        const currentProcessedState = State.readProcessedIDs();
+                        if (!currentProcessedState.ok) {
+                            haltForPersistenceFailure('search-rescan', 'history.read');
+                            return;
+                        }
+                        const currentProcessed = currentProcessedState.value;
                         const freshBtns = queryAll('applyBtn');
                         targets = freshBtns.filter(b => {
                             if (config.skipHidden && !isVisible(b)) return false;
@@ -3954,7 +4268,12 @@
                 return;
             }
             if (!Page.isResponseForm()) {
-                finalizeRun(runId, 'done', I18n.t('logs.runCompleted', { count: State.getSentCount() }));
+                const finalSent = State.readSentCount();
+                if (!finalSent.ok) {
+                    haltForPersistenceFailure('finalize', 'sentCount.read');
+                    return;
+                }
+                finalizeRun(runId, 'done', I18n.t('logs.runCompleted', { count: finalSent.value }));
             }
         } catch (e) {
             console.warn('[HH Apply Assistant] startLoop error', e);
@@ -3973,8 +4292,8 @@
             activeAbortController = null;
         }
         isLoopActive = false;
-        State.setRunning(false);
-        setStatus('stopped');
+        const runningCleared = clearRunningState('stop');
+        setStatus(runningCleared ? 'stopped' : 'error');
         State.releaseInstanceLock(TAB_ID);
         log(I18n.t('logs.stoppedByUser'));
     }
@@ -4012,7 +4331,7 @@
             activeAbortController = null;
         }
         isLoopActive = false;
-        State.setRunning(false);
+        clearRunningState('captcha');
         State.releaseInstanceLock(TAB_ID);
         setStatus('error', 'status.captchaStopped');
         log(I18n.t('logs.captchaHalt'), true);
@@ -4032,7 +4351,7 @@
             activeAbortController = null;
         }
         isLoopActive = false;
-        State.setRunning(false);
+        clearRunningState('lost-instance-lock');
         setStatus('error', 'status.busyTab');
         log(I18n.t('logs.instanceLockLost'), true);
     }
@@ -4061,7 +4380,7 @@
             activeAbortController = null;
         }
         isLoopActive = false;
-        State.setRunning(false);
+        clearRunningState(`persistence-${storageArea}`);
         State.releaseInstanceLock(TAB_ID);
         if (storageArea === 'manual') {
             setStatus('error', 'status.storageFailed');
@@ -4075,7 +4394,8 @@
     // Watchdog: следит за URL. Если попали на страницу отклика/теста - обрабатываем её;
     // после возврата на список при необходимости обновляем страницу.
     function startWatchdog() {
-        setInterval(() => {
+        if (runtimeRecord.watchdogIntervalId !== null) return;
+        runtimeRecord.watchdogIntervalId = setInterval(() => {
             try {
                 watchdogTick();
             } catch (e) {
@@ -4083,6 +4403,40 @@
             }
         }, 1000);
     }
+
+    function teardownRuntime() {
+        if (!runtimeRecord.active) return;
+        runtimeRecord.active = false;
+        currentRunId++;
+        stopSignal = true;
+        isLoopActive = false;
+        handlingResponsePage = false;
+        if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
+        clearTrapLockTimer();
+        if (activeAbortController) {
+            try { activeAbortController.abort(); } catch (e) {}
+            activeAbortController = null;
+        }
+        if (runtimeRecord.watchdogIntervalId !== null) {
+            clearInterval(runtimeRecord.watchdogIntervalId);
+            runtimeRecord.watchdogIntervalId = null;
+        }
+        if (runtimeRecord.domReadyObserver) {
+            try { runtimeRecord.domReadyObserver.disconnect(); } catch (e) {}
+            runtimeRecord.domReadyObserver = null;
+        }
+        for (const listener of runtimeRecord.globalListeners.splice(0)) {
+            try { listener.target.removeEventListener(listener.type, listener.handler, listener.options); } catch (e) {}
+        }
+        try { PanelController.destroy(); } catch (e) {}
+        clearRunningState('runtime-teardown');
+        State.releaseInstanceLock(TAB_ID);
+        if (window[RUNTIME_KEY] === runtimeRecord) {
+            try { delete window[RUNTIME_KEY]; } catch (e) { window[RUNTIME_KEY] = null; }
+        }
+    }
+
+    runtimeRecord.teardown = teardownRuntime;
 
     function watchdogTick() {
         // Панель могла быть выброшена из DOM (SPA-перерисовка) - восстанавливаем.
@@ -4218,6 +4572,22 @@
         }
     }
 
+    // Единый набор UI-иконок: общий viewBox и stroke позволяют центрировать
+    // icon-only controls системно, оставляя лишь осмысленные optical modifiers.
+    const UI_ICONS = Object.freeze({
+        chevronDown: '<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.75 8 10 12.25 14.25 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        help: '<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.55"/><path d="M8.65 7.7a1.9 1.9 0 1 1 2.42 2.82c-.7.29-1.07.8-1.07 1.45" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"/><circle cx="10" cy="14.35" r=".85" fill="currentColor"/></svg>',
+        arrowLeft: '<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M11.75 5.5 7.25 10l4.5 4.5M7.6 10H15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        search: '<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8.6" cy="8.6" r="4.55" stroke="currentColor" stroke-width="1.65"/><path d="m12.05 12.05 3.7 3.7" stroke="currentColor" stroke-width="1.65" stroke-linecap="round"/></svg>',
+        close: '<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="m6.25 6.25 7.5 7.5m0-7.5-7.5 7.5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>',
+        trash: '<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7.25 4.75h5.5M8 4.75v-.5A1.25 1.25 0 0 1 9.25 3h1.5A1.25 1.25 0 0 1 12 4.25v.5m-6 1.5h8l-.52 8.06A1.5 1.5 0 0 1 11.98 16H8.02a1.5 1.5 0 0 1-1.5-1.69L6 6.25Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.85 8.75v4.1M11.15 8.75v4.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>'
+    });
+    const uiIcon = (name, modifier = '') => {
+        const svg = UI_ICONS[name] || '';
+        const modifierClass = modifier ? ` ar-icon-svg--${modifier}` : '';
+        return `<span class="ar-icon-svg${modifierClass}" aria-hidden="true">${svg}</span>`;
+    };
+
     // ─────────────────────────────────────────────────────────────
     //  12. UI: СТИЛИ ПАНЕЛИ (в духе дизайн-системы hh.ru / Magritte)
     // ─────────────────────────────────────────────────────────────
@@ -4229,7 +4599,7 @@
         style.textContent = `
         :root{--hha-panel-width:${HHA_PREFERRED_PANEL_WIDTH}px;}
         #ar-main-panel, #ar-main-panel *, #ar-toggle-btn, #ar-toggle-btn *{box-sizing:border-box;}
-        #ar-main-panel, #ar-toggle-btn{--ar-ui-radius:11px;--font:"HH Sans","Inter",-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-family:var(--font);letter-spacing:normal;text-transform:none;}
+        #ar-main-panel, #ar-toggle-btn{--font:"HH Sans","Inter",-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-family:var(--font);letter-spacing:normal;text-transform:none;}
         /* min(..., 100% - sidebar) excludes a classic scrollbar that 100vw includes. */
         html.hha-docked #HH-React-Root{box-sizing:border-box!important;width:min(calc(100vw - var(--hha-sidebar-width)),calc(100% - var(--hha-sidebar-width)))!important;max-width:min(calc(100vw - var(--hha-sidebar-width)),calc(100% - var(--hha-sidebar-width)))!important;min-width:0!important;}
         html.hha-docked #HH-React-Root .supernova-navi-container,
@@ -4244,8 +4614,7 @@
         html.hha-docked .notification-manager{right:var(--hha-sidebar-width)!important;}
         html.hha-docked [class*="sticky-vacancy-header-container-sticky--"]{width:calc(100% - var(--hha-sidebar-width))!important;max-width:calc(100% - var(--hha-sidebar-width))!important;}
         #ar-toggle-btn{position:fixed;top:50%;right:0;transform:translateY(-50%);border:none;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;z-index:2147483000;user-select:none;}
-        #ar-toggle-btn:focus-visible{outline:2px solid #fff;outline-offset:-2px;}
-        #ar-toggle-btn .ar-tab-text{color:#ffffff;text-transform:none;line-height:1;writing-mode:vertical-rl;transform:rotate(180deg);}
+        #ar-toggle-btn .ar-tab-text{color:#fff;text-transform:none;line-height:1;}
         #ar-main-panel{position:fixed;top:0;right:0;bottom:0;height:100vh;width:min(var(--hha-panel-width),100%);max-width:100%;z-index:2147483000;font-family:var(--font);line-height:1.4;border-radius:0;display:flex;flex-direction:column;overflow:hidden;text-align:left;}
         #ar-main-panel a{text-decoration:none;}
         #ar-main-panel a:hover{text-decoration:underline;}
@@ -4253,8 +4622,6 @@
         .ar-diag-nav{display:flex;align-items:center;}
         .ar-btn-back{font-weight:600;}
         .ar-diag-body{display:flex;flex-direction:column;}
-        .ar-diag-stat-row{display:flex;align-items:center;padding:0 2px;}
-        .ar-diag-stat{font-variant-numeric:tabular-nums;}
         .ar-diag-toolbar{padding:0;}
         .ar-diag-full-box{display:flex;flex-direction:column;gap:2px;}
         .ar-diag-footer{display:flex;align-items:center;justify-content:flex-start;padding:0;}
@@ -4275,19 +4642,20 @@
         .ar-scroll::-webkit-scrollbar{width:6px;}
         .ar-card{display:flex;flex-direction:column;position:relative;overflow:hidden;flex-shrink:0;}
         .ar-card-title{text-transform:uppercase;}
-        #ar-mode-card{--ar-work-track-h:36px;--ar-work-track-pad:3px;--ar-work-thumb-w:44px;--ar-work-thumb-h:30px;--ar-work-thumb-duration:255ms;--ar-work-turbo-reveal-duration:380ms;--ar-work-turbo-exit-duration:220ms;--ar-work-shock-cycle-duration:5s;--ar-work-turbo-grid-duration:60s;--ar-work-grid-shift:-320px;--ar-work-move-ease:cubic-bezier(.22, .8, .3, 1);--ar-work-reveal-ease:cubic-bezier(.18, .82, .22, 1);--thumb-source-x:0px;--thumb-center-x:50%;--ar-work-grid-cell:5px;--ar-work-grid-col-gap:2px;--ar-work-grid-row-gap:2px;}
+        #ar-mode-card{--ar-work-track-h:36px;--ar-work-track-pad:3px;--ar-work-thumb-w:44px;--ar-work-thumb-h:30px;--ar-work-thumb-duration:255ms;--ar-work-turbo-reveal-duration:380ms;--ar-work-turbo-exit-duration:220ms;--ar-work-shock-cycle-duration:5s;--ar-work-turbo-grid-duration:60s;--ar-work-grid-shift:-320px;--ar-work-move-ease:cubic-bezier(.22, .8, .3, 1);--thumb-source-x:0px;--thumb-center-x:50%;--ar-work-grid-cell:5px;--ar-work-grid-col-gap:2px;--ar-work-grid-row-gap:2px;}
         .ar-work-mode-header{display:flex;justify-content:space-between;}
         .ar-work-mode-title{display:flex;min-width:0;margin:0;font-size:13.5px;line-height:1.2;white-space:nowrap;}
         .ar-work-mode-title__label{text-transform:uppercase;}
-        .ar-work-mode-help{position:relative;flex:0 0 auto;display:grid;place-items:center;cursor:pointer;}
-        .ar-work-mode-help:hover{color:var(--ink);border-color:#94a3b8;background:rgba(0, 0, 0, 0.04);}
-        .ar-work-mode-help:focus-visible{outline-offset:2px;}
-        .ar-work-mode-labels{display:flex;align-items:center;justify-content:space-between;margin-top:1px;margin-bottom:-3px;line-height:1;user-select:none;}
+        .ar-help-button{position:relative;flex:0 0 auto;display:grid;place-items:center;cursor:pointer;}
+        .ar-help-button:hover{color:var(--ink);border-color:#94a3b8;background:rgba(0, 0, 0, 0.04);}
+        .ar-help-button:focus-visible{outline-offset:2px;}
+        .ar-work-mode-options{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;line-height:1;user-select:none;}
         .ar-work-mode-slider{position:relative;height:var(--ar-work-track-h);border-radius:11px;overflow:hidden;touch-action:none;user-select:none;cursor:pointer;isolation:isolate;perspective:800px;perspective-origin:var(--thumb-center-x, 50%) 50%;transform-style:preserve-3d;}
         .ar-work-mode-slider::before{content:"";position:absolute;inset:0;z-index:0;border-radius:11px;pointer-events:none;background:linear-gradient(90deg, rgba(255,255,255,.12), rgba(255,255,255,.025) 62%, transparent 100%);}
-        .ar-work-mode-turbo-surface{position:absolute;inset:0;z-index:1;border-radius:11px;pointer-events:none;opacity:0;will-change:opacity;}
+        .ar-work-mode-turbo-surface{position:absolute;inset:0;z-index:1;border-radius:11px;pointer-events:none;opacity:0;}
+        .ar-work-mode-slider.has-turbo-grid .ar-work-mode-turbo-surface{will-change:opacity;}
         .ar-work-mode-slider.is-turbo .ar-work-mode-turbo-surface{opacity:1;}
-        .ar-work-mode-grid-mask{position:absolute;inset:0;z-index:2;overflow:hidden;border-radius:11px;pointer-events:none;opacity:0;visibility:hidden;filter:blur(0);will-change:opacity, filter;-webkit-mask-image:linear-gradient(
+        .ar-work-mode-grid-mask{position:absolute;inset:0;z-index:2;overflow:hidden;border-radius:11px;pointer-events:none;opacity:0;visibility:hidden;filter:blur(0);-webkit-mask-image:linear-gradient(
                 to right,
                 #000 0,
                 #000 calc(var(--thumb-source-x, 0px) - 24px),
@@ -4302,6 +4670,7 @@
             );transition:opacity var(--ar-work-turbo-exit-duration) ease,
                 filter var(--ar-work-turbo-exit-duration) ease,
                 visibility 0s linear var(--ar-work-turbo-exit-duration);}
+        .ar-work-mode-slider.has-turbo-grid .ar-work-mode-grid-mask{will-change:opacity, filter;}
         .ar-work-mode-slider.is-turbo .ar-work-mode-grid-mask{visibility:visible;animation:ar-turbo-grid-fade-in calc(var(--ar-work-turbo-reveal-duration) + 80ms)
                 cubic-bezier(.22, .72, .22, 1)
                 1 both;transition:opacity var(--ar-work-turbo-reveal-duration) ease,
@@ -4319,7 +4688,8 @@
                 opacity: .62;
                 filter: blur(0);
             }}
-        .ar-work-mode-grid-strip{position:absolute;top:0;bottom:0;left:0;display:grid;grid-template-rows:repeat(5, var(--ar-work-grid-cell));grid-auto-flow:column;grid-auto-columns:var(--ar-work-grid-cell);align-content:center;column-gap:var(--ar-work-grid-col-gap);row-gap:var(--ar-work-grid-row-gap);width:max-content;transform:translate3d(0,0,0);will-change:transform;}
+        .ar-work-mode-grid-strip{position:absolute;top:0;bottom:0;left:0;display:grid;grid-template-rows:repeat(5, var(--ar-work-grid-cell));grid-auto-flow:column;grid-auto-columns:var(--ar-work-grid-cell);align-content:center;column-gap:var(--ar-work-grid-col-gap);row-gap:var(--ar-work-grid-row-gap);width:max-content;transform:translate3d(0,0,0);}
+        .ar-work-mode-slider.has-turbo-grid .ar-work-mode-grid-strip{will-change:transform;}
         .ar-work-mode-slider.is-turbo .ar-work-mode-grid-strip{animation:ar-turbo-grid-drift var(--ar-work-turbo-grid-duration) linear infinite;}
         @keyframes ar-turbo-grid-drift{from { transform: translate3d(0, 0, 0); }
             to { transform: translate3d(var(--ar-work-grid-shift), 0, 0); }}
@@ -4328,7 +4698,8 @@
                     var(--wave-y),
                     0
                 )
-                scale(var(--wave-scale));transform-origin:center;will-change:transform, opacity;}
+                scale(var(--wave-scale));transform-origin:center;}
+        .ar-work-mode-slider.has-turbo-grid .ar-work-mode-grid-cell{will-change:transform, opacity;}
         .ar-work-mode-grid-cell.l0{--cell-alpha:0;}
         .ar-work-mode-grid-cell.l1{--cell-alpha:.10;}
         .ar-work-mode-grid-cell.l2{--cell-alpha:.20;}
@@ -4358,7 +4729,6 @@
         .ar-textarea:focus{outline:none;border-color:var(--hh-blue);box-shadow:0 0 0 3px var(--hh-blue-soft);}
         .ar-textarea:hover:not(:focus){border-color:#cbd5e1;}
         .ar-textarea:disabled{cursor:not-allowed;resize:none;}
-        .ar-cover-footer{display:flex;justify-content:flex-end;font-size:10.5px;font-variant-numeric:tabular-nums;}
         .ar-cover-counter.is-near{font-weight:700;}
         .ar-cover-counter.is-off{visibility:hidden;}
         .ar-switch-row{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;user-select:none;}
@@ -4373,8 +4743,6 @@
         .ar-btn:disabled:active{transform:none;}
         .ar-btn-cta{width:100%;box-shadow:0 2px 4px rgba(0,112,229,.18);}
         .ar-btn-soft{border:1px solid var(--line);}
-        .ar-btn-ghost{padding:0 6px;}
-        .ar-btn-full{width:100%;justify-content:center;}
         .ar-util-row{display:flex;align-items:center;justify-content:space-between;}
         .ar-util-btn{flex:1 1 0;min-width:0;font-size:11.5px;}
         .ar-progress{overflow:hidden;position:relative;}
@@ -4384,8 +4752,6 @@
         .ar-stat-num{line-height:1.1;font-variant-numeric:tabular-nums;}
         .ar-stat-cap{letter-spacing:.01em;}
         .ar-badge{display:inline-flex;align-items:center;justify-content:center;transition:all .15s ease;}
-        .ar-badge--neutral{border:1px solid var(--line);}
-        .ar-badge--error{border:1px solid #fecaca;}
         .ar-badge-count{display:inline-flex;align-items:center;justify-content:center;font-weight:700;line-height:1;flex:none;margin-left:2px;}
         .ar-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
         .ar-title-with-count{display:inline-flex;align-items:center;gap:6px;}
@@ -4402,18 +4768,22 @@
         .ar-remove-btn{display:flex;align-items:center;justify-content:center;}
         .ar-queue-more-btn{width:100%;height:30px;font-size:11.5px;font-weight:600;margin-top:2px;}
         .ar-empty{text-align:center;font-size:11.5px;border:1px dashed var(--line);line-height:1.4;}
-        .ar-inline-check{display:inline-flex;align-items:center;cursor:pointer;user-select:none;}
-        .ar-inline-check input{cursor:pointer;}
-        .ar-log-line{word-break:break-word;white-space:pre-wrap;}
         .ar-dropdown{position:relative;display:inline-block;}
         .ar-dropdown-menu{display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:100;flex-direction:column;gap:2px;}
         .ar-dropdown.is-open .ar-dropdown-menu{display:flex;}
         .ar-dropdown-item{display:flex;align-items:center;width:100%;font-size:11.5px;font-weight:500;text-align:left;cursor:pointer;}
-        #ar-main-panel, #ar-toggle-btn{--hha-bg:#f5f7fa;--hha-surface:#ffffff;--hha-surface-raised:#ffffff;--hha-surface-hover:#f8fafc;--hha-surface-subtle:#f1f4f8;--hha-text:#18212f;--hha-text-secondary:#596578;--hha-text-muted:#626f80;--hha-border:#e2e7ee;--hha-border-strong:#ccd4df;--hha-accent:#1769e0;--hha-accent-hover:#1059c7;--hha-accent-soft:#eaf2ff;--hha-accent-ring:rgba(23,105,224,.16);--hha-turbo:#625bd7;--hha-turbo-bright:#786ff0;--hha-turbo-deep:#4843ad;--hha-turbo-soft:#eeecff;--hha-turbo-ring:rgba(98,91,215,.18);--hha-success:#0d6d4f;--hha-success-soft:#eaf8f2;--hha-warning:#955f0f;--hha-warning-soft:#fff7e8;--hha-danger:#c33448;--hha-danger-hover:#aa263a;--hha-danger-soft:#fff0f2;--hha-shadow-card:0 1px 2px rgba(24,33,47,.045),0 8px 24px rgba(24,33,47,.025);--hha-shadow-raised:0 12px 34px rgba(24,33,47,.12),0 2px 8px rgba(24,33,47,.06);--hha-shadow-focus:0 0 0 3px var(--hha-accent-ring);--hha-shadow-control-focus:0 0 0 3px rgba(98,91,215,.14);--hha-ease-standard:cubic-bezier(.2,.72,.3,1);--hha-ease-premium:cubic-bezier(.18,.82,.22,1);--hha-duration-fast:120ms;--hha-duration-medium:200ms;--hha-brand:var(--hha-accent);--hha-brand-hover:var(--hha-accent-hover);--hha-brand-soft:var(--hha-accent-soft);--hh-red:var(--hha-danger);--hh-red-hover:var(--hha-danger-hover);--hh-red-soft:var(--hha-danger-soft);--hh-green:var(--hha-success);--hh-green-hover:#0d6d4f;--hh-green-soft:var(--hha-success-soft);--hh-blue:var(--hha-accent);--hh-blue-hover:var(--hha-accent-hover);--hh-blue-soft:var(--hha-accent-soft);--hh-amber:var(--hha-warning);--hh-amber-soft:var(--hha-warning-soft);--ink:var(--hha-text);--ink-2:var(--hha-text-secondary);--ink-3:var(--hha-text-muted);--line:var(--hha-border);--line-2:#edf0f4;--card:var(--hha-surface);--bg:var(--hha-bg);--bg-2:var(--hha-surface-subtle);}
+        #ar-main-panel, #ar-toggle-btn{--hha-bg:#f5f7fa;--hha-surface:#ffffff;--hha-surface-hover:#f8fafc;--hha-surface-subtle:#f1f4f8;--hha-text:#18212f;--hha-text-secondary:#596578;--hha-text-muted:#626f80;--hha-border:#e2e7ee;--hha-border-strong:#ccd4df;--hha-accent:#6863b3;--hha-accent-hover:#5d58a6;--hha-accent-soft:#f0eff9;--hha-accent-ring:rgba(98,91,215,.17);--hha-turbo-deep:#4843ad;--hha-success:#0d6d4f;--hha-success-soft:#eaf8f2;--hha-warning:#955f0f;--hha-warning-soft:#fff7e8;--hha-danger:#c33448;--hha-danger-hover:#aa263a;--hha-danger-soft:#fff0f2;--hha-shadow-raised:0 12px 34px rgba(24,33,47,.12),0 2px 8px rgba(24,33,47,.06);--hha-shadow-focus:0 0 0 3px var(--hha-accent-ring);--hha-shadow-control-focus:0 0 0 3px rgba(98,91,215,.14);--hha-ease-standard:cubic-bezier(.2,.72,.3,1);--hha-ease-premium:cubic-bezier(.18,.82,.22,1);--hha-duration-fast:120ms;--hha-duration-medium:200ms;--hh-green:var(--hha-success);--hh-blue:var(--hha-accent);--hh-blue-hover:var(--hha-accent-hover);--hh-blue-soft:var(--hha-accent-soft);--ink:var(--hha-text);--ink-2:var(--hha-text-secondary);--ink-3:var(--hha-text-muted);--line:var(--hha-border);--line-2:#edf0f4;--card:var(--hha-surface);--bg:var(--hha-bg);--bg-2:var(--hha-surface-subtle);}
         #ar-main-panel{background:var(--hha-bg);color:var(--hha-text);border-left:1px solid var(--hha-border);box-shadow:-3px 0 12px rgba(24,33,47,.055);font-size:13px;}
         #ar-main-panel a{color:var(--hha-accent);}
-        #ar-toggle-btn{width:36px;height:108px;padding:11px 0;border-radius:11px;transition:background var(--hha-duration-medium) var(--hha-ease-standard),box-shadow var(--hha-duration-medium) var(--hha-ease-standard);}
-        #ar-toggle-btn .ar-tab-text{font-size:11.5px;font-weight:700;letter-spacing:.055em;}
+        #ar-toggle-btn{width:32px;height:112px;padding:0;border:1px solid rgba(255,255,255,.20);border-right:0;border-radius:10px 0 0 10px;background:linear-gradient(155deg,#7471b4 0%,#6866aa 52%,#5d5998 100%);box-shadow:-1px 2px 5px rgba(20,30,45,.09);overflow:hidden;transition:background-position 180ms var(--hha-ease-premium),filter 180ms var(--hha-ease-premium),box-shadow 180ms var(--hha-ease-premium);}
+        #ar-toggle-btn:hover{background:linear-gradient(155deg,#7b77bc 0%,#625fa6 54%,#57528f 100%);box-shadow:-1px 3px 7px rgba(20,30,45,.105);}
+        #ar-toggle-btn:active{box-shadow:-1px 1px 3px rgba(20,30,45,.09);filter:brightness(.97);}
+        #ar-toggle-btn:focus-visible{outline:2px solid #fff;outline-offset:-3px;box-shadow:-1px 2px 5px rgba(20,30,45,.09),0 0 0 3px rgba(98,91,215,.18);}
+        #ar-toggle-btn .ar-tab-text{display:block;writing-mode:horizontal-tb;transform:rotate(-90deg);white-space:nowrap;font-size:11px;line-height:1;font-weight:750;letter-spacing:.035em;text-shadow:0 1px 1px rgba(44,40,91,.16);}
+        @keyframes ar-tab-running-breathe{0%,100%{background-position:0% 50%;filter:brightness(1) saturate(.96);box-shadow:-2px 3px 7px rgba(69,64,137,.16),-1px 1px 3px rgba(20,30,45,.08);}50%{background-position:100% 50%;filter:brightness(1.075) saturate(1.08);box-shadow:-4px 5px 12px rgba(78,70,157,.24),-1px 2px 4px rgba(20,30,45,.10);}}
+        #ar-toggle-btn.is-running{background:linear-gradient(125deg,#7772bb 0%,#5f5aa2 30%,#7b74c1 58%,#57528f 100%);background-size:230% 230%;animation:ar-tab-running-breathe 2.2s var(--hha-ease-standard) infinite;}
+        #ar-toggle-btn.is-running .ar-tab-text{text-shadow:0 1px 2px rgba(42,37,91,.22),0 0 5px rgba(255,255,255,.13);}
+        #ar-toggle-btn.is-running:hover{animation-play-state:paused;background-position:76% 50%;filter:brightness(1.065) saturate(1.04);}
         .ar-header{border-bottom:1px solid var(--hha-border);box-shadow:0 1px 0 rgba(24,33,47,.018);}
         .ar-brand{gap:7px;}
         .ar-title{font-size:14.5px;font-weight:720;letter-spacing:-.025em;color:var(--hha-text);}
@@ -4427,7 +4797,7 @@
         .ar-header-action:focus-visible{outline:none;box-shadow:var(--hha-shadow-control-focus);color:var(--hha-accent);}
         .ar-status{min-height:23px;padding:3px 8px;border-radius:7px;border:1px solid var(--hha-border);background:var(--hha-surface-subtle);color:var(--hha-text-secondary);font-size:10px;font-weight:650;}
         .ar-status--idle{background:var(--hha-surface-subtle);color:var(--hha-text-secondary);border-color:var(--hha-border);}
-        .ar-status--running{background:var(--hha-accent-soft);color:var(--hha-accent);border-color:#cfe0fb;}
+        .ar-status--running{background:var(--hha-accent-soft);color:var(--hha-accent);border-color:#d3d0e9;}
         .ar-status--stopped{background:var(--hha-danger-soft);color:var(--hha-danger);border-color:#f3cbd1;}
         .ar-status--error{background:var(--hha-warning-soft);color:var(--hha-warning);border-color:#f3dfb6;}
         .ar-status--done{background:var(--hha-success-soft);color:var(--hha-success);border-color:#c8e9dc;}
@@ -4440,23 +4810,32 @@
         .ar-work-mode-header{align-items:center;gap:10px;}
         .ar-work-mode-title{align-items:center;gap:8px;}
         .ar-work-mode-title__label{font-size:11px;font-weight:780;letter-spacing:.065em;color:var(--hha-text-secondary);}
-        .ar-work-mode-title__state{position:relative;display:inline-flex;align-items:center;min-height:22px;padding:2px 8px;border:1px solid #d7e2f2;border-radius:7px;font-size:10.5px;line-height:1;font-weight:760;letter-spacing:.02em;box-shadow:inset 0 1px 0 rgba(255,255,255,.72);transition:color var(--hha-duration-medium) var(--hha-ease-standard),background var(--hha-duration-medium) var(--hha-ease-standard),border-color var(--hha-duration-medium) var(--hha-ease-standard),box-shadow var(--hha-duration-medium) var(--hha-ease-standard);}
-        .ar-work-mode-title__state.is-changing{animation:ar-mode-chip-in 210ms var(--hha-ease-premium) both;}
-        @keyframes ar-mode-chip-in{0%{ opacity:.15; transform:translateY(2px); filter:blur(1.6px); }
-            100%{ opacity:1; transform:translateY(0); filter:blur(0); }}
-        .ar-work-mode-help-wrap{position:relative;flex:0 0 auto;}
-        .ar-work-mode-help{border:1px solid var(--hha-border-strong);border-radius:7px;background:var(--hha-surface);color:var(--hha-text-muted);transition:background var(--hha-duration-fast) var(--hha-ease-standard),border-color var(--hha-duration-fast) var(--hha-ease-standard),color var(--hha-duration-fast) var(--hha-ease-standard),box-shadow var(--hha-duration-fast) var(--hha-ease-standard);}
-        .ar-work-mode-help::before{content:"";position:absolute;inset:-3px;}
-        .ar-work-mode-help:hover,.ar-work-mode-help-wrap.is-pinned .ar-work-mode-help{background:var(--hha-accent-soft);border-color:#cbdcf6;color:var(--hha-accent);}
-        .ar-work-mode-help:focus-visible{outline:none;box-shadow:var(--hha-shadow-focus);border-color:var(--hha-accent);}
-        .ar-work-mode-popover{position:absolute;z-index:40;top:calc(100% + 8px);right:0;width:272px;padding:8px;border:1px solid var(--hha-border);border-radius:11px;background:rgba(255,255,255,.985);box-shadow:var(--hha-shadow-raised);opacity:0;visibility:hidden;transform:translateY(-3px);pointer-events:none;transition:opacity var(--hha-duration-medium) var(--hha-ease-standard),transform var(--hha-duration-medium) var(--hha-ease-standard),visibility 0s linear var(--hha-duration-medium);}
-        .ar-work-mode-help-wrap.is-open .ar-work-mode-popover{opacity:1;visibility:visible;transform:translateY(0);pointer-events:auto;transition-delay:0s;}
-        .ar-mode-help-item{display:grid;grid-template-columns:58px 1fr;gap:7px;align-items:start;padding:7px 7px;border-radius:9px;}
+        .ar-help-wrap{position:relative;display:inline-flex;align-items:center;flex:0 0 auto;}
+        .ar-help-button{width:22px;height:22px;padding:0;border:1px solid var(--hha-border-strong);border-radius:7px;background:var(--hha-surface);color:var(--hha-text-muted);transition:background var(--hha-duration-fast) var(--hha-ease-standard),border-color var(--hha-duration-fast) var(--hha-ease-standard),color var(--hha-duration-fast) var(--hha-ease-standard),box-shadow var(--hha-duration-fast) var(--hha-ease-standard);}
+        .ar-help-button::before{content:"";position:absolute;inset:-3px;}
+        .ar-help-button:hover,.ar-help-wrap.is-pinned .ar-help-button{background:var(--hha-accent-soft);border-color:#d1cee8;color:var(--hha-accent);}
+        .ar-help-button:focus-visible{outline:none;box-shadow:var(--hha-shadow-focus);border-color:var(--hha-accent);}
+        .ar-help-popover{position:absolute;z-index:120;top:calc(100% + 8px);right:0;width:min(276px,calc(100vw - 42px));padding:10px;border:1px solid var(--hha-border);border-radius:11px;background:rgba(255,255,255,.992);box-shadow:var(--hha-shadow-raised);opacity:0;visibility:hidden;transform:translateY(-3px);pointer-events:none;transition:opacity var(--hha-duration-medium) var(--hha-ease-standard),transform var(--hha-duration-medium) var(--hha-ease-standard),visibility 0s linear var(--hha-duration-medium);}
+        .ar-help-wrap.is-open .ar-help-popover{opacity:1;visibility:visible;transform:translateY(0);pointer-events:auto;transition-delay:0s;}
+        .ar-help-popover-title{display:block;margin:0 0 5px;font-size:11.5px;line-height:1.3;font-weight:760;color:var(--hha-text);}
+        .ar-help-popover-copy{display:block;font-size:11px;line-height:1.45;color:var(--hha-text-secondary);}
+        .ar-mode-help-item{display:grid;grid-template-columns:76px 1fr;gap:8px;align-items:start;padding:7px;border-radius:9px;}
         .ar-mode-help-item + .ar-mode-help-item{border-top:1px solid #f0f2f6;}
-        .ar-mode-help-name{font-size:10.5px;font-weight:780;color:var(--hha-text);letter-spacing:.01em;}
-        .ar-mode-help-copy{font-size:10.5px;line-height:1.38;color:var(--hha-text-secondary);}
+        .ar-mode-help-name{font-size:11px;line-height:1.35;font-weight:760;color:var(--hha-text);letter-spacing:.005em;}
+        .ar-mode-help-copy{font-size:11px;line-height:1.35;color:var(--hha-text-secondary);font-variant-numeric:tabular-nums;}
         .ar-mode-help-item--turbo .ar-mode-help-name{color:var(--hha-turbo-deep);}
-        .ar-work-mode-labels{margin:1px 1px -3px;color:var(--hha-text-muted);font-size:10px;font-weight:650;letter-spacing:.005em;}
+        .ar-mode-help-note{display:block;margin-top:5px;padding:7px;border-top:1px solid #edf0f4;color:var(--hha-text-muted);font-size:10.5px;line-height:1.42;}
+        .ar-work-mode-options{margin-top:-1px;}
+        .ar-work-mode-option{display:flex;align-items:center;justify-content:center;min-width:0;height:24px;padding:0 4px;border:1px solid transparent;border-radius:7px;font-size:10.5px;font-weight:620;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background var(--hha-duration-fast) var(--hha-ease-premium),border-color var(--hha-duration-fast) var(--hha-ease-premium),color var(--hha-duration-fast) var(--hha-ease-premium),font-weight var(--hha-duration-fast) var(--hha-ease-premium);}
+        .ar-work-mode-option[data-mode="safe"]{background:#f2f4f7;border-color:#e2e6eb;color:#6a7585;}
+        .ar-work-mode-option[data-mode="balanced"]{background:#f5f3fa;border-color:#e5e1ef;color:#686581;}
+        .ar-work-mode-option[data-mode="fast"]{background:#efedf8;border-color:#dcd7ec;color:#5f5a91;}
+        .ar-work-mode-option[data-mode="turbo"]{background:#e9e6f5;border-color:#cec8e6;color:#554f8d;}
+        .ar-work-mode-option.is-active{font-weight:780;box-shadow:inset 0 0 0 1px rgba(92,86,160,.12),0 1px 2px rgba(24,33,47,.04);}
+        .ar-work-mode-option[data-mode="safe"].is-active{background:#eceff3;border-color:#bdc6d2;color:#3f4b5b;}
+        .ar-work-mode-option[data-mode="balanced"].is-active{background:#eeebf6;border-color:#c9c3df;color:#514d7e;}
+        .ar-work-mode-option[data-mode="fast"].is-active{background:#e7e3f4;border-color:#bdb6da;color:#4f4989;}
+        .ar-work-mode-option[data-mode="turbo"].is-active{background:#dfdaf0;border-color:#aaa2d0;color:#453f80;}
         .ar-work-mode-slider{background:linear-gradient(90deg,#e8ebf0 0%,#edf0f4 58%,#f0f2f5 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.8),inset 0 0 0 1px rgba(24,33,47,.035);}
         .ar-work-mode-slider:hover:not(.is-turbo){box-shadow:inset 0 1px 0 rgba(255,255,255,.86),inset 0 0 0 1px rgba(24,33,47,.055);}
         .ar-work-mode-turbo-surface{background:linear-gradient(90deg,rgba(98,91,215,.10) 0%,rgba(98,91,215,.20) 28%,rgba(103,91,220,.38) 56%,rgba(91,79,202,.64) 80%,rgba(72,67,173,.86) 100%);transition:opacity var(--ar-work-turbo-exit-duration) var(--hha-ease-standard);}
@@ -4476,16 +4855,24 @@
         .ar-textarea{min-height:62px;padding:8px 10px;font-size:12px;line-height:1.48;}
         .ar-textarea::placeholder{color:#a1aab8;}
         .ar-textarea:disabled{opacity:.68;}
-        .ar-cover-footer{color:var(--hha-text-muted);}
         .ar-cover-counter.is-near{color:var(--hha-warning);}
+        .ar-card--settings{overflow:visible;}
+        .ar-switch-row-sub{position:relative;}
+        .ar-setting-label-group{display:flex;align-items:center;gap:6px;min-width:0;}
+        .ar-setting-label-group .ar-row-label{flex:0 1 auto;min-width:0;}
+        .ar-warning-help-wrap{position:static;}
+        .ar-autosave-feedback{display:flex;align-items:center;gap:6px;min-height:16px;color:var(--hha-text-muted);font-size:11px;line-height:1.3;}
+        .ar-autosave-feedback::before{content:"";width:5px;height:5px;flex:0 0 5px;border-radius:50%;background:#98a2b1;box-shadow:0 0 0 2px rgba(152,162,177,.09);transition:background var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium);}
+        .ar-autosave-feedback.is-saved{color:#5e5a91;}
+        .ar-autosave-feedback.is-saved::before{background:#7873b4;box-shadow:0 0 0 2px rgba(104,99,179,.11);}
         .ar-switch input:focus-visible + i{box-shadow:var(--hha-shadow-control-focus);}
         .ar-btn{min-height:34px;border-radius:10px;padding:0 13px;border:1px solid transparent;font-size:12px;font-weight:680;transition:background var(--hha-duration-fast) var(--hha-ease-premium),border-color var(--hha-duration-fast) var(--hha-ease-premium),color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium),transform var(--hha-duration-fast) var(--hha-ease-premium);}
         .ar-btn:not(:disabled):hover{transform:none;}
         .ar-btn:focus-visible{outline:none;box-shadow:var(--hha-shadow-control-focus);}
         .ar-btn:disabled{opacity:.46;}
         .ar-btn-cta{height:40px;border-radius:11px;font-size:13px;font-weight:720;}
-        .ar-btn-primary{background:var(--hha-accent);color:#fff;box-shadow:0 4px 12px rgba(23,105,224,.17);}
-        .ar-btn-primary:hover{background:var(--hha-accent-hover);box-shadow:0 6px 16px rgba(23,105,224,.22);}
+        .ar-btn-primary{background:var(--hha-accent);color:#fff;box-shadow:0 4px 12px rgba(82,76,154,.16);}
+        .ar-btn-primary:hover{background:var(--hha-accent-hover);box-shadow:0 6px 16px rgba(82,76,154,.21);}
         .ar-btn-danger{background:var(--hha-danger);color:#fff;box-shadow:0 4px 12px rgba(195,52,72,.15);}
         .ar-btn-danger:hover{background:var(--hha-danger-hover);box-shadow:0 6px 16px rgba(195,52,72,.20);}
         .ar-btn-soft{background:var(--hha-surface);color:var(--hha-text-secondary);border-color:var(--hha-border);box-shadow:inset 0 1px 0 rgba(255,255,255,.72);}
@@ -4494,12 +4881,11 @@
         .ar-btn-tertiary{background:var(--hha-surface-subtle);border:1px solid var(--hha-border);box-shadow:inset 0 1px 0 rgba(255,255,255,.46);}
         .ar-btn-tertiary:hover{background:#e9edf3;color:var(--hha-text);border-color:var(--hha-border-strong);box-shadow:0 2px 5px rgba(24,33,47,.045);}
         .ar-btn-tertiary:active{box-shadow:inset 0 1px 2px rgba(24,33,47,.06);}
-        .ar-btn-ghost{border-color:transparent;}
         .ar-btn-sm{min-height:29px;padding:0 10px;font-size:11px;border-radius:9px;}
         .ar-util-row{gap:7px;}
         .ar-util-btn{height:31px;}
         .ar-progress{height:5px;background:#edf0f4;border-radius:1.5px;}
-        .ar-progress i{background:linear-gradient(90deg,var(--hha-accent) 0%,#3881e5 100%);transition:width 300ms var(--hha-ease-standard);}
+        .ar-progress i{background:linear-gradient(90deg,var(--hha-accent) 0%,#7771c3 100%);transition:width 300ms var(--hha-ease-standard);}
         .ar-stats{grid-template-columns:repeat(4,1fr);border:1px solid var(--hha-border);border-radius:11px;}
         .ar-stat{padding:7px 3px;gap:3px;}
         .ar-stat-num{font-size:16px;font-weight:780;color:var(--hha-text-muted);}
@@ -4509,9 +4895,7 @@
         .ar-stat.is-active-skip{background:transparent;border-color:transparent;}
         .ar-stat.is-active-skip .ar-stat-num{color:var(--hha-text-secondary);}
         .ar-badge{min-width:19px;height:19px;padding:0 6px;border:1px solid var(--hha-border);border-radius:6px;background:var(--hha-surface-subtle);color:var(--hha-text-secondary);font-size:10px;font-weight:700;}
-        .ar-badge--neutral{background:var(--hha-surface-subtle);color:var(--hha-text-secondary);border-color:var(--hha-border);}
-        .ar-badge--error{background:var(--hha-danger-soft);color:var(--hha-danger);border-color:#f1ccd2;}
-        .ar-badge-count{min-width:17px;height:17px;padding:0 5px;border:1px solid #d5e1f4;border-radius:5px;background:var(--hha-accent-soft);color:var(--hha-accent);font-size:10px;}
+        .ar-badge-count{min-width:17px;height:17px;padding:0 5px;border:1px solid #d7d3e9;border-radius:5px;background:var(--hha-accent-soft);color:var(--hha-accent);font-size:10px;}
         .ar-manual{gap:6px;}
         .ar-manual-item{padding:8px 9px 8px 10px;border:1px solid var(--hha-border);border-radius:11px;background:var(--hha-surface-subtle);transition:background var(--hha-duration-fast) var(--hha-ease-premium),border-color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium);}
         .ar-manual-item:hover{background:var(--hha-surface);border-color:var(--hha-border-strong);box-shadow:0 2px 7px rgba(24,33,47,.045);}
@@ -4524,29 +4908,23 @@
         .ar-btn-open, .ar-remove-btn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;align-self:center;vertical-align:middle;line-height:1;}
         .ar-btn-open{min-height:34px;height:34px;padding:0 16px;border-radius:10px;}
         .ar-btn-open > span{display:block;line-height:1;}
-        .ar-remove-btn{height:34px;min-height:34px;border-radius:8px;}
+        .ar-remove-btn{width:34px;min-width:34px;height:34px;min-height:34px;padding:0;border-radius:10px;}
         .ar-empty{padding:15px 10px;border-color:var(--hha-border);border-radius:11px;background:var(--hha-surface-subtle);color:var(--hha-text-muted);}
-        .ar-diag-body{background:var(--hha-bg);}
+        .ar-diag-body{background:var(--hha-bg);container-type:inline-size;}
         .ar-diag-nav{gap:8px;}
         .ar-diag-view-title{font-size:13px;font-weight:720;color:var(--hha-text);}
-        .ar-btn-back{padding:0 9px;}
-        .ar-diag-stat{font-size:10.5px;font-weight:650;color:var(--hha-text-muted);}
-        .ar-inline-check{gap:6px;font-size:11px;color:var(--hha-text-secondary);}
-        .ar-inline-check input{accent-color:var(--hha-accent);}
-        .ar-inline-check input:focus-visible{outline:2px solid rgba(98,91,215,.28);outline-offset:2px;}
+        .ar-btn-back{gap:5px;padding:0 9px 0 7px;line-height:1;}
         .ar-diag-full-box{border:1px solid #253247;border-radius:11px;background:#111927;color:#aab6c8;box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 8px 20px rgba(17,25,39,.08);}
-        .ar-diag-full-box .ar-log-err{color:#ff8797;}
         .ar-dropdown-menu{padding:5px;min-width:188px;border:1px solid var(--hha-border);border-radius:11px;}
         .ar-dropdown-item{padding:7px 9px;border-radius:9px;transition:background var(--hha-duration-fast) var(--hha-ease-premium),color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium);}
         .ar-dropdown-item:focus-visible{outline:none;box-shadow:var(--hha-shadow-control-focus);color:var(--hha-text);}
         .ar-dropdown-item--danger{color:var(--hha-danger);}
         .ar-diag-header{min-height:47px;}
         .ar-diag-nav{flex:1 1 auto;min-width:0;}
-        .ar-diag-back-arrow{font-size:13px;line-height:1;margin-right:2px;}
-        .ar-diag-health-summary{display:none!important;}
+        .ar-btn-back .ar-icon-svg{width:15px;height:15px;}
         .ar-diag-header-actions{flex:0 0 auto;}
-        .ar-diag-body{flex:1 1 auto;min-height:0;gap:6px;padding:10px 10px 14px;align-content:start;}
-        .ar-diag-filter-row{display:flex;align-items:center;gap:10px;min-width:0;}
+        .ar-diag-body{flex:1 1 auto;min-height:0;gap:8px;padding:10px 10px 12px;overflow:hidden;}
+        .ar-diag-filter-row{display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:center;gap:8px;min-width:0;}
         .ar-diag-filter-group{display:inline-flex;align-items:center;flex:0 0 auto;padding:2px;border:1px solid var(--hha-border);border-radius:9px;background:var(--hha-surface-subtle);}
         .ar-diag-filter-btn{display:inline-flex;align-items:center;gap:5px;height:27px;padding:0 8px;border:0;border-radius:7px;background:transparent;color:var(--hha-text-muted);font-family:inherit;font-size:10.5px;font-weight:700;cursor:pointer;transition:background var(--hha-duration-fast) var(--hha-ease-premium),color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium);}
         .ar-diag-filter-btn:hover{color:var(--hha-text);}
@@ -4560,37 +4938,35 @@
         .ar-diag-search-wrap{position:relative;display:flex;align-items:center;flex:1 1 auto;min-width:0;height:32px;border:1px solid var(--hha-border);border-radius:9px;background:var(--hha-surface);transition:border-color var(--hha-duration-fast) var(--hha-ease-premium),box-shadow var(--hha-duration-fast) var(--hha-ease-premium);}
         .ar-diag-search-wrap:focus-within{border-color:var(--hha-accent);box-shadow:0 0 0 3px var(--hha-accent-soft);}
         .ar-diag-search-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:24px;height:24px;margin-left:3px;color:var(--hha-text-muted);line-height:0;}
-        .ar-diag-search-icon svg{display:block;width:14px;height:14px;}
-        .ar-diag-search{width:100%;min-width:0;height:100%;padding:0 26px 0 6px;border:0;outline:0;background:transparent;color:var(--hha-text);font-family:inherit;font-size:10.5px;}
+        .ar-diag-search-icon .ar-icon-svg{width:14px;height:14px;}
+        .ar-diag-search{width:100%;min-width:0;height:100%;padding:0 30px 0 6px;border:0;outline:0;background:transparent;color:var(--hha-text);font-family:inherit;font-size:11px;}
         .ar-diag-search::-webkit-search-cancel-button{display:none;}
         .ar-diag-search::placeholder{color:var(--hha-text-muted);}
-        .ar-diag-search-clear{position:absolute;right:2px;top:50%;transform:translateY(-50%);width:28px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--hha-text-muted);font-family:inherit;font-size:15px;line-height:1;cursor:pointer;}
+        .ar-diag-search-clear{position:absolute;right:2px;top:50%;transform:translateY(-50%);width:28px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--hha-text-muted);font-family:inherit;line-height:0;cursor:pointer;}
+        .ar-diag-search-clear[hidden]{display:none;}
+        .ar-diag-search-clear .ar-icon-svg{width:13px;height:13px;}
         .ar-diag-search-clear:hover{background:var(--hha-surface-subtle);color:var(--hha-text);}
-        .ar-diag-toolbar{min-height:28px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding-block:0;}
-        .ar-diag-controls{display:flex;align-items:center;gap:8px;min-width:0;}
-        .ar-diag-toolbar-right{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto;}
-        .ar-diag-check-zone{display:flex;align-items:center;gap:8px;min-width:0;}
+        .ar-diag-toolbar{min-height:34px;display:grid;grid-template-columns:minmax(0,1fr) max-content;align-items:center;gap:6px 3px;padding-block:0;}
+        .ar-diag-check-zone{display:flex;align-items:center;gap:3px;min-width:0;}
         .ar-diag-check-btn{min-width:0;padding-inline:10px;}
-        .ar-diag-check-status{display:inline-flex;align-items:center;flex:0 0 auto;gap:6px;height:21px;white-space:nowrap;}
+        .ar-diag-check-status{display:inline-flex;align-items:center;flex:0 0 auto;gap:2px;height:21px;white-space:nowrap;}
         .ar-diag-check-status:empty{display:none;}
         .ar-diag-check-progress{color:var(--hha-text-muted);font-size:10.5px;line-height:1;font-weight:700;font-variant-numeric:tabular-nums;}
         .ar-diag-check-ok{display:inline-flex;align-items:center;height:21px;padding:0 6px;border-radius:6px;background:rgba(31,142,102,.08);color:var(--hha-success);font-size:10.5px;line-height:1;font-weight:750;}
-        .ar-diag-autoscroll{display:inline-flex;align-items:center;gap:5px;min-height:28px;color:var(--hha-text-muted);font-size:10.5px;font-weight:650;cursor:pointer;user-select:none;}
-        .ar-diag-autoscroll input{position:absolute;opacity:0;pointer-events:none;}
-        .ar-diag-autoscroll i{position:relative;display:block;width:24px;height:15px;border:1px solid var(--hha-border-strong);border-radius:999px;background:rgba(92,104,128,.08);transition:background var(--hha-duration-fast) var(--hha-ease-premium),border-color var(--hha-duration-fast) var(--hha-ease-premium);}
-        .ar-diag-autoscroll i::after{content:"";position:absolute;top:2px;left:2px;width:9px;height:9px;border-radius:999px;background:#fff;box-shadow:0 1px 2px rgba(24,33,47,.16);transition:transform var(--hha-duration-fast) var(--hha-ease-premium),background var(--hha-duration-fast) var(--hha-ease-premium);}
-        .ar-diag-autoscroll input:checked + i{background:rgba(51,104,204,.13);border-color:rgba(51,104,204,.38);}
-        .ar-diag-autoscroll input:checked + i::after{transform:translateX(9px);background:#5a72d8;}
-        .ar-diag-autoscroll input:focus-visible + i{box-shadow:var(--hha-shadow-control-focus);}
-        .ar-diag-save-btn{min-width:0;padding-inline:9px;}
-        .ar-diag-more-btn{width:32px;min-width:32px;padding:0;font-size:13px;letter-spacing:.08em;}
-        .ar-diag-full-box{flex:0 0 auto;height:clamp(400px,60vh,620px);min-height:400px;max-height:620px;padding:5px 10px 5px 0;border-color:#26344a;overflow-y:scroll;overflow-x:hidden;scrollbar-gutter:stable;scrollbar-width:auto;scrollbar-color:#53647c #0d1725;font-family:var(--hha-font);font-size:10.5px;line-height:1.35;}
-        .ar-diag-full-box::-webkit-scrollbar{width:10px;}
-        .ar-diag-full-box::-webkit-scrollbar-track{background:#0d1725;border-left:1px solid rgba(148,163,184,.06);border-radius:0 10px 10px 0;}
+        .ar-diag-autoscroll{display:inline-flex;align-items:center;justify-self:end;gap:4px;min-height:34px;color:var(--hha-text-muted);font-size:10.5px;line-height:1.2;font-weight:650;cursor:pointer;user-select:none;white-space:nowrap;}
+        .ar-diag-footer-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;min-width:0;}
+        .ar-diag-footer-actions > *{min-width:0;}
+        .ar-diag-save-btn,.ar-diag-more-btn{width:100%;min-width:0;height:32px;padding-inline:9px;font-size:11px;letter-spacing:0;}
+        .ar-diag-full-dropdown{display:block;min-width:0;}
+        .ar-diag-full-box{flex:1 1 0;height:auto;min-height:120px;max-height:none;padding:5px 10px 5px 0;border-color:#26344a;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#465870 #0d1725;font-family:inherit;font-size:10.5px;line-height:1.35;}
+        .ar-diag-full-box::-webkit-scrollbar{width:9px;}
+        .ar-diag-full-box::-webkit-scrollbar-button,.ar-diag-full-box::-webkit-scrollbar-button:single-button{-webkit-appearance:none;appearance:none;display:none;width:0;height:0;background:transparent;}
+        .ar-diag-full-box::-webkit-scrollbar-button:vertical:start:decrement,.ar-diag-full-box::-webkit-scrollbar-button:vertical:end:increment{display:none!important;width:0!important;height:0!important;max-height:0!important;border:0!important;background:#0d1725!important;background-image:none!important;}
+        .ar-diag-full-box::-webkit-scrollbar-track{background:#0d1725;border-left:1px solid rgba(148,163,184,.06);border-radius:0;}
         .ar-diag-full-box::-webkit-scrollbar-thumb{background:#465870;border:2px solid #0d1725;border-radius:999px;}
         .ar-diag-full-box::-webkit-scrollbar-thumb:hover{background:#5b6d86;}
         .ar-diag-full-box:focus-visible{outline:none;box-shadow:inset 0 0 0 1px rgba(129,140,248,.42),0 0 0 2px rgba(129,140,248,.11);}
-        .ar-log-row{display:grid;grid-template-columns:70px 38px minmax(0,1fr) auto;align-items:start;gap:6px;padding:6px 9px;border-bottom:1px solid rgba(148,163,184,.075);color:#c0cad8;}
+        .ar-log-row{display:grid;grid-template-columns:max-content max-content minmax(0,1fr) max-content;align-items:start;column-gap:6px;row-gap:3px;padding:6px 9px;border-bottom:1px solid rgba(148,163,184,.075);color:#c0cad8;}
         .ar-log-row:last-child{border-bottom:0;}
         .ar-log-row:hover{background:rgba(148,163,184,.045);}
         .ar-log-row.is-error{background:rgba(255,90,110,.035);}
@@ -4600,10 +4976,10 @@
         .ar-log-level--ok{background:rgba(52,211,153,.11);color:#72ddb9;}
         .ar-log-level--warn{background:rgba(245,158,11,.12);color:#f6c66c;}
         .ar-log-level--err{background:rgba(255,100,120,.15);color:#ff8797;}
-        .ar-log-message{min-width:0;color:#bec8d7;word-break:break-word;white-space:pre-wrap;}
+        .ar-log-message{min-width:0;color:#bec8d7;overflow-wrap:anywhere;word-break:normal;white-space:pre-wrap;}
         .ar-log-row.is-error .ar-log-message{color:#ffc1ca;}
         .ar-log-row.is-warning .ar-log-message{color:#f6dbad;}
-        .ar-log-repeat{align-self:start;min-width:34px;height:24px;padding:0 7px;border:1px solid rgba(148,163,184,.16);border-radius:999px;background:rgba(148,163,184,.07);color:#9aa9bd;font-family:inherit;font-size:10.5px;font-weight:800;cursor:pointer;font-variant-numeric:tabular-nums;}
+        .ar-log-repeat{align-self:center;min-width:34px;width:max-content;height:24px;padding:0 7px;border:1px solid rgba(148,163,184,.16);border-radius:999px;background:rgba(148,163,184,.07);color:#9aa9bd;font-family:inherit;font-size:10.5px;font-weight:800;cursor:pointer;font-variant-numeric:tabular-nums;}
         .ar-log-repeat:hover{border-color:rgba(165,180,252,.34);background:rgba(129,140,248,.11);color:#c7ccff;}
         .ar-log-repeat:focus-visible{outline:1px solid #9ca3ff;outline-offset:1px;}
         .ar-log-group-children{margin:0 8px 5px 121px;border-left:1px solid rgba(148,163,184,.15);}
@@ -4615,25 +4991,23 @@
         .ar-log-empty-icon svg{display:block;width:100%;height:100%;}
         .ar-log-empty-title{font-size:12.5px;line-height:1.25;font-weight:750;color:#b8c3d2;}
         .ar-log-empty-hint{max-width:220px;color:#8796aa;font-size:10.5px;line-height:1.5;}
-        .ar-diag-full-dropdown .ar-dropdown-menu{right:0;left:auto;top:calc(100% + 4px);bottom:auto;}
+        .ar-diag-full-dropdown .ar-dropdown-menu{right:0;left:auto;top:auto;bottom:calc(100% + 5px);}
         @media (max-height:720px){
-          .ar-diag-full-box{height:calc(100vh - 190px);min-height:300px;}
+          .ar-diag-body{gap:5px;padding-top:8px;padding-bottom:8px;}
+          .ar-diag-full-box{min-height:88px;}
         }
         @media (max-width:420px){
           .ar-work-mode-popover{width:min(272px,calc(100vw - 42px));}
         }
-        #ar-main-panel, #ar-toggle-btn{--hha-flat-border:#d6dde6;--hha-flat-border-hover:#c2cbd6;--hha-flat-border-active:#b9c3cf;--hha-flat-surface:#ffffff;--hha-flat-surface-hover:#f7f9fb;--hha-flat-surface-active:#eef2f6;--hha-flat-muted:#667284;--hha-flat-violet:#6964b8;--hha-flat-violet-hover:#625dae;--hha-flat-violet-active:#5b56a4;--hha-flat-violet-deep:#56518f;--hha-flat-violet-soft:#f3f2fa;--hha-flat-violet-line:#cfcee4;--hha-shadow-level-1:0 1px 2px rgba(20,30,45,.055);--hha-shadow-level-1-hover:0 1px 3px rgba(20,30,45,.07);--hha-shadow-level-2:0 2px 4px rgba(20,30,45,.08),0 1px 1px rgba(20,30,45,.04);--hha-focus-ring:0 0 0 3px rgba(98,91,215,.16);--hha-focus-ring-strong:0 0 0 3px rgba(98,91,215,.19);}
-        .ar-btn, .ar-header-action, .ar-lang-btn, .ar-dropdown-item, .ar-work-mode-help{transition-property:background-color,background,border-color,color,box-shadow,transform;transition-duration:150ms;transition-timing-function:var(--hha-ease-premium);}
-        .ar-btn:not(:disabled):hover, .ar-header-action:hover, .ar-lang-btn:hover, .ar-dropdown-item:hover, .ar-work-mode-help:hover{transform:none;}
+        #ar-main-panel, #ar-toggle-btn{--hha-flat-border:#d6dde6;--hha-flat-border-hover:#c2cbd6;--hha-flat-border-active:#b9c3cf;--hha-flat-surface:#ffffff;--hha-flat-surface-hover:#f7f9fb;--hha-flat-surface-active:#eef2f6;--hha-flat-violet:#6964b8;--hha-flat-violet-hover:#625dae;--hha-flat-violet-active:#5b56a4;--hha-flat-violet-deep:#56518f;--hha-shadow-level-1:0 1px 2px rgba(20,30,45,.055);--hha-shadow-level-1-hover:0 1px 3px rgba(20,30,45,.07);--hha-focus-ring:0 0 0 3px rgba(98,91,215,.16);--hha-focus-ring-strong:0 0 0 3px rgba(98,91,215,.19);}
+        .ar-btn, .ar-header-action, .ar-lang-btn, .ar-dropdown-item, .ar-help-button{transition-property:background-color,background,border-color,color,box-shadow,transform;transition-duration:150ms;transition-timing-function:var(--hha-ease-premium);}
+        .ar-btn:not(:disabled):hover, .ar-header-action:hover, .ar-lang-btn:hover, .ar-dropdown-item:hover, .ar-help-button:hover{transform:none;}
         .ar-btn:not(:disabled):active{transform:translateY(1px);}
-        .ar-header-action:active, .ar-lang-btn:active, .ar-dropdown-item:active, .ar-work-mode-help:active{transform:none;}
+        .ar-header-action:active, .ar-lang-btn:active, .ar-dropdown-item:active, .ar-help-button:active{transform:none;}
         .ar-btn-soft, .ar-btn-tertiary{border:1px solid var(--hha-flat-border);background:var(--hha-flat-surface);color:#4f5b6b;box-shadow:var(--hha-shadow-level-1);}
         .ar-btn-soft:hover, .ar-btn-tertiary:hover{border-color:var(--hha-flat-border-hover);background:var(--hha-flat-surface-hover);color:var(--hha-text);box-shadow:var(--hha-shadow-level-1-hover);}
         .ar-btn-soft:active, .ar-btn-tertiary:active{border-color:var(--hha-flat-border-active);background:var(--hha-flat-surface-active);box-shadow:none;}
         .ar-btn-tertiary{border-style:solid;color:#5c6776;}
-        .ar-btn-ghost{border:1px solid transparent;background:transparent;color:var(--hha-text-muted);box-shadow:none;}
-        .ar-btn-ghost:hover{border-color:transparent;background:#f1f4f7;color:var(--hha-text-secondary);box-shadow:none;}
-        .ar-btn-ghost:active{background:#e9edf2;box-shadow:none;}
         #ar-start-btn{color:#fff;border:1px solid var(--hha-flat-violet-deep);background:var(--hha-flat-violet);text-shadow:none;box-shadow:0 2px 4px rgba(74,68,145,.12),0 1px 1px rgba(20,30,45,.04);}
         #ar-start-btn:hover{border-color:#514d88;background:var(--hha-flat-violet-hover);box-shadow:0 3px 6px rgba(74,68,145,.14),0 1px 2px rgba(20,30,45,.04);}
         #ar-start-btn:active{border-color:#4d4982;background:var(--hha-flat-violet-active);box-shadow:0 1px 2px rgba(74,68,145,.10);transform:translateY(1px);}
@@ -4649,25 +5023,25 @@
         .ar-input:focus-visible, .ar-textarea:focus-visible{border-color:#6c66bf;box-shadow:var(--hha-focus-ring),var(--hha-shadow-level-1);}
         .ar-textarea:disabled{border-color:#e0e5eb;background:#f3f5f8;box-shadow:none;}
         .ar-switch{width:38px;height:22px;}
-        .ar-switch i{position:relative;overflow:hidden;border:1px solid #c6ced8;background:#dbe1e8;box-shadow:none;transition:background 180ms var(--hha-ease-premium),border-color 180ms var(--hha-ease-premium),box-shadow 150ms var(--hha-ease-premium);}
-        .ar-switch i::after{box-sizing:border-box;top:2px;left:2px;width:16px;height:16px;border-radius:5px;transform:translateX(0);border:1px solid #d5dbe3;background:#fff;box-shadow:0 1px 2px rgba(20,30,45,.09);transition:transform 180ms var(--hha-ease-premium),box-shadow 150ms var(--hha-ease-premium),background 150ms var(--hha-ease-premium);}
-        .ar-switch-row:hover .ar-switch i{border-color:#b8c2ce;background:#d4dbe3;box-shadow:none;}
-        .ar-switch-row:hover .ar-switch i::after{box-shadow:0 1px 3px rgba(20,30,45,.11);}
-        .ar-switch input:checked + i{border-color:#5e59a3;background:var(--hha-flat-violet);box-shadow:none;}
-        .ar-switch-row:hover .ar-switch input:checked + i{border-color:#56518f;background:var(--hha-flat-violet-hover);}
+        .ar-switch i{position:relative;overflow:hidden;border:1px solid #c4ccd6;background:linear-gradient(180deg,#dfe4ea 0%,#d6dde5 100%);box-shadow:inset 0 1px 2px rgba(35,47,63,.10),inset 0 -1px 0 rgba(255,255,255,.62);transition:background 180ms var(--hha-ease-premium),border-color 180ms var(--hha-ease-premium),box-shadow 150ms var(--hha-ease-premium);}
+        .ar-switch i::after{box-sizing:border-box;top:2px;left:2px;width:16px;height:16px;border-radius:5px;transform:translateX(0);border:1px solid rgba(197,205,215,.78);background:linear-gradient(180deg,#fff 0%,#fafbfc 100%);box-shadow:0 1px 2px rgba(20,30,45,.16),0 2px 4px rgba(20,30,45,.06);transition:transform 180ms var(--hha-ease-premium),box-shadow 150ms var(--hha-ease-premium),background 150ms var(--hha-ease-premium);}
+        .ar-switch-row:hover .ar-switch i{border-color:#b5bfcb;background:linear-gradient(180deg,#dbe1e7 0%,#d1d9e1 100%);box-shadow:inset 0 1px 2px rgba(35,47,63,.12),inset 0 -1px 0 rgba(255,255,255,.66);}
+        .ar-switch-row:hover .ar-switch i::after{box-shadow:0 1px 3px rgba(20,30,45,.17),0 2px 5px rgba(20,30,45,.07);}
+        .ar-switch input:checked + i{border-color:#5c579d;background:linear-gradient(180deg,#7470b7 0%,#6662aa 100%);box-shadow:inset 0 1px 2px rgba(47,42,102,.18),inset 0 -1px 0 rgba(255,255,255,.13);}
+        .ar-switch-row:hover .ar-switch input:checked + i{border-color:#514c8c;background:linear-gradient(180deg,#716cb4 0%,#5e599f 100%);}
         .ar-switch input:checked + i::after{transform:translateX(16px);}
-        .ar-switch input:active + i{box-shadow:none;}
-        .ar-switch input:active + i::after{background:#fafbfc;box-shadow:0 1px 2px rgba(20,30,45,.08);transform:translateX(0) scale(.97);}
-        .ar-switch input:checked:active + i::after{transform:translateX(16px) scale(.97);}
+        .ar-switch input:active + i{box-shadow:inset 0 2px 3px rgba(35,47,63,.14);}
+        .ar-switch input:active + i::after{background:#fafbfc;box-shadow:0 1px 2px rgba(20,30,45,.10);transform:translateX(0) scale(.96);}
+        .ar-switch input:checked:active + i::after{transform:translateX(16px) scale(.96);}
         .ar-switch input:focus-visible + i, .ar-switch input:checked:focus-visible + i{box-shadow:var(--hha-focus-ring);}
         .ar-lang-switcher{border:1px solid #d8dfe7;background:#eef2f6;box-shadow:none;}
         .ar-lang-btn{border:1px solid transparent;background:transparent;color:#5f6b7a;box-shadow:none;}
         .ar-lang-btn:hover{border-color:transparent;background:#f7f9fb;color:#4d5969;box-shadow:none;}
         .ar-lang-btn:active{border-color:transparent;background:#e6ebf0;box-shadow:none;}
         .ar-lang-btn.is-active{border-color:#d7dee7;background:#fff;color:#263344;box-shadow:var(--hha-shadow-level-1);}
-        .ar-header-action, .ar-work-mode-help{border:1px solid var(--hha-flat-border);background:#fff;color:#687486;box-shadow:var(--hha-shadow-level-1);}
-        .ar-header-action:hover, .ar-work-mode-help:hover{border-color:var(--hha-flat-border-hover);background:var(--hha-flat-surface-hover);color:#2f3b4b;box-shadow:var(--hha-shadow-level-1-hover);}
-        .ar-header-action:active, .ar-work-mode-help:active{border-color:var(--hha-flat-border-active);background:var(--hha-flat-surface-active);box-shadow:none;}
+        .ar-header-action, .ar-help-button{border:1px solid var(--hha-flat-border);background:#fff;color:#687486;box-shadow:var(--hha-shadow-level-1);}
+        .ar-header-action:hover, .ar-help-button:hover{border-color:var(--hha-flat-border-hover);background:var(--hha-flat-surface-hover);color:#2f3b4b;box-shadow:var(--hha-shadow-level-1-hover);}
+        .ar-header-action:active, .ar-help-button:active{border-color:var(--hha-flat-border-active);background:var(--hha-flat-surface-active);box-shadow:none;}
         .ar-remove-btn{border:1px solid var(--hha-flat-border);background:#fff;color:#8a7680;box-shadow:var(--hha-shadow-level-1);}
         .ar-remove-btn:hover{border-color:#d8b8c0;background:#fff5f7;color:#a03f56;box-shadow:var(--hha-shadow-level-1-hover);transform:none;}
         .ar-remove-btn:active{border-color:#cca4af;background:#f8e8ec;box-shadow:none;transform:translateY(1px);}
@@ -4679,10 +5053,7 @@
         #ar-clear-manual, #ar-reset-history{color:#97485b;border-color:#dfc3ca;background:#fff;}
         #ar-clear-manual:hover, #ar-reset-history:hover{color:#873c50;border-color:#d4aeb8;background:#fff7f8;}
         #ar-clear-manual:focus-visible, #ar-reset-history:focus-visible{box-shadow:0 0 0 3px rgba(195,52,72,.13);}
-        #ar-toggle-btn{background:var(--hha-accent);box-shadow:-2px 3px 8px rgba(20,30,45,.10);}
-        #ar-toggle-btn:hover{background:var(--hha-accent-hover);box-shadow:-2px 4px 10px rgba(20,30,45,.12);}
-        #ar-toggle-btn:active{box-shadow:-1px 2px 5px rgba(20,30,45,.10);}
-        .ar-btn:focus-visible, .ar-header-action:focus-visible, .ar-lang-btn:focus-visible, .ar-dropdown-item:focus-visible, .ar-work-mode-help:focus-visible{outline:none;box-shadow:var(--hha-focus-ring);}
+        .ar-btn:focus-visible, .ar-header-action:focus-visible, .ar-lang-btn:focus-visible, .ar-dropdown-item:focus-visible, .ar-help-button:focus-visible{outline:none;box-shadow:var(--hha-focus-ring);}
         #ar-start-btn:focus-visible{box-shadow:var(--hha-focus-ring-strong),0 2px 4px rgba(74,68,145,.12);}
         #ar-stop-btn:focus-visible, .ar-btn-open:focus-visible{box-shadow:var(--hha-focus-ring),var(--hha-shadow-level-1);}
         .ar-work-mode-slider::after{content:"";position:absolute;z-index:4;top:0;bottom:0;left:0;width:19%;border-radius:11px;pointer-events:none;opacity:0;background:linear-gradient(90deg,
@@ -4696,7 +5067,7 @@
         .ar-stat{transition:none;}
         .ar-stat:hover{background:inherit;border-color:transparent;box-shadow:none;transform:none;}
         .ar-stat.is-active-success:hover{background:var(--hha-success-soft);border-color:#d0ebe0;}
-        #ar-main-panel, #ar-toggle-btn{--hha-material-violet:#6967aa;--hha-material-violet-top:#7873b9;--hha-material-violet-deep:#56538f;--hha-control-accent:#6866aa;--hha-control-accent-hover:#605e9f;--hha-control-accent-soft:#efeff9;--hha-control-accent-line:#c9c9e5;}
+        #ar-main-panel, #ar-toggle-btn{--hha-control-accent:#6866aa;}
         .ar-card{border-radius:11px;border-color:#d7dee7;background:linear-gradient(180deg,#fff 0%,#fdfefe 58%,#fafbfd 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,1),
                 inset 0 -1px 0 rgba(76,89,106,.028),
                 0 1px 2px rgba(24,33,47,.045),
@@ -4712,9 +5083,8 @@
         .ar-manual-toolbar{display:flex;gap:6px;}
         .ar-stat{border-radius:11px;}
         .ar-header-action{width:auto;min-width:0;height:28px;padding:0 9px;font-size:10.5px;font-weight:650;line-height:1;}
-        .ar-work-mode-help{width:auto;min-width:0;height:22px;padding:0 7px;font-size:10px;font-weight:700;line-height:1;}
+        .ar-help-button{font-size:0;line-height:0;}
         .ar-status{gap:0;}
-        .ar-work-mode-title__state{gap:0;}
         .ar-btn-open{gap:0;}
         .ar-remove-btn{width:auto;min-width:0;padding:0 10px;font-size:10.5px;font-weight:650;line-height:1;}
         .ar-stats{gap:3px;padding:4px;border-color:#d3dbe5;background:linear-gradient(180deg,#eef2f6 0%,#f3f6f9 100%);box-shadow:inset 0 2px 5px rgba(35,47,63,.055),inset 0 1px 0 rgba(255,255,255,.54);}
@@ -4722,11 +5092,6 @@
         .ar-stat.is-active-success{background:linear-gradient(180deg,#f4fbf8 0%,var(--hha-success-soft) 100%);border-color:#d0e9df;box-shadow:inset 0 1px 0 rgba(255,255,255,.76);}
         .ar-stat.is-active-manual{background:linear-gradient(180deg,#f8f8fd 0%,#f0f0fa 100%);border-color:#dcdced;box-shadow:inset 0 1px 0 rgba(255,255,255,.8);}
         .ar-stat.is-active-manual .ar-stat-num{color:var(--hha-control-accent);}
-        .ar-work-mode-title__state{background:#f0f0fa;color:#5b5898;border-color:#d8d8eb;}
-        .ar-work-mode-card[data-mode="safe"] .ar-work-mode-title__state{background:var(--hha-surface-subtle);color:var(--hha-text-secondary);border-color:var(--hha-border);}
-        .ar-work-mode-card[data-mode="fast"] .ar-work-mode-title__state{background:#ececf9;color:#5653a0;border-color:#d2d1eb;}
-        .ar-work-mode-card[data-mode="turbo"] .ar-work-mode-title__state{background:var(--hha-turbo-soft);color:var(--hha-turbo-deep);border-color:#d2cef4;box-shadow:0 1px 2px rgba(20,30,45,.04);}
-        .ar-badge--info{background:#efeff9;color:#5b5898;border-color:#d8d8eb;}
         .ar-execution-shell{position:relative;z-index:20;flex:0 0 auto;padding:7px 11px 11px;border-radius:11px;border-top:1px solid rgba(215,222,231,.78);background:linear-gradient(180deg,rgba(248,250,252,.70) 0%,rgba(248,250,252,.97) 18%,var(--hha-bg) 100%);box-shadow:0 -9px 20px rgba(24,33,47,.025);}
         .ar-execution-shell::before{content:"";position:absolute;left:11px;right:11px;top:-8px;height:14px;pointer-events:none;background:linear-gradient(180deg,rgba(248,250,252,0),rgba(248,250,252,.92));}
         #ar-mode-card.ar-execution-core{position:relative;z-index:1;padding:12px 13px 11px;gap:8px;overflow:visible;border-radius:11px;border-color:#cfd8e4;background:linear-gradient(180deg,#ffffff 0%,#fdfefe 46%,#f8fafc 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,1),
@@ -4743,8 +5108,8 @@
                 inset 0 -1px 0 rgba(98,91,215,.07),
                 0 2px 4px rgba(24,33,47,.055),
                 0 11px 28px rgba(84,77,171,.09);}
-        .ar-execution-core .ar-work-mode-popover{top:auto;bottom:calc(100% + 8px);transform:translateY(3px);}
-        .ar-execution-core .ar-work-mode-help-wrap.is-open .ar-work-mode-popover{transform:translateY(0);}
+        .ar-execution-core .ar-help-popover{top:auto;bottom:calc(100% + 8px);transform:translateY(3px);}
+        .ar-execution-core .ar-help-wrap.is-open .ar-help-popover{transform:translateY(0);}
         .ar-execution-limit{padding-top:8px;border-top:1px solid #e9edf2;}
         .ar-execution-limit .ar-row-label{font-size:11.5px;font-weight:590;color:#647083;}
         .ar-execution-limit .ar-input-num{width:68px;height:30px;border-radius:9px;}
@@ -4774,20 +5139,18 @@
         .ar-work-mode-slider.is-turbo .ar-work-mode-thumb__body{border-color:rgba(98,91,215,.30);background:#fbfaff;box-shadow:none;}
         .ar-work-mode-thumb__shadow{border-radius:9px;box-shadow:0 2px 5px rgba(20,30,45,.09),0 1px 2px rgba(20,30,45,.05);}
         .ar-work-mode-slider:hover .ar-work-mode-thumb__shadow{box-shadow:0 3px 6px rgba(20,30,45,.10),0 1px 2px rgba(20,30,45,.05);}
-        /* Pre-HIG repair pass: docking, icon sizing and narrow-control containment. */
+        /* Canonical icon sizing and narrow-control containment. */
         #ar-main-panel{border-radius:0;}
         #ar-main-panel > .ar-view > .ar-header{border-radius:0;}
-        #ar-toggle-btn{width:32px;height:112px;padding:0;border:1px solid rgba(255,255,255,.22);border-right:0;border-radius:10px 0 0 10px;background:var(--hha-control-accent);box-shadow:-2px 2px 7px rgba(20,30,45,.10);overflow:hidden;}
-        #ar-toggle-btn:hover{background:var(--hha-control-accent-hover);box-shadow:-2px 3px 9px rgba(20,30,45,.12);}
-        #ar-toggle-btn .ar-tab-text{display:block;writing-mode:horizontal-tb;transform:rotate(-90deg);white-space:nowrap;font-size:11px;line-height:1;font-weight:750;letter-spacing:.035em;}
         .ar-icon-only{display:inline-flex;align-items:center;justify-content:center;padding:0;white-space:nowrap;}
         .ar-icon-svg{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;line-height:0;flex:none;pointer-events:none;}
         .ar-icon-svg svg{display:block;width:100%;height:100%;}
+        .ar-icon-svg--trash{transform:translateY(-.25px);}
         .ar-header-action.ar-icon-only{width:28px;min-width:28px;height:28px;padding:0;font-size:0;}
-        .ar-work-mode-help.ar-icon-only{width:22px!important;min-width:22px!important;height:22px;padding:0!important;font-size:0;}
-        .ar-work-mode-help.ar-icon-only .ar-icon-svg{width:14px;height:14px;}
-        .ar-remove-btn.ar-icon-only{width:28px;min-width:28px;height:28px;min-height:28px;padding:0;font-size:0;}
-        .ar-remove-btn.ar-icon-only .ar-icon-svg{width:13px;height:13px;}
+        .ar-help-button.ar-icon-only{width:22px;min-width:22px;height:22px;padding:0;font-size:0;}
+        .ar-help-button.ar-icon-only .ar-icon-svg{width:14px;height:14px;}
+        .ar-remove-btn.ar-icon-only{width:34px;min-width:34px;height:34px;min-height:34px;padding:0;font-size:0;}
+        .ar-remove-btn.ar-icon-only .ar-icon-svg{width:14px;height:14px;}
         .ar-brand{flex:1 1 auto;min-width:0;overflow:hidden;}
         .ar-title{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;}
         .ar-header-right{flex:0 0 auto;}
@@ -4804,7 +5167,6 @@
         .ar-work-mode-header{align-items:center;gap:8px;}
         .ar-work-mode-title{flex:1 1 auto;min-width:0;align-items:center;gap:7px;overflow:hidden;}
         .ar-work-mode-title__label{min-width:0;overflow:hidden;text-overflow:ellipsis;}
-        .ar-work-mode-title__state{flex:0 0 auto;max-width:112px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
         .ar-execution-runtime{min-width:0;}
         .ar-execution-meta .ar-execution-limit{flex:0 1 auto;}
         .ar-execution-actions .ar-btn > span, .ar-manual-toolbar .ar-btn{min-width:0;overflow:hidden;text-overflow:ellipsis;}
@@ -4816,17 +5178,13 @@
         .ar-diag-filter-btn > span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
         .ar-diag-filter-count{flex:0 0 auto;}
         .ar-diag-search-wrap{min-width:118px;}
-        .ar-diag-toolbar{align-items:center;flex-wrap:wrap;gap:6px 8px;}
-        .ar-diag-controls{flex:1 1 220px;justify-content:space-between;gap:6px;overflow:hidden;}
-        .ar-diag-check-zone{flex:1 1 auto;overflow:hidden;}
+        .ar-diag-toolbar{align-items:center;gap:6px 3px;}
+        .ar-diag-check-zone{overflow:hidden;}
         .ar-diag-check-btn{flex:0 1 auto;max-width:150px;overflow:hidden;text-overflow:ellipsis;}
         .ar-diag-check-status{min-width:0;overflow:hidden;}
-        .ar-diag-autoscroll{flex:0 0 auto;white-space:nowrap;}
-        .ar-diag-toolbar-right{gap:6px;max-width:100%;}
-        .ar-diag-save-btn{max-width:112px;overflow:hidden;text-overflow:ellipsis;}
-        .ar-diag-more-btn{overflow:hidden;}
-        .ar-diag-more-btn > span{display:block;max-width:100%;overflow:hidden;line-height:1;}
-        .ar-diag-controls,.ar-diag-check-zone,.ar-diag-toolbar-right{flex-wrap:wrap;overflow:visible;}
+        .ar-diag-more-btn{overflow:visible;}
+        .ar-diag-more-btn > span{display:block;max-width:100%;line-height:1;white-space:nowrap;}
+        .ar-diag-check-zone{flex-wrap:wrap;overflow:visible;}
         .ar-diag-check-btn,.ar-diag-save-btn{flex:0 0 auto;max-width:none;overflow:visible;text-overflow:clip;}
         html.hha-compact #ar-main-panel .ar-header{padding-inline:10px;}
         html.hha-compact #ar-main-panel .ar-scroll--content{padding-inline:10px;}
@@ -4837,23 +5195,40 @@
         html.hha-compact #ar-main-panel .ar-execution-shell{left:10px;right:10px;}
         html.hha-compact #ar-main-panel .ar-diag-filter-row{gap:6px;}
         html.hha-compact #ar-main-panel .ar-diag-toolbar{column-gap:6px;}
+        @container (max-width:350px){
+          .ar-log-row{grid-template-columns:max-content minmax(84px,1fr) max-content;}
+          .ar-log-time{grid-column:1 / -1;}
+          .ar-log-level{grid-column:1;grid-row:2;}
+          .ar-log-message{grid-column:2;grid-row:2;}
+          .ar-log-repeat{grid-column:3;grid-row:2;}
+          .ar-log-group-children{margin-left:8px;}
+        }
+        @container (max-width:315px){
+          .ar-diag-filter-row,.ar-diag-toolbar{grid-template-columns:minmax(0,1fr);}
+          .ar-diag-autoscroll{justify-self:start;}
+        }
+        @container (max-width:229px){
+          .ar-diag-footer-actions{grid-template-columns:minmax(0,1fr);}
+        }
         @media (max-height:720px){
           .ar-scroll--content{padding-top:8px;gap:7px;}
           .ar-execution-shell{padding-top:5px;padding-bottom:8px;}
           #ar-mode-card.ar-execution-core{padding:10px 12px 9px;gap:7px;}
-          .ar-work-mode-labels{display:none;}
+          .ar-work-mode-options{gap:3px;}
+          .ar-work-mode-option{height:22px;font-size:10px;}
           .ar-execution-meta{padding-top:6px;}
           .ar-execution-limit{padding-top:0;}
           .ar-execution-actions{gap:6px;}
           .ar-execution-utils .ar-util-btn{height:28px;min-height:28px;}
         }
         @media (prefers-reduced-motion: reduce){
-          .ar-work-mode-thumb, .ar-work-mode-thumb__body, .ar-work-mode-thumb__shadow, .ar-work-mode-turbo-surface, .ar-work-mode-grid-mask, .ar-work-mode-title__state, .ar-work-mode-snap-marker{transition-duration:1ms!important;}
+          .ar-work-mode-thumb, .ar-work-mode-thumb__body, .ar-work-mode-thumb__shadow, .ar-work-mode-turbo-surface, .ar-work-mode-grid-mask, .ar-work-mode-option, .ar-work-mode-snap-marker{transition-duration:1ms!important;}
           .ar-work-mode-thumb__body{transform:none!important;}
           .ar-work-mode-grid-strip{animation:none!important;}
           .ar-work-mode-grid-cell{transform:none!important;opacity:var(--cell-alpha, .15)!important;}
           #ar-main-panel *, #ar-toggle-btn, #ar-toggle-btn *{animation:none!important;transition:none!important;}
           .ar-btn, .ar-header-action{transform:none!important;}
+          #ar-toggle-btn.is-running{background:linear-gradient(155deg,#7a75bb 0%,#6661aa 52%,#56518e 100%);filter:brightness(1.045) saturate(1.035);box-shadow:-3px 4px 10px rgba(76,70,151,.22),-1px 2px 4px rgba(20,30,45,.09);}
         }
         `;
         (document.head || document.documentElement).appendChild(style);
@@ -4864,7 +5239,6 @@
         const curPreset = PRESETS[config.preset] ? config.preset : DEFAULT_PRESET;
         const curIndex = modeKeyToIndex(curPreset);
         const curLabel = presetLabel(curPreset);
-        const curModeDisplay = curLabel;
         const sentCount = State.getSentCount();
         const effectiveLimit = Math.max(config.limit, sentCount);
 
@@ -4880,7 +5254,7 @@
                             <span class="ar-lang-sep" aria-hidden="true">|</span>
                             <button type="button" class="ar-lang-btn${lang === 'en' ? ' is-active' : ''}" data-lang="en" aria-pressed="${lang === 'en'}">EN</button>
                         </div>
-                        <button id="ar-minimize-btn" class="ar-header-action ar-icon-only" title="${I18n.t('panel.minimizeTitle')}" aria-label="${I18n.t('panel.minimizeTitle')}"><span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.75 8.25 10 12.5l4.25-4.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
+                        <button id="ar-minimize-btn" class="ar-header-action ar-icon-only" title="${I18n.t('panel.minimizeTitle')}" aria-label="${I18n.t('panel.minimizeTitle')}">${uiIcon('chevronDown')}</button>
                     </div>
                 </div>
 
@@ -4894,10 +5268,22 @@
                             <textarea id="ar-cover-text" class="ar-textarea" rows="3" maxlength="5000" aria-labelledby="ar-cover-card-title" placeholder="${I18n.t('cover.placeholder')}"></textarea>
                             <span id="ar-cover-counter" class="ar-cover-counter">0 / 5000</span>
                         </div>
-                        <label class="ar-switch-row ar-switch-row-sub" id="ar-apply-reject-wrap" for="ar-apply-reject-check" title="${I18n.t('cover.rejectWarningTitle')}">
-                            <span class="ar-row-label" id="ar-apply-reject-label" style="font-size:12px;">${I18n.t('cover.rejectWarningLabel')}</span>
-                            <span class="ar-switch"><input type="checkbox" id="ar-apply-reject-check"><i></i></span>
-                        </label>
+                        <div class="ar-switch-row ar-switch-row-sub" id="ar-apply-reject-wrap">
+                            <span class="ar-setting-label-group">
+                                <label class="ar-row-label" id="ar-apply-reject-label" for="ar-apply-reject-check">${I18n.t('cover.rejectWarningLabel')}</label>
+                                <span class="ar-help-wrap ar-warning-help-wrap" id="ar-warning-help-wrap">
+                                    <button class="ar-help-button ar-icon-only" id="ar-warning-help-btn" type="button" aria-label="${I18n.t('cover.rejectWarningHelpAria')}" aria-describedby="ar-warning-help-popover" aria-controls="ar-warning-help-popover" aria-expanded="false">${uiIcon('help')}</button>
+                                    <span class="ar-help-popover" id="ar-warning-help-popover" role="tooltip" aria-hidden="true">
+                                        <strong class="ar-help-popover-title" id="ar-warning-help-title">${I18n.t('cover.rejectWarningHelpTitle')}</strong>
+                                        <span class="ar-help-popover-copy" id="ar-warning-help-text">${I18n.t('cover.rejectWarningHelpText')}</span>
+                                    </span>
+                                </span>
+                            </span>
+                            <label class="ar-switch" for="ar-apply-reject-check"><input type="checkbox" id="ar-apply-reject-check"><i></i></label>
+                        </div>
+                        <div class="ar-autosave-feedback" id="ar-autosave-feedback" role="status" aria-live="polite">
+                            <span id="ar-autosave-text">${I18n.t('panel.autosaveIdle')}</span>
+                        </div>
                     </section>
 
                     <section class="ar-card ar-card--stats" aria-labelledby="ar-stats-card-title">
@@ -4942,18 +5328,19 @@
                         <div class="ar-work-mode-header">
                             <div class="ar-work-mode-title" id="ar-work-mode-heading">
                                 <span class="ar-work-mode-title__label" id="ar-work-mode-label">${I18n.t('panel.modeTitle')}</span>
-                                <span class="ar-work-mode-title__state" id="ar-work-mode-state" aria-live="polite">${curModeDisplay}</span>
                             </div>
-                            <div class="ar-work-mode-help-wrap" id="ar-work-mode-help-wrap">
+                            <div class="ar-help-wrap ar-work-mode-help-wrap" id="ar-work-mode-help-wrap">
                                 <button
-                                    class="ar-work-mode-help ar-icon-only"
+                                    class="ar-help-button ar-icon-only"
                                     id="ar-work-mode-help-btn"
                                     type="button"
                                     aria-label="${I18n.t('panel.modeHelpAria')}"
+                                    aria-describedby="ar-work-mode-popover"
                                     aria-controls="ar-work-mode-popover"
                                     aria-expanded="false"
-                                ><span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><path d="M8.6 7.75a1.94 1.94 0 1 1 2.49 2.87c-.7.28-1.09.8-1.09 1.43" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="10" cy="14.35" r=".9" fill="currentColor"/></svg></span></button>
-                                <div class="ar-work-mode-popover" id="ar-work-mode-popover" role="tooltip" aria-hidden="true">
+                                >${uiIcon('help')}</button>
+                                <div class="ar-help-popover ar-work-mode-popover" id="ar-work-mode-popover" role="tooltip" aria-hidden="true">
+                                    <strong class="ar-help-popover-title" id="ar-mode-help-title">${I18n.t('panel.modeHelpTitle')}</strong>
                                     <div class="ar-mode-help-item">
                                         <strong class="ar-mode-help-name" id="ar-mode-help-safe-title">${I18n.t('panel.modeHelpSafeTitle')}</strong>
                                         <span class="ar-mode-help-copy" id="ar-mode-help-safe-text">${I18n.t('panel.modeHelpSafeText')}</span>
@@ -4970,13 +5357,9 @@
                                         <strong class="ar-mode-help-name" id="ar-mode-help-turbo-title">${I18n.t('panel.modeHelpTurboTitle')}</strong>
                                         <span class="ar-mode-help-copy" id="ar-mode-help-turbo-text">${I18n.t('panel.modeHelpTurboText')}</span>
                                     </div>
+                                    <span class="ar-mode-help-note" id="ar-mode-help-note">${I18n.t('panel.modeHelpNote')}</span>
                                 </div>
                             </div>
-                        </div>
-
-                        <div class="ar-work-mode-labels" aria-hidden="true">
-                            <span id="ar-work-mode-lbl-safe">${I18n.t('panel.modeScaleSlower')}</span>
-                            <span id="ar-work-mode-lbl-turbo">${I18n.t('panel.modeScaleFaster')}</span>
                         </div>
 
                         <div
@@ -5005,6 +5388,13 @@
                                 <div class="ar-work-mode-thumb__shadow" id="ar-work-mode-thumb-shadow" aria-hidden="true"></div>
                                 <div class="ar-work-mode-thumb__body" id="ar-work-mode-thumb-body" aria-hidden="true"></div>
                             </div>
+                        </div>
+
+                        <div class="ar-work-mode-options" aria-hidden="true">
+                            <span class="ar-work-mode-option${curPreset === 'safe' ? ' is-active' : ''}" id="ar-work-mode-option-safe" data-mode="safe">${I18n.t('presets.safe.label')}</span>
+                            <span class="ar-work-mode-option${curPreset === 'balanced' ? ' is-active' : ''}" id="ar-work-mode-option-balanced" data-mode="balanced">${I18n.t('presets.balanced.label')}</span>
+                            <span class="ar-work-mode-option${curPreset === 'fast' ? ' is-active' : ''}" id="ar-work-mode-option-fast" data-mode="fast">${I18n.t('presets.fast.label')}</span>
+                            <span class="ar-work-mode-option${curPreset === 'turbo' ? ' is-active' : ''}" id="ar-work-mode-option-turbo" data-mode="turbo">${I18n.t('presets.turbo.label')}</span>
                         </div>
 
                         <div class="ar-execution-meta">
@@ -5044,19 +5434,18 @@
                 <div class="ar-header ar-diag-header">
                     <div class="ar-diag-nav">
                         <button id="ar-diag-back-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-btn-back" type="button" title="${I18n.t('diag.backTitle')}">
-                            <span class="ar-diag-back-arrow" aria-hidden="true">←</span>
+                            ${uiIcon('arrowLeft')}
                             <span id="ar-diag-back-text">${I18n.t('diag.backBtn')}</span>
                         </button>
                         <span class="ar-diag-view-title" id="ar-diag-view-title">${I18n.t('diag.title')}</span>
-                        <span id="ar-diag-health-summary" class="ar-diag-health-summary" aria-live="polite">0</span>
                     </div>
                     <div class="ar-header-right ar-diag-header-actions">
-                        <button id="ar-minimize-diag-btn" class="ar-header-action ar-icon-only" title="${I18n.t('panel.minimizeTitle')}" aria-label="${I18n.t('panel.minimizeTitle')}"><span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.75 8.25 10 12.5l4.25-4.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
+                        <button id="ar-minimize-diag-btn" class="ar-header-action ar-icon-only" title="${I18n.t('panel.minimizeTitle')}" aria-label="${I18n.t('panel.minimizeTitle')}">${uiIcon('chevronDown')}</button>
                     </div>
                 </div>
                 <div class="ar-diag-body">
                     <div class="ar-diag-filter-row">
-                        <div class="ar-diag-filter-group" role="group" aria-label="Log filters">
+                        <div id="ar-diag-filter-group" class="ar-diag-filter-group" role="group" aria-label="${I18n.t('diag.filterLabel')}">
                             <button id="ar-diag-filter-all" class="ar-diag-filter-btn is-active" type="button" aria-pressed="true">
                                 <span id="ar-diag-filter-all-text">${I18n.t('diag.filterAll')}</span>
                                 <span id="ar-diag-filter-all-count" class="ar-diag-filter-count">0</span>
@@ -5067,41 +5456,149 @@
                             </button>
                         </div>
                         <div class="ar-diag-search-wrap">
-                            <span class="ar-diag-search-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8.75" cy="8.75" r="4.75" stroke="currentColor" stroke-width="1.7"/><path d="m12.25 12.25 3.75 3.75" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                            <span class="ar-diag-search-icon" aria-hidden="true">${uiIcon('search')}</span>
                             <input id="ar-diag-search" class="ar-diag-search" type="search" autocomplete="off" spellcheck="false" placeholder="${I18n.t('diag.searchPlaceholder')}" aria-label="${I18n.t('diag.searchLabel')}">
-                            <button id="ar-diag-search-clear" class="ar-diag-search-clear" type="button" title="${I18n.t('diag.clearSearch')}" aria-label="${I18n.t('diag.clearSearch')}" hidden>×</button>
+                            <button id="ar-diag-search-clear" class="ar-diag-search-clear ar-icon-only" type="button" title="${I18n.t('diag.clearSearch')}" aria-label="${I18n.t('diag.clearSearch')}" hidden>${uiIcon('close')}</button>
                         </div>
                     </div>
                     <div class="ar-diag-toolbar">
-                        <div class="ar-diag-controls">
-                            <div class="ar-diag-check-zone">
-                                <button id="ar-diag-full-check" class="ar-btn ar-btn-soft ar-btn-sm ar-diag-check-btn" type="button" title="${I18n.t('diag.checkSelectors')}">${I18n.t('diag.checkSelectors')}</button>
-                                <span id="ar-diag-check-status" class="ar-diag-check-status" aria-live="polite">${I18n.t('diag.checkSummaryIdle')}</span>
-                            </div>
-                            <label class="ar-diag-autoscroll" for="ar-diag-auto-scroll">
+                        <div class="ar-diag-check-zone">
+                            <button id="ar-diag-full-check" class="ar-btn ar-btn-soft ar-btn-sm ar-diag-check-btn" type="button" title="${I18n.t('diag.checkSelectors')}">${I18n.t('diag.checkSelectors')}</button>
+                            <span id="ar-diag-check-status" class="ar-diag-check-status" aria-live="polite">${I18n.t('diag.checkSummaryIdle')}</span>
+                        </div>
+                        <label class="ar-diag-autoscroll ar-switch-row" for="ar-diag-auto-scroll">
+                            <span class="ar-switch">
                                 <input type="checkbox" id="ar-diag-auto-scroll" checked>
                                 <i aria-hidden="true"></i>
-                                <span id="ar-diag-auto-scroll-text">${I18n.t('diag.autoScroll')}</span>
-                            </label>
-                        </div>
-                        <div class="ar-diag-toolbar-right">
-                            <button id="ar-diag-full-save" class="ar-btn ar-btn-soft ar-btn-sm ar-diag-save-btn" type="button" title="${I18n.t('diag.downloadLogTitle')}">${I18n.t('diag.downloadLog')}</button>
-                            <div class="ar-dropdown ar-diag-full-dropdown" id="ar-diag-full-dropdown">
-                                <button id="ar-diag-full-more-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-diag-more-btn" type="button" title="${I18n.t('diag.moreTitle')}" aria-label="${I18n.t('diag.moreTitle')}" aria-haspopup="menu" aria-expanded="false" aria-controls="ar-diag-full-menu">
-                                    <span id="ar-diag-more-text">${I18n.t('diag.moreBtn')}</span>
-                                </button>
-                                <div class="ar-dropdown-menu" id="ar-diag-full-menu" role="menu">
-                                    <button id="ar-diag-full-clear-box" class="ar-dropdown-item" type="button" role="menuitem">${I18n.t('diag.clearView')}</button>
-                                    <button id="ar-diag-full-clear-all" class="ar-dropdown-item ar-dropdown-item--danger" type="button" role="menuitem">${I18n.t('diag.clearAll')}</button>
-                                </div>
+                            </span>
+                            <span id="ar-diag-auto-scroll-text">${I18n.t('diag.autoScroll')}</span>
+                        </label>
+                    </div>
+                    <div id="ar-diag-full-box" class="ar-diag-full-box" role="log" aria-live="off" tabindex="0"></div>
+                    <div class="ar-diag-footer-actions">
+                        <button id="ar-diag-full-save" class="ar-btn ar-btn-soft ar-btn-sm ar-diag-save-btn" type="button" title="${I18n.t('diag.downloadLogTitle')}">${I18n.t('diag.downloadLog')}</button>
+                        <div class="ar-dropdown ar-diag-full-dropdown" id="ar-diag-full-dropdown">
+                            <button id="ar-diag-full-more-btn" class="ar-btn ar-btn-soft ar-btn-sm ar-diag-more-btn" type="button" title="${I18n.t('diag.moreTitle')}" aria-label="${I18n.t('diag.moreTitle')}" aria-haspopup="menu" aria-expanded="false" aria-controls="ar-diag-full-menu">
+                                <span id="ar-diag-more-text">${I18n.t('diag.moreBtn')}</span>
+                            </button>
+                            <div class="ar-dropdown-menu" id="ar-diag-full-menu" role="menu">
+                                <button id="ar-diag-full-clear-box" class="ar-dropdown-item" type="button" role="menuitem">${I18n.t('diag.clearView')}</button>
+                                <button id="ar-diag-full-clear-all" class="ar-dropdown-item ar-dropdown-item--danger" type="button" role="menuitem">${I18n.t('diag.clearAll')}</button>
                             </div>
                         </div>
                     </div>
-                    <div id="ar-diag-full-box" class="ar-diag-full-box" role="log" aria-live="off" tabindex="0"></div>
                 </div>
             </div>
         `;
     }
+
+    const AutosaveFeedback = (() => {
+        let root = null;
+        let textNode = null;
+        let resetTimer = null;
+        let saved = false;
+
+        const refresh = () => {
+            if (!textNode) return;
+            textNode.textContent = I18n.t(saved ? 'panel.autosaveSaved' : 'panel.autosaveIdle');
+            root?.classList.toggle('is-saved', saved);
+        };
+
+        const showSaved = () => {
+            saved = true;
+            refresh();
+            if (resetTimer) clearTimeout(resetTimer);
+            resetTimer = setTimeout(() => {
+                resetTimer = null;
+                saved = false;
+                refresh();
+            }, 1800);
+        };
+
+        const mount = ({ el }) => {
+            root = el('ar-autosave-feedback');
+            textNode = el('ar-autosave-text');
+            saved = false;
+            refresh();
+        };
+
+        const destroy = () => {
+            if (resetTimer) clearTimeout(resetTimer);
+            resetTimer = null;
+            saved = false;
+            root = null;
+            textNode = null;
+        };
+
+        return { mount, showSaved, refresh, destroy };
+    })();
+
+    const HelpPopoverController = (() => {
+        function mount({ panel, uiSignal }) {
+            const entries = qa('.ar-help-wrap', panel).map(wrap => {
+                const button = wrap.querySelector('.ar-help-button');
+                const popover = wrap.querySelector('.ar-help-popover');
+                if (!button || !popover) return null;
+                const state = { wrap, button, popover, pinned: false, hover: false, focus: false, escapeClosed: false };
+                const render = () => {
+                    const open = !state.escapeClosed && (state.pinned || state.hover || state.focus);
+                    wrap.classList.toggle('is-pinned', state.pinned);
+                    wrap.classList.toggle('is-open', open);
+                    button.setAttribute('aria-expanded', open ? 'true' : 'false');
+                    popover.setAttribute('aria-hidden', open ? 'false' : 'true');
+                };
+                state.render = render;
+                wrap.addEventListener('mouseenter', () => {
+                    state.hover = true;
+                    state.escapeClosed = false;
+                    render();
+                }, { signal: uiSignal });
+                wrap.addEventListener('mouseleave', () => {
+                    state.hover = false;
+                    render();
+                }, { signal: uiSignal });
+                wrap.addEventListener('focusin', () => {
+                    state.focus = true;
+                    state.escapeClosed = false;
+                    render();
+                }, { signal: uiSignal });
+                wrap.addEventListener('focusout', () => {
+                    setTimeout(() => {
+                        state.focus = wrap.contains(document.activeElement);
+                        render();
+                    }, 0);
+                }, { signal: uiSignal });
+                button.addEventListener('click', event => {
+                    event.stopPropagation();
+                    state.escapeClosed = false;
+                    state.pinned = !state.pinned;
+                    render();
+                }, { signal: uiSignal });
+                return state;
+            }).filter(Boolean);
+
+            document.addEventListener('click', event => {
+                entries.forEach(state => {
+                    if (state.pinned && !state.wrap.contains(event.target)) {
+                        state.pinned = false;
+                        state.render();
+                    }
+                });
+            }, { signal: uiSignal });
+            document.addEventListener('keydown', event => {
+                if (event.key !== 'Escape') return;
+                entries.forEach(state => {
+                    if (state.pinned || state.hover || state.focus) {
+                        state.pinned = false;
+                        state.escapeClosed = true;
+                        state.render();
+                    }
+                });
+            }, { signal: uiSignal });
+        }
+
+        return { mount };
+    })();
 
     const WorkModeSlider = (() => {
         let resizeObserver = null;
@@ -5115,21 +5612,28 @@
             const thumb = el('ar-work-mode-thumb');
             const thumbShadow = el('ar-work-mode-thumb-shadow');
             const thumbBody = el('ar-work-mode-thumb-body');
-            const currentModeState = el('ar-work-mode-state');
             const gridStrip = el('ar-work-mode-grid-strip');
             const reducedMotionQuery = typeof window.matchMedia === 'function'
                 ? window.matchMedia('(prefers-reduced-motion: reduce)')
                 : { matches: false };
 
-            function canRunTurboEffects() {
-                if (uiSignal?.aborted || document.hidden || reducedMotionQuery.matches) return false;
-                if (modeKeyToIndex(config.preset) !== 3 || !slider) return false;
+            function isWorkModeVisible() {
+                if (uiSignal?.aborted || document.hidden || !slider) return false;
                 const panelEl = document.getElementById('ar-main-panel');
                 const mainView = document.getElementById('ar-view-main');
                 if (!panelEl || panelEl.style.display === 'none') return false;
                 if (mainView && mainView.style.display === 'none') return false;
+                if (panelEl.isConnected === false || slider.isConnected === false) return false;
                 if (typeof panelEl.contains === 'function' && !panelEl.contains(slider)) return false;
                 return true;
+            }
+
+            function isTurboGridVisible() {
+                return modeKeyToIndex(config.preset) === 3 && isWorkModeVisible();
+            }
+
+            function canRunTurboEffects() {
+                return isTurboGridVisible() && !reducedMotionQuery.matches;
             }
 
             // ─── Состояния и параметры физики ───
@@ -5183,9 +5687,14 @@
                 rows: 5,
                 periodWidth: 1
             };
+            let gridCleanupTimer = 0;
+            let gridCleanupGeneration = 0;
+            let gridRefreshRafId = 0;
+            let resizeRafId = 0;
 
             const SHOCK_CYCLE_SECONDS = 5;
             const GRID_DRIFT_SECONDS = 60;
+            const TURBO_GRID_EXIT_CLEANUP_MS = 220;
 
             if (modeCard) {
                 modeCard.style.setProperty('--ar-work-shock-cycle-duration', `${SHOCK_CYCLE_SECONDS}s`);
@@ -5209,10 +5718,6 @@
                 const sliderWidth = Math.max(1, slider.clientWidth);
                 const travel = Math.max(0, sliderWidth - (pad * 2) - thumbWidth);
                 cachedMetrics = { pad, thumbWidth, travel, sliderWidth };
-                return cachedMetrics;
-            }
-
-            function getMetrics() {
                 return cachedMetrics;
             }
 
@@ -5525,8 +6030,47 @@
                 }
             }
 
+            function cancelGridCleanup() {
+                gridCleanupGeneration++;
+                if (!gridCleanupTimer) return;
+                clearTimeout(gridCleanupTimer);
+                gridCleanupTimer = 0;
+            }
+
+            function clearGridDom() {
+                if (!gridStrip) return;
+                if (gridRefreshRafId) {
+                    cancelAnimationFrame(gridRefreshRafId);
+                    gridRefreshRafId = 0;
+                }
+                gridStrip.replaceChildren();
+                gridStrip.style.width = '';
+                slider?.style.setProperty('--ar-work-grid-shift', '');
+                slider?.classList.remove('has-turbo-grid');
+                gridCells = [];
+                gridMetrics = { width: 1, columns: 1, rows: 5, periodWidth: 1 };
+                gridDriftAnimation = null;
+            }
+
+            function clearGridNow() {
+                cancelGridCleanup();
+                clearGridDom();
+            }
+
+            function scheduleGridCleanup() {
+                cancelGridCleanup();
+                if (!gridCells.length) return;
+                const generation = gridCleanupGeneration;
+                gridCleanupTimer = setTimeout(() => {
+                    if (generation !== gridCleanupGeneration) return;
+                    gridCleanupTimer = 0;
+                    if (isTurboGridVisible()) return;
+                    clearGridDom();
+                }, TURBO_GRID_EXIT_CLEANUP_MS);
+            }
+
             function rebuildGrid() {
-                if (!slider || !gridStrip) return;
+                if (!slider || !gridStrip || !isTurboGridVisible()) return;
                 const rows = 5;
                 const cellSize = pxVar('--ar-work-grid-cell', 5);
                 const gap = pxVar('--ar-work-grid-col-gap', 2);
@@ -5580,6 +6124,7 @@
                 gridStrip.replaceChildren(fragment);
                 gridStrip.style.width = `${(periodWidth * 2) - gap}px`;
                 slider.style.setProperty('--ar-work-grid-shift', `${-periodWidth}px`);
+                slider.classList.add('has-turbo-grid');
 
                 gridCells = metadata;
                 gridMetrics = {
@@ -5591,6 +6136,11 @@
 
                 refreshGridDriftAnimation();
                 resetShockCells();
+            }
+
+            function ensureGrid() {
+                cancelGridCleanup();
+                if (!gridCells.length && isTurboGridVisible()) rebuildGrid();
             }
 
             function refreshGridDriftAnimation() {
@@ -5757,6 +6307,16 @@
             }
 
             function enterTurbo() {
+                if (!isTurboGridVisible()) {
+                    cancelTurboPulse({ resetToRest: true });
+                    stopDepthAnimations();
+                    resetShockCells();
+                    clearGridNow();
+                    return;
+                }
+
+                ensureGrid();
+
                 if (!canRunTurboEffects()) {
                     cancelTurboPulse({ resetToRest: true });
                     stopDepthAnimations();
@@ -5767,7 +6327,9 @@
                 cancelTurboPulse();
 
                 // Pick up the freshly-created CSS drift animation on the next frame so shockwave shares its timeline.
-                requestAnimationFrame(() => {
+                if (gridRefreshRafId) cancelAnimationFrame(gridRefreshRafId);
+                gridRefreshRafId = requestAnimationFrame(() => {
+                    gridRefreshRafId = 0;
                     if (canRunTurboEffects()) refreshGridDriftAnimation();
                 });
 
@@ -5780,6 +6342,15 @@
                 cancelTurboPulse({ resetToRest: true });
                 lastShockStartedAt = 0;
                 gridDriftAnimation = null;
+                if (gridRefreshRafId) {
+                    cancelAnimationFrame(gridRefreshRafId);
+                    gridRefreshRafId = 0;
+                }
+                if (isWorkModeVisible()) {
+                    scheduleGridCleanup();
+                } else {
+                    clearGridNow();
+                }
             }
 
             // TurboEffects is an isolated visual sub-controller. WorkModeSlider owns
@@ -5789,11 +6360,20 @@
                 finishTravelAndSettle,
                 cancel: cancelTurboPulse,
                 stopDepth: stopDepthAnimations,
+                clearGrid: clearGridNow,
+                ensureGrid,
                 rebuildGrid,
                 refreshGrid: refreshGridDriftAnimation,
                 schedule: scheduleTurboPulse,
                 enter: enterTurbo,
-                exit: exitTurbo
+                exit: exitTurbo,
+                destroy: () => {
+                    if (resizeRafId) {
+                        cancelAnimationFrame(resizeRafId);
+                        resizeRafId = 0;
+                    }
+                    clearGridNow();
+                }
             });
             activeTurboEffects = TurboEffects;
 
@@ -5816,9 +6396,9 @@
                 }
                 if (modeCard) {
                     modeCard.dataset.mode = key;
-                }
-                if (currentModeState) {
-                    currentModeState.textContent = label;
+                    qa('.ar-work-mode-option', modeCard).forEach(option => {
+                        option.classList.toggle('is-active', option.dataset.mode === key);
+                    });
                 }
                 syncThumb(animateThumb);
 
@@ -5853,6 +6433,7 @@
                             setStatus('running');
                         }
 
+                        AutosaveFeedback.showSaved();
                         log(I18n.t('logs.modeSet', { mode: (nextKey === 'turbo' ? '↯ ' : '') + presetLabel(nextKey) }));
                     } else {
                         updateModeUI(previousIndex, { animateThumb: true });
@@ -5973,40 +6554,42 @@
                 }, { signal: uiSignal });
 
                 resizeObserver = new ResizeObserver(() => {
-                    if (modeKeyToIndex(config.preset) === 3 && !canRunTurboEffects()) {
-                        TurboEffects.cancel({ resetToRest: true });
-                        TurboEffects.stopDepth();
-                        return;
-                    }
-                    updateCachedMetrics();
+                    if (resizeRafId) return;
+                    resizeRafId = requestAnimationFrame(() => {
+                        resizeRafId = 0;
+                        updateCachedMetrics();
+                        syncThumb(false);
 
-                    TurboEffects.cancel({ resetToRest: true });
-                    TurboEffects.stopDepth();
-                    if (thumbBody) {
-                        thumbBody.style.transform = 'translateZ(0)';
-                    }
-                    if (thumbShadow) {
-                        const st = getShadowStyle(0);
-                        thumbShadow.style.boxShadow = st.boxShadow;
-                        thumbShadow.style.transform = st.transform;
-                    }
+                        if (isTurboGridVisible()) {
+                            TurboEffects.cancel({ resetToRest: true });
+                            TurboEffects.stopDepth();
+                            if (thumbBody) {
+                                thumbBody.style.transform = 'translateZ(0)';
+                            }
+                            if (thumbShadow) {
+                                const st = getShadowStyle(0);
+                                thumbShadow.style.boxShadow = st.boxShadow;
+                                thumbShadow.style.transform = st.transform;
+                            }
 
-                    TurboEffects.rebuildGrid();
-                    syncThumb(false);
-                    TurboEffects.refreshGrid();
+                            TurboEffects.rebuildGrid();
+                            TurboEffects.refreshGrid();
 
-                    if (canRunTurboEffects()) {
-                        TurboEffects.schedule(TURBO_SETTLE_PAUSE);
-                    }
+                            if (canRunTurboEffects()) {
+                                TurboEffects.schedule(TURBO_SETTLE_PAUSE);
+                            }
+                        }
 
-                    requestAnimationFrame(() => {
-                        slider?.classList.remove('is-dragging');
+                        requestAnimationFrame(() => {
+                            slider?.classList.remove('is-dragging');
+                        });
                     });
                 });
                 resizeObserver.observe(slider);
 
                 function handleReducedMotionChange() {
                     if (reducedMotionQuery.matches) {
+                        TurboEffects.ensureGrid();
                         TurboEffects.cancel({ resetToRest: true });
                         TurboEffects.stopDepth();
                         if (thumbBody) thumbBody.style.transform = 'translateZ(0)';
@@ -6031,9 +6614,14 @@
                 }
 
                 function onVisibilityChange(isOpen) {
-                    if (!isOpen || !canRunTurboEffects()) {
+                    if (!isOpen || !isTurboGridVisible()) {
+                        if (resizeRafId) {
+                            cancelAnimationFrame(resizeRafId);
+                            resizeRafId = 0;
+                        }
                         TurboEffects.cancel({ resetToRest: true });
                         TurboEffects.stopDepth();
+                        TurboEffects.clearGrid();
                     } else {
                         TurboEffects.enter();
                     }
@@ -6049,6 +6637,7 @@
                 function cleanupWorkModeAnimation() {
                     TurboEffects.cancel({ resetToRest: true });
                     TurboEffects.stopDepth();
+                    TurboEffects.destroy();
                     if (typeof reducedMotionQuery.removeEventListener === 'function') {
                         try { reducedMotionQuery.removeEventListener('change', handleReducedMotionChange); } catch (e) {}
                     } else if (typeof reducedMotionQuery.removeListener === 'function') {
@@ -6059,10 +6648,10 @@
                 uiSignal.addEventListener('abort', cleanupWorkModeAnimation, { once: true });
 
                 updateCachedMetrics();
-                TurboEffects.rebuildGrid();
                 updateModeUI(modeKeyToIndex(config.preset), { animateThumb: false });
+                TurboEffects.ensureGrid();
                 requestAnimationFrame(() => {
-                    if (config.preset === 'turbo' && !canRunTurboEffects()) return;
+                    if (config.preset === 'turbo' && !isTurboGridVisible()) return;
                     updateCachedMetrics();
                     syncThumb(false);
                     requestAnimationFrame(() => {
@@ -6081,6 +6670,7 @@
             if (activeTurboEffects) {
                 try { activeTurboEffects.cancel({ resetToRest: true }); } catch (e) { /* ignore */ }
                 try { activeTurboEffects.stopDepth(); } catch (e) { /* ignore */ }
+                try { activeTurboEffects.destroy(); } catch (e) { /* ignore */ }
                 activeTurboEffects = null;
             }
             if (resizeObserver) {
@@ -6102,7 +6692,11 @@
         function mount({ el }) {
             el('ar-clear-manual').onclick = () => {
                 if (confirm(I18n.t('confirm.clearManual'))) {
-                    State.clearManualList();
+                    if (!State.clearManualList()) {
+                        Metrics.bump('storage.manual.clear.failed');
+                        log('[CRITICAL_STORAGE_WRITE_FAILED] manual_queue: clear', true);
+                        return;
+                    }
                     renderManualList();
                     log(I18n.t('logs.manualCleared'));
                 }
@@ -6172,7 +6766,9 @@
 
                     const openBtn = document.createElement('button');
                     openBtn.className = 'ar-btn ar-btn-open';
-                    openBtn.textContent = I18n.t('panel.manualOpen');
+                    const openText = document.createElement('span');
+                    openText.textContent = I18n.t('panel.manualOpen');
+                    openBtn.appendChild(openText);
                     openBtn.disabled = !safeUrl;
                     openBtn.title = safeUrl ? I18n.t('panel.manualOpenTitle') : I18n.t('panel.manualUnsafeUrl');
                     openBtn.onclick = () => {
@@ -6181,12 +6777,16 @@
 
                     const removeBtn = document.createElement('button');
                     removeBtn.className = 'ar-btn ar-remove-btn ar-icon-only';
-                    removeBtn.innerHTML = `<span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7.25 4.75h5.5M8 4.75v-.5A1.25 1.25 0 0 1 9.25 3h1.5A1.25 1.25 0 0 1 12 4.25v.5m-6 1.5h8l-.52 8.06A1.5 1.5 0 0 1 11.98 16H8.02a1.5 1.5 0 0 1-1.5-1.69L6 6.25Z" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.85 8.75v4.1M11.15 8.75v4.1" stroke="currentColor" stroke-width="1.55" stroke-linecap="round"/></svg></span>`;
+                    removeBtn.innerHTML = uiIcon('trash', 'trash');
                     removeBtn.title = I18n.t('panel.manualRemoveTitle');
                     removeBtn.setAttribute('aria-label', I18n.t('panel.manualRemoveTitle'));
                     removeBtn.onclick = () => {
                         if (!confirm(I18n.t('confirm.removeManual'))) return;
-                        State.removeManualEntry(item.vid);
+                        if (!State.removeManualEntry(item.vid)) {
+                            Metrics.bump('storage.manual.remove.failed');
+                            log(`[CRITICAL_STORAGE_WRITE_FAILED] manual_queue: remove ${item.vid}`, true);
+                            return;
+                        }
                         renderManualList();
                     };
 
@@ -6275,10 +6875,22 @@
         return { mount, render, destroy };
     })();
 
+    function isDiagnosticsVisible() {
+        const panel = document.getElementById('ar-main-panel');
+        const mainView = document.getElementById('ar-view-main');
+        const diagnostics = document.getElementById('ar-view-diag');
+        if (!panel || !mainView || !diagnostics || document.hidden) return false;
+        if (panel.isConnected === false || mainView.isConnected === false || diagnostics.isConnected === false) return false;
+        if (panel.style.display === 'none' || mainView.style.display !== 'none' || diagnostics.style.display === 'none') return false;
+        return true;
+    }
+
     const DiagnosticsView = (() => {
         let renderImpl = () => {};
         let updateImpl = () => {};
         let cancelScheduledImpl = () => {};
+        let cancelSearchDebounceImpl = () => {};
+        let onVisibilityChangeImpl = () => {};
         let lastRenderedVersion = -1;
         let lastRenderedLang = '';
         let activeFilter = 'all';
@@ -6286,7 +6898,9 @@
         let viewOffset = 0;
         let autoScroll = true;
         let lastCheckSummary = { key: 'diag.checkSummaryIdle', params: {} };
+        let diagnosticsDirty = true;
         const expandedGroups = new Set();
+        const SEARCH_DEBOUNCE_MS = 140;
 
         const normalizeSearch = (value) => String(value || '').trim().toLocaleLowerCase();
 
@@ -6329,7 +6943,7 @@
             const time = document.createElement('span');
             time.className = 'ar-log-time';
             if (isGrouped && group.startT !== group.endT) {
-                time.textContent = `${I18n.formatTime(group.startT)} – ${I18n.formatTime(group.endT)}`;
+                time.textContent = `${I18n.formatTime(group.startT)}–${I18n.formatTime(group.endT)}`;
             } else {
                 time.textContent = I18n.formatTime(group.endT);
             }
@@ -6369,8 +6983,11 @@
 
         function mount({ el, uiSignal }) {
             cancelScheduledImpl();
+            cancelSearchDebounceImpl();
+            diagnosticsDirty = true;
             let scheduledRenderId = null;
             let scheduledRenderIsRaf = false;
+            let searchDebounceTimer = 0;
 
             const cancelScheduledRender = () => {
                 if (scheduledRenderId === null) return;
@@ -6386,8 +7003,7 @@
                 if (scheduledRenderId !== null) return;
                 const run = () => {
                     scheduledRenderId = null;
-                    const diag = el('ar-view-diag');
-                    if (diag && diag.style.display !== 'none') {
+                    if (diagnosticsDirty && isDiagnosticsVisible()) {
                         renderFullDiag({ preserveScroll: true });
                     }
                 };
@@ -6401,6 +7017,13 @@
             };
             cancelScheduledImpl = cancelScheduledRender;
 
+            const cancelSearchDebounce = () => {
+                if (!searchDebounceTimer) return;
+                clearTimeout(searchDebounceTimer);
+                searchDebounceTimer = 0;
+            };
+            cancelSearchDebounceImpl = cancelSearchDebounce;
+
             // ---------- Экран диагностики ----------
             const openFullDiag = () => {
                 const viewMain = el('ar-view-main');
@@ -6409,6 +7032,7 @@
                 viewMain.style.display = 'none';
                 viewDiag.style.display = 'flex';
                 WorkModeSlider.onVisibilityChange(false);
+                cancelSearchDebounce();
                 renderFullDiag();
                 el('ar-diag-back-btn')?.focus();
             };
@@ -6418,8 +7042,11 @@
                 const viewDiag = el('ar-view-diag');
                 if (!viewMain || !viewDiag) return;
                 cancelScheduledRender();
+                cancelSearchDebounce();
                 viewDiag.style.display = 'none';
                 viewMain.style.display = 'flex';
+                el('ar-diag-full-box')?.replaceChildren();
+                diagnosticsDirty = true;
                 const panelEl = el('ar-main-panel');
                 WorkModeSlider.onVisibilityChange(!!panelEl && panelEl.style.display !== 'none' && !document.hidden);
                 el('ar-health-btn')?.focus();
@@ -6427,13 +7054,20 @@
 
             function renderFullDiag({ preserveScroll = false } = {}) {
                 cancelScheduledRender();
+                if (!isDiagnosticsVisible()) {
+                    diagnosticsDirty = true;
+                    return;
+                }
                 const fullBox = el('ar-diag-full-box');
                 if (!fullBox) return;
 
                 const wasAtBottom = Math.abs((fullBox.scrollHeight - fullBox.scrollTop) - fullBox.clientHeight) <= 12;
                 const previousScrollTop = fullBox.scrollTop;
 
-                const all = DiagLog.getAll();
+                const all = DiagLog.getAll().map(item => ({
+                    ...item,
+                    msg: DiagnosticI18n.format(item)
+                }));
                 const visibleSource = all.slice(Math.min(viewOffset, all.length));
                 const filtered = visibleSource.filter(item => {
                     if (activeFilter === 'errors' && item.lvl !== 'ERR') return false;
@@ -6484,11 +7118,10 @@
                         const row = buildLogRow(group, isExpanded, toggleGroup);
                         fragment.appendChild(row);
 
-                        if (group.count > 1) {
+                        if (group.count > 1 && isExpanded) {
                             const childContainer = document.createElement('div');
-                            childContainer.className = isExpanded ? 'ar-log-group-children' : '';
+                            childContainer.className = 'ar-log-group-children';
                             childContainer.id = getLogGroupChildrenId(group);
-                            childContainer.hidden = !isExpanded;
                             group.items.forEach(child => {
                                 const childRow = document.createElement('div');
                                 childRow.className = 'ar-log-child';
@@ -6514,6 +7147,7 @@
                     fullBox.scrollTop = fullBox.scrollHeight;
                 }
 
+                diagnosticsDirty = false;
             }
 
             const backBtn = el('ar-diag-back-btn');
@@ -6539,10 +7173,16 @@
             searchInput?.addEventListener('input', () => {
                 searchQuery = normalizeSearch(searchInput.value);
                 syncSearchClear();
-                renderFullDiag({ preserveScroll: true });
+                diagnosticsDirty = true;
+                cancelSearchDebounce();
+                searchDebounceTimer = setTimeout(() => {
+                    searchDebounceTimer = 0;
+                    renderFullDiag({ preserveScroll: true });
+                }, SEARCH_DEBOUNCE_MS);
             }, { signal: uiSignal });
             searchClear?.addEventListener('click', () => {
                 if (!searchInput) return;
+                cancelSearchDebounce();
                 searchInput.value = '';
                 searchQuery = '';
                 syncSearchClear();
@@ -6681,7 +7321,6 @@
                 const errors = stats.errors;
                 const total = stats.total;
                 const errText = I18n.plural(errors, 'error');
-                const recText = I18n.plural(total, 'record');
 
                 const badge = el('ar-health-badge');
                 const healthBtn = el('ar-health-btn');
@@ -6701,12 +7340,6 @@
                     }
                 }
 
-                const healthSummary = el('ar-diag-health-summary');
-                if (healthSummary) {
-                    healthSummary.textContent = String(errors);
-                    healthSummary.classList.toggle('has-errors', errors > 0);
-                    healthSummary.title = I18n.t('diag.statSummary', { errText, recText });
-                }
                 const allCount = el('ar-diag-filter-all-count');
                 const errorCount = el('ar-diag-filter-errors-count');
                 if (allCount) allCount.textContent = total;
@@ -6717,11 +7350,23 @@
 
             const ownedUpdateBadge = (force) => updateDiagCount(force);
             const ownedRenderDiag = () => {
-                const diag = el('ar-view-diag');
-                if (diag && diag.style.display !== 'none') {
-                    scheduleRender();
+                diagnosticsDirty = true;
+                if (isDiagnosticsVisible()) scheduleRender();
+            };
+
+            const handleVisibilityChange = () => {
+                if (!isDiagnosticsVisible()) {
+                    cancelScheduledRender();
+                    cancelSearchDebounce();
+                    return;
+                }
+                if (diagnosticsDirty) {
+                    cancelSearchDebounce();
+                    renderFullDiag({ preserveScroll: true });
                 }
             };
+            onVisibilityChangeImpl = handleVisibilityChange;
+            document.addEventListener('visibilitychange', handleVisibilityChange, { signal: uiSignal });
 
             window._hhApplyAssistantUpdateDiagBadge = ownedUpdateBadge;
             window._hhApplyAssistantRenderDiagnostics = ownedRenderDiag;
@@ -6766,20 +7411,23 @@
             updateImpl = updateDiagCount;
         }
 
-        function render() { renderImpl(); }
-        function update() { updateImpl(); }
         function refresh() {
             updateImpl(true);
-            const diag = document.getElementById('ar-view-diag');
-            if (diag && diag.style.display !== 'none') renderImpl();
+            cancelSearchDebounceImpl();
+            diagnosticsDirty = true;
+            if (isDiagnosticsVisible()) renderImpl();
         }
         function destroy() {
             cancelScheduledImpl();
+            cancelSearchDebounceImpl();
             renderImpl = () => {};
             updateImpl = () => {};
             cancelScheduledImpl = () => {};
+            cancelSearchDebounceImpl = () => {};
+            onVisibilityChangeImpl = () => {};
             lastRenderedVersion = -1;
             lastRenderedLang = '';
+            diagnosticsDirty = true;
             expandedGroups.clear();
             try {
                 delete window._hhApplyAssistantRenderDiagnostics;
@@ -6789,7 +7437,12 @@
                 window._hhApplyAssistantUpdateDiagBadge = undefined;
             }
         }
-        return { mount, render, update, refresh, destroy };
+        return {
+            mount,
+            refresh,
+            onVisibilityChange: () => onVisibilityChangeImpl(),
+            destroy
+        };
     })();
 
     const LocalizationBinder = (() => {
@@ -6798,8 +7451,11 @@
 
         const textBindings = [
             ['ar-work-mode-label', 'panel.modeTitle'],
-            ['ar-work-mode-lbl-safe', 'panel.modeScaleSlower'],
-            ['ar-work-mode-lbl-turbo', 'panel.modeScaleFaster'],
+            ['ar-work-mode-option-safe', 'presets.safe.label'],
+            ['ar-work-mode-option-balanced', 'presets.balanced.label'],
+            ['ar-work-mode-option-fast', 'presets.fast.label'],
+            ['ar-work-mode-option-turbo', 'presets.turbo.label'],
+            ['ar-mode-help-title', 'panel.modeHelpTitle'],
             ['ar-mode-help-safe-title', 'panel.modeHelpSafeTitle'],
             ['ar-mode-help-safe-text', 'panel.modeHelpSafeText'],
             ['ar-mode-help-balanced-title', 'panel.modeHelpBalancedTitle'],
@@ -6808,9 +7464,12 @@
             ['ar-mode-help-fast-text', 'panel.modeHelpFastText'],
             ['ar-mode-help-turbo-title', 'panel.modeHelpTurboTitle'],
             ['ar-mode-help-turbo-text', 'panel.modeHelpTurboText'],
+            ['ar-mode-help-note', 'panel.modeHelpNote'],
             ['ar-limit-label', 'panel.limitShort'],
             ['ar-cover-card-title', 'cover.title'],
             ['ar-apply-reject-label', 'cover.rejectWarningLabel'],
+            ['ar-warning-help-title', 'cover.rejectWarningHelpTitle'],
+            ['ar-warning-help-text', 'cover.rejectWarningHelpText'],
             ['ar-start-btn-text', 'panel.startBtn'],
             ['ar-stop-btn-text', 'panel.stopBtn'],
             ['ar-reset-history-text', 'panel.resetHistory'],
@@ -6836,6 +7495,7 @@
         ];
 
         const titleBindings = [
+            ['ar-limit-label', 'panel.limitLabel'],
             ['ar-reset-history', 'panel.resetHistoryTitle'],
             ['ar-health-btn', 'panel.diagnosticsTitle'],
             ['ar-stat-progress', 'panel.statsProgressTitle'],
@@ -6843,8 +7503,7 @@
             ['ar-diag-back-btn', 'diag.backTitle'],
             ['ar-diag-full-save', 'diag.downloadLogTitle'],
             ['ar-diag-full-check', 'diag.checkSelectors'],
-            ['ar-diag-full-more-btn', 'diag.moreTitle'],
-            ['ar-apply-reject-wrap', 'cover.rejectWarningTitle']
+            ['ar-diag-full-more-btn', 'diag.moreTitle']
         ];
 
         function refresh() {
@@ -6863,6 +7522,8 @@
                 diagSearchClear.title = I18n.t('diag.clearSearch');
                 diagSearchClear.setAttribute('aria-label', I18n.t('diag.clearSearch'));
             }
+            const diagFilterGroup = el('ar-diag-filter-group');
+            if (diagFilterGroup) diagFilterGroup.setAttribute('aria-label', I18n.t('diag.filterLabel'));
             const diagMore = el('ar-diag-full-more-btn');
             if (diagMore) diagMore.setAttribute('aria-label', I18n.t('diag.moreTitle'));
             const progressbar = el('ar-execution-progress');
@@ -6871,8 +7532,7 @@
             const toggle = el('ar-toggle-btn');
             if (toggle) {
                 toggle.setAttribute('lang', currentLang);
-                toggle.title = I18n.t('panel.expandTitle');
-                toggle.setAttribute('aria-label', I18n.t('panel.expandTitle'));
+                syncCollapsedToggleState(toggle);
             }
 
             qa('.ar-lang-btn', mainPanel).forEach(btn => {
@@ -6890,38 +7550,23 @@
                 if (node) node.title = I18n.t(key);
             }
 
-            const iconMarkup = {
-                minimize: `<span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.75 8.25 10 12.5l4.25-4.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg></span>`,
-                help: `<span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><path d="M8.6 7.75a1.94 1.94 0 1 1 2.49 2.87c-.7.28-1.09.8-1.09 1.43" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="10" cy="14.35" r=".9" fill="currentColor"/></svg></span>`,
-                remove: `<span class="ar-icon-svg" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7.25 4.75h5.5M8 4.75v-.5A1.25 1.25 0 0 1 9.25 3h1.5A1.25 1.25 0 0 1 12 4.25v.5m-6 1.5h8l-.52 8.06A1.5 1.5 0 0 1 11.98 16H8.02a1.5 1.5 0 0 1-1.5-1.69L6 6.25Z" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.85 8.75v4.1M11.15 8.75v4.1" stroke="currentColor" stroke-width="1.55" stroke-linecap="round"/></svg></span>`
-            };
-            const setIconButton = (id, markup, label) => {
+            const setIconButton = (id, iconName, label) => {
                 const node = el(id);
                 if (!node) return;
                 node.classList.add('ar-icon-only');
-                node.innerHTML = markup;
+                node.innerHTML = uiIcon(iconName);
                 node.title = label;
                 node.setAttribute('aria-label', label);
             };
 
             const minimizeTitle = I18n.t('panel.minimizeTitle');
-            setIconButton('ar-minimize-btn', iconMarkup.minimize, minimizeTitle);
-            setIconButton('ar-minimize-diag-btn', iconMarkup.minimize, minimizeTitle);
-            setIconButton('ar-work-mode-help-btn', iconMarkup.help, I18n.t('panel.modeHelpAria'));
+            setIconButton('ar-minimize-btn', 'chevronDown', minimizeTitle);
+            setIconButton('ar-minimize-diag-btn', 'chevronDown', minimizeTitle);
+            setIconButton('ar-work-mode-help-btn', 'help', I18n.t('panel.modeHelpAria'));
+            setIconButton('ar-warning-help-btn', 'help', I18n.t('cover.rejectWarningHelpAria'));
 
             const currentPresetKey = PRESETS[config.preset] ? config.preset : DEFAULT_PRESET;
             const modeLabel = presetLabel(currentPresetKey);
-            const modeState = el('ar-work-mode-state');
-            if (modeState) {
-                modeState.classList.remove('is-changing');
-                modeState.textContent = modeLabel;
-                void modeState.offsetWidth;
-                modeState.classList.add('is-changing');
-            }
-            const safeLabel = el('ar-work-mode-lbl-safe');
-            if (safeLabel) safeLabel.textContent = I18n.t('panel.modeScaleSlower');
-            const turboLabel = el('ar-work-mode-lbl-turbo');
-            if (turboLabel) turboLabel.textContent = I18n.t('panel.modeScaleFaster');
 
             const slider = el('ar-work-mode-slider');
             if (slider) {
@@ -6935,6 +7580,7 @@
             }
             const cover = el('ar-cover-text');
             if (cover) cover.placeholder = I18n.t('cover.placeholder');
+            AutosaveFeedback.refresh();
 
             setStatus(currentStatusState.statusKey, currentStatusState.customKeyOrText, currentStatusState.params);
             StatsView.render();
@@ -7116,6 +7762,7 @@
     function cleanupUI() {
         HostLayoutReservation.destroy();
         WorkModeSlider.destroy();
+        AutosaveFeedback.destroy();
         LocalizationBinder.destroy();
         DiagnosticsView.destroy();
         StatsView.destroy();
@@ -7168,7 +7815,7 @@
         el('ar-apply-reject-check').checked = config.applyOnRejectWarning;
         el('ar-limit-input').min = String(Math.max(1, State.getSentCount()));
         el('ar-limit-input').value = config.limit;
-        setStatus(State.amIRunning() ? 'running' : 'idle');
+        restoreStatusAfterMount();
 
         // Письмо: счётчик символов и явное выключенное состояние поля.
         const coverArea = el('ar-cover-text');
@@ -7188,48 +7835,8 @@
         renderCoverState();
 
         WorkModeSlider.mount({ el, uiSignal });
-
-        const helpWrap = el('ar-work-mode-help-wrap');
-        const helpBtn = el('ar-work-mode-help-btn');
-        const helpPopover = el('ar-work-mode-popover');
-        if (helpWrap && helpBtn && helpPopover) {
-            let helpPinned = false;
-            let helpHover = false;
-            let helpFocus = false;
-            let escapeClosed = false;
-            const renderHelpPopover = () => {
-                const open = !escapeClosed && (helpPinned || helpHover || helpFocus);
-                helpWrap.classList.toggle('is-pinned', helpPinned);
-                helpWrap.classList.toggle('is-open', open);
-                helpBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-                helpPopover.setAttribute('aria-hidden', open ? 'false' : 'true');
-            };
-            helpWrap.addEventListener('mouseenter', () => { helpHover = true; escapeClosed = false; renderHelpPopover(); }, { signal: uiSignal });
-            helpWrap.addEventListener('mouseleave', () => { helpHover = false; renderHelpPopover(); }, { signal: uiSignal });
-            helpWrap.addEventListener('focusin', () => { helpFocus = true; escapeClosed = false; renderHelpPopover(); }, { signal: uiSignal });
-            helpWrap.addEventListener('focusout', () => {
-                setTimeout(() => { helpFocus = helpWrap.contains(document.activeElement); renderHelpPopover(); }, 0);
-            }, { signal: uiSignal });
-            helpBtn.addEventListener('click', (event) => {
-                event.stopPropagation();
-                escapeClosed = false;
-                helpPinned = !helpPinned;
-                renderHelpPopover();
-            }, { signal: uiSignal });
-            document.addEventListener('click', (event) => {
-                if (helpPinned && !helpWrap.contains(event.target)) {
-                    helpPinned = false;
-                    renderHelpPopover();
-                }
-            }, { signal: uiSignal });
-            document.addEventListener('keydown', (event) => {
-                if (event.key === 'Escape' && (helpPinned || helpHover || helpFocus)) {
-                    helpPinned = false;
-                    escapeClosed = true;
-                    renderHelpPopover();
-                }
-            }, { signal: uiSignal });
-        }
+        AutosaveFeedback.mount({ el });
+        HelpPopoverController.mount({ panel, uiSignal });
 
         // ---------- Сохранение настроек ----------
         const saveSettings = () => {
@@ -7251,6 +7858,7 @@
             el('ar-limit-input').min = String(Math.max(1, State.getSentCount()));
             el('ar-limit-input').value = config.limit;
             StatsView.render();
+            AutosaveFeedback.showSaved();
             log(I18n.t('logs.settingsSaved'));
         };
         ['ar-cover-text', 'ar-use-cover-check', 'ar-apply-reject-check', 'ar-limit-input']
@@ -7268,8 +7876,13 @@
 
         el('ar-reset-history').onclick = () => {
             if (confirm(I18n.t('confirm.resetHistory'))) {
-                State.clearProcessedIDs();
-                State.resetSentCount();
+                const historyCleared = State.clearProcessedIDs();
+                const sentCleared = State.resetSentCount();
+                if (!historyCleared || !sentCleared) {
+                    Metrics.bump('storage.history.reset.failed');
+                    log('[CRITICAL_STORAGE_WRITE_FAILED] processed_ids/sent_count: reset', true);
+                    return;
+                }
                 Stats.reset();
                 StatsView.render();
                 log(I18n.t('logs.historyReset'));
@@ -7290,6 +7903,7 @@
             document.documentElement.classList.toggle('hha-overlay-open', isOverlay && isVisible);
             HostLayoutReservation.setPanelVisible(isVisible);
             WorkModeSlider.onVisibilityChange(isVisible);
+            DiagnosticsView.onVisibilityChange();
         };
 
         const minimizePanel = () => {
@@ -7463,7 +8077,7 @@
                     log(I18n.t('health.statusNotFound', { name: c.name, sel: c.sel }), true);
                 } else {
                     skipCount++;
-                    log(`${c.name}: ${ctx.reason || I18n.t('health.reasons.notApplicable')}`, false);
+                    log(I18n.t('health.statusSkipped', { name: c.name, reason: ctx.reason || I18n.t('health.reasons.notApplicable') }), false);
                 }
             }
         });
@@ -7509,13 +8123,13 @@
             <style>
                 :root{
                     color-scheme:light;
-                    --ap-brand:#d6001c; --ap-brand-hover:#b80018; --ap-brand-soft:#ffebee;
-                    --hh-blue:#0070e5; --hh-blue-hover:#005cbd; --hh-blue-soft:#e9f2fd;
-                    --hh-green:#059669; --hh-green-soft:#ecfdf5;
+                    --ap-brand:#d6001c; --ap-brand-soft:#ffebee;
+                    --hh-blue:#6863b3; --hh-blue-hover:#5d58a6; --hh-blue-soft:#f0eff9;
+                    --hh-green:#059669;
                     --ink:#1e293b; --ink-2:#475569; --ink-3:#626f80;
                     --line:#e2e8f0; --line-2:#f1f5f9;
                     --bg:#ffffff; --bg-2:#f8fafc; --bg-3:#f1f5f9;
-                    --radius:12px; --radius-sm:8px; --radius-xs:6px;
+                    --radius:12px; --radius-xs:6px;
                     --font:'HH Sans','Inter',-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
                 }
                 *{box-sizing:border-box;}
@@ -7547,7 +8161,7 @@
                 .dropdown-trigger{display:flex;align-items:center;gap:8px;height:36px;padding:0 30px 0 12px;border:1px solid var(--line);border-radius:var(--radius-xs);font-size:12px;font-weight:600;font-family:inherit;color:var(--ink);background:#fff;cursor:pointer;white-space:nowrap;transition:all .15s;background-repeat:no-repeat;background-position:right 10px center;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");}
                 .dropdown-trigger:hover{border-color:#cbd5e1;}
                 .dropdown.is-open .dropdown-trigger{border-color:var(--hh-blue);box-shadow:0 0 0 3px var(--hh-blue-soft);}
-                .dropdown.is-open .dropdown-trigger{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%230070e5' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 15l-6-6-6 6'/%3E%3C/svg%3E");}
+                .dropdown.is-open .dropdown-trigger{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236863b3' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 15l-6-6-6 6'/%3E%3C/svg%3E");}
                 .dropdown-menu{display:none;position:absolute;top:calc(100% + 4px);left:0;min-width:100%;background:#fff;border:1px solid var(--line);border-radius:var(--radius-xs);box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:10;padding:4px 0;overflow:hidden;}
                 .dropdown.is-open .dropdown-menu{display:block;animation:dd-in .12s ease;}
                 @keyframes dd-in{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
@@ -7559,8 +8173,8 @@
                 .btn:hover{background:var(--bg-2);color:var(--ink);border-color:#cbd5e1;}
                 .btn:active{transform:translateY(1px);}
                 .btn svg{width:15px;height:15px;}
-                .btn.primary{background:var(--hh-blue);color:#fff;border-color:var(--hh-blue);box-shadow:0 2px 4px rgba(0,112,229,.18);}
-                .btn.primary:hover{background:var(--hh-blue-hover);border-color:var(--hh-blue-hover);box-shadow:0 4px 8px rgba(0,112,229,.25);}
+                .btn.primary{background:var(--hh-blue);color:#fff;border-color:var(--hh-blue);box-shadow:0 2px 4px rgba(82,76,154,.17);}
+                .btn.primary:hover{background:var(--hh-blue-hover);border-color:var(--hh-blue-hover);box-shadow:0 4px 8px rgba(82,76,154,.23);}
                 .btn.secondary{background:#fff;color:var(--ink-2);border-color:var(--line);}
                 .btn.secondary:hover{background:var(--bg-3);color:var(--ink);border-color:#cbd5e1;}
                 .table-wrap{overflow-x:auto;}
@@ -7619,19 +8233,19 @@
                             <input id="filter" type="text" placeholder="${I18n.t('export.searchPlaceholder')}">
                         </div>
                         <div class="dropdown" id="sort-dropdown">
-                            <div class="dropdown-trigger" tabindex="0">${I18n.t('export.sortPrefix')}${I18n.t('export.sortOptions.ts_desc')}</div>
-                            <div class="dropdown-menu">
-                                <div class="dropdown-item is-active" data-value="ts_desc">${I18n.t('export.sortOptions.ts_desc')}</div>
-                                <div class="dropdown-item" data-value="ts_asc">${I18n.t('export.sortOptions.ts_asc')}</div>
-                                <div class="dropdown-item" data-value="title_asc">${I18n.t('export.sortOptions.title_asc')}</div>
-                                <div class="dropdown-item" data-value="title_desc">${I18n.t('export.sortOptions.title_desc')}</div>
+                            <div class="dropdown-trigger" id="sort-dropdown-trigger" role="combobox" tabindex="0" aria-readonly="true" aria-haspopup="listbox" aria-expanded="false" aria-controls="sort-dropdown-listbox" aria-activedescendant="sort-option-ts-desc">${I18n.t('export.sortPrefix')}${I18n.t('export.sortOptions.ts_desc')}</div>
+                            <div class="dropdown-menu" id="sort-dropdown-listbox" role="listbox" aria-labelledby="sort-dropdown-trigger">
+                                <div class="dropdown-item is-active" id="sort-option-ts-desc" role="option" aria-selected="true" data-value="ts_desc">${I18n.t('export.sortOptions.ts_desc')}</div>
+                                <div class="dropdown-item" id="sort-option-ts-asc" role="option" aria-selected="false" data-value="ts_asc">${I18n.t('export.sortOptions.ts_asc')}</div>
+                                <div class="dropdown-item" id="sort-option-title-asc" role="option" aria-selected="false" data-value="title_asc">${I18n.t('export.sortOptions.title_asc')}</div>
+                                <div class="dropdown-item" id="sort-option-title-desc" role="option" aria-selected="false" data-value="title_desc">${I18n.t('export.sortOptions.title_desc')}</div>
                             </div>
                         </div>
                         <div class="dropdown" id="view-mode-dropdown">
-                            <div class="dropdown-trigger" tabindex="0">${I18n.t('export.statusPrefix')}${I18n.t('export.statusOptions.new')}</div>
-                            <div class="dropdown-menu">
-                                <div class="dropdown-item is-active" data-value="new">${I18n.t('export.statusOptions.new')}</div>
-                                <div class="dropdown-item" data-value="opened">${I18n.t('export.statusOptions.opened')}</div>
+                            <div class="dropdown-trigger" id="view-mode-dropdown-trigger" role="combobox" tabindex="0" aria-readonly="true" aria-haspopup="listbox" aria-expanded="false" aria-controls="view-mode-dropdown-listbox" aria-activedescendant="view-mode-option-new">${I18n.t('export.statusPrefix')}${I18n.t('export.statusOptions.new')}</div>
+                            <div class="dropdown-menu" id="view-mode-dropdown-listbox" role="listbox" aria-labelledby="view-mode-dropdown-trigger">
+                                <div class="dropdown-item is-active" id="view-mode-option-new" role="option" aria-selected="true" data-value="new">${I18n.t('export.statusOptions.new')}</div>
+                                <div class="dropdown-item" id="view-mode-option-opened" role="option" aria-selected="false" data-value="opened">${I18n.t('export.statusOptions.opened')}</div>
                             </div>
                         </div>
                         <div class="toolbar-spacer"></div>
@@ -7648,7 +8262,7 @@
                         <table>
                             <thead>
                                 <tr>
-                                    <th class="col-check"><input type="checkbox" id="check-all"></th>
+                                    <th class="col-check"><input type="checkbox" id="check-all" aria-label="${I18n.t('export.selectAll')}"></th>
                                     <th class="col-date">${I18n.t('export.tableHeaders.saved')}</th>
                                     <th class="col-title">${I18n.t('export.tableHeaders.vacancy')}</th>
                                     <th class="col-link">${I18n.t('export.tableHeaders.link')}</th>
@@ -7767,8 +8381,9 @@
                         const titleCell = (title && title !== 'Название недоступно' && title !== 'Title unavailable')
                             ? escHtml(title)
                             : '<span class="muted" title="' + escHtml(exp.noTitleTooltip) + '">' + escHtml(exp.noTitleText) + '</span>';
+                        const selectionName = String(exp.selectVacancy || '').replace('{title}', title || String(i.vid || exp.noTitleText));
                         html += '<tr' + rowClass + ' data-key="' + keyEnc + '">'
-                             + '<td class="col-check"><input type="checkbox" class="row-check" data-key="' + keyEnc + '" ' + checked + '></td>'
+                             + '<td class="col-check"><input type="checkbox" class="row-check" data-key="' + keyEnc + '" aria-label="' + escHtml(selectionName) + '" ' + checked + '></td>'
                              + '<td class="col-date">' + escHtml(new Date(ts).toLocaleString(activeLocale)) + '</td>'
                              + '<td class="col-title">' + titleCell + '</td>'
                              + '<td class="col-link">' + link + '</td>'
@@ -7808,28 +8423,36 @@
                 }
 
                 qs('filter').addEventListener('input', (e)=>{ filterText = e.target.value; render(); });
+                const closeDropdowns = (except = null) => {
+                    document.querySelectorAll('.dropdown.is-open').forEach(dropdown => {
+                        if (dropdown === except) return;
+                        dropdown.classList.remove('is-open');
+                        dropdown.querySelector('.dropdown-trigger')?.setAttribute('aria-expanded', 'false');
+                    });
+                };
                 function initDropdown(id, prefix, onSelect) {
                     const wrap = qs(id);
                     if (!wrap) return;
                     const trigger = wrap.querySelector('.dropdown-trigger');
                     const menu = wrap.querySelector('.dropdown-menu');
-                    trigger.setAttribute('role', 'button');
-                    trigger.setAttribute('aria-haspopup', 'listbox');
-                    trigger.setAttribute('aria-expanded', 'false');
                     const setOpen = (open) => {
                         wrap.classList.toggle('is-open', open);
                         trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
                     };
                     const choose = (item) => {
                         trigger.textContent = prefix + item.textContent;
-                        menu.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('is-active'));
-                        item.classList.add('is-active');
+                        menu.querySelectorAll('.dropdown-item').forEach(i => {
+                            const selected = i === item;
+                            i.classList.toggle('is-active', selected);
+                            i.setAttribute('aria-selected', selected ? 'true' : 'false');
+                        });
+                        trigger.setAttribute('aria-activedescendant', item.id);
                         setOpen(false);
                         onSelect(item.dataset.value);
                     };
                     trigger.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        document.querySelectorAll('.dropdown.is-open').forEach(d => { if (d !== wrap) d.classList.remove('is-open'); });
+                        closeDropdowns(wrap);
                         setOpen(!wrap.classList.contains('is-open'));
                     });
                     trigger.addEventListener('keydown', (e) => {
@@ -7850,12 +8473,15 @@
                         const item = e.target.closest('.dropdown-item');
                         if (item) choose(item);
                     });
+                    wrap.addEventListener('focusout', () => {
+                        setTimeout(() => {
+                            if (!wrap.contains(document.activeElement)) setOpen(false);
+                        }, 0);
+                    });
                 }
-                document.addEventListener('click', () => {
-                    document.querySelectorAll('.dropdown.is-open').forEach(d => d.classList.remove('is-open'));
-                });
+                document.addEventListener('click', () => closeDropdowns());
                 document.addEventListener('keydown', (e) => {
-                    if (e.key === 'Escape') document.querySelectorAll('.dropdown.is-open').forEach(d => d.classList.remove('is-open'));
+                    if (e.key === 'Escape') closeDropdowns();
                 });
 
                 initDropdown('sort-dropdown', exp.sortPrefix, (val) => { sortKey = val; render(); });
@@ -7972,7 +8598,7 @@
         return assistantMarkers.some(m => combined.includes(m));
     }
 
-    window.addEventListener('error', (e) => {
+    addRuntimeListener(window, 'error', (e) => {
         try {
             const isInternal = isHHApplyAssistantError(e, false);
             const where = e.filename ? ` @ ${e.filename}:${e.lineno || 0}:${e.colno || 0}` : '';
@@ -7989,7 +8615,7 @@
         } catch (_) { /* ignore */ }
     });
 
-    window.addEventListener('unhandledrejection', (e) => {
+    addRuntimeListener(window, 'unhandledrejection', (e) => {
         try {
             const isInternal = isHHApplyAssistantError(e, true);
             const r = e.reason;
@@ -8051,16 +8677,18 @@
         const domReadyObserver = new MutationObserver((mutations, obs) => {
             if (document.body) {
                 obs.disconnect();
+                runtimeRecord.domReadyObserver = null;
                 bootstrap();
             }
         });
+        runtimeRecord.domReadyObserver = domReadyObserver;
         domReadyObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
 
     // При восстановлении страницы из bfcache возвращается старый JS runtime со старым
     // leaseId. Новый startLoop синхронно меняет runId до первого await и получает новое
     // поколение lease, поэтому continuations замороженной страницы не могут продолжиться.
-    window.addEventListener('pageshow', (event) => {
+    addRuntimeListener(window, 'pageshow', (event) => {
         if (!event.persisted || !State.amIRunning()) return;
         if (activeAbortController) {
             try { activeAbortController.abort(); } catch (e) {}
@@ -8075,16 +8703,16 @@
     // переживать их до авто-возобновления (1.5 с в bootstrap), иначе другая вкладка
     // успеет захватить его в этом окне. Мёртвые вкладки, закрытые посреди прогона,
     // освобождаются по TTL (TUNING.instanceLockTtl).
-    window.addEventListener('beforeunload', () => {
+    addRuntimeListener(window, 'beforeunload', () => {
         DiagLog.flush();
         Metrics.flush();
         if (!State.amIRunning()) State.releaseInstanceLock(TAB_ID);
     });
-    window.addEventListener('pagehide', () => {
+    addRuntimeListener(window, 'pagehide', () => {
         DiagLog.flush();
         Metrics.flush();
     });
-    window.addEventListener('unload', () => {
+    addRuntimeListener(window, 'unload', () => {
         DiagLog.flush();
         Metrics.flush();
         if (!State.amIRunning()) State.releaseInstanceLock(TAB_ID);

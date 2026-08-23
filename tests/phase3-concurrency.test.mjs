@@ -390,5 +390,5 @@ test('actual final-click and form.submit paths are wired to the commit guard', (
     assert.match(terminalBody, /function persistProcessedVacancy[\s\S]*guardOwnedCommit\(runId\)/);
     assert.match(terminalBody, /function persistSentCount[\s\S]*guardOwnedCommit\(runId\)/);
     assert.match(terminalBody, /function returnToList[\s\S]*guardOwnedCommit\(runId\)/);
-    assert.match(SCRIPT_SOURCE, /addEventListener\('pageshow'[\s\S]*event\.persisted[\s\S]*startLoop\(\)/);
+    assert.match(SCRIPT_SOURCE, /addRuntimeListener\(window, 'pageshow'[\s\S]*event\.persisted[\s\S]*startLoop\(\)/);
 });
