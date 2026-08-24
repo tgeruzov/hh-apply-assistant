@@ -9,8 +9,8 @@
 - Chrome с Tampermonkey для browser smoke.
 
 ```bash
-git clone https://github.com/tgeruzov/hh-auto-responder.git
-cd hh-auto-responder
+git clone https://github.com/tgeruzov/hh-apply-assistant.git
+cd hh-apply-assistant
 node --check hh-apply-assistant.user.js
 node --test
 ```

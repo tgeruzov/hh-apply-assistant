@@ -22,7 +22,7 @@ Open Tampermonkey's **Details** page in Chrome. **On all sites** is the simplest
 
 Open the canonical Raw link:
 
-**[Install HH Apply Assistant](https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js)**
+**[Install HH Apply Assistant](https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js)**
 
 Tampermonkey should open an installation page for **HH Apply Assistant**. Review it and select **Install**.
 

@@ -1,7 +1,7 @@
 # Temporary: первый публичный cutover HH Apply Assistant 4.0.0
 
 > [!IMPORTANT]
-> Это одноразовый migration runbook для первой публикации HH Apply Assistant 4.0.0 в `tgeruzov/hh-auto-responder/main`. Он не относится к последующим релизам и не разрешает внешние write-операции. Обычные версии выпускаются по [release process](release-process.md).
+> Это одноразовый migration runbook для первой публикации HH Apply Assistant 4.0.0 в `tgeruzov/hh-apply-assistant/main`. Он не относится к последующим релизам и не разрешает внешние write-операции. Обычные версии выпускаются по [release process](release-process.md).
 
 Документ намеренно не фиксирует public tip, число commits или состояние working tree: эти данные устаревают после любого изменения. Их нужно получить заново непосредственно перед migration.
 
@@ -26,7 +26,7 @@ node scripts/validate-repository.mjs
 git diff --check
 ```
 
-Затем read-only получите актуальный canonical `main`. В примере `canonical` — локальный remote, указывающий на `https://github.com/tgeruzov/hh-auto-responder.git`:
+Затем read-only получите актуальный canonical `main`. В примере `canonical` — локальный remote, указывающий на `https://github.com/tgeruzov/hh-apply-assistant.git`:
 
 ```bash
 git remote get-url canonical

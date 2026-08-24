@@ -16,7 +16,7 @@ Older Chrome or Chromium versions may require the global **Developer mode** sett
 
 ## The Raw link shows source code
 
-Chrome has not handed the `.user.js` file to Tampermonkey. Confirm that the extension and **Allow User Scripts** are enabled, allow Site access to `raw.githubusercontent.com`, then reopen the [install link](https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js).
+Chrome has not handed the `.user.js` file to Tampermonkey. Confirm that the extension and **Allow User Scripts** are enabled, allow Site access to `raw.githubusercontent.com`, then reopen the [install link](https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js).
 
 If that still fails, use the [manual installation steps](installation.en.md#manual-installation).
 
@@ -46,7 +46,7 @@ Solve the CAPTCHA yourself, return to a supported page, and start a new run. HH 
 
 1. Confirm that HH Apply Assistant is enabled in the Tampermonkey Dashboard.
 2. Allow Tampermonkey Site access to `raw.githubusercontent.com`.
-3. Use Tampermonkey's update check, or reopen the [install link](https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js).
+3. Use Tampermonkey's update check, or reopen the [install link](https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js).
 
 ## Ask for help
 
@@ -58,4 +58,4 @@ Before reporting a bug:
 4. Remove personal data, cookies, tokens, full private URLs, and sensitive page text from everything you share.
 5. Note the HH Apply Assistant, Chrome, and Tampermonkey versions, page type, work mode, steps, expected result, and actual result.
 
-Use the [English bug report form](https://github.com/tgeruzov/hh-auto-responder/issues/new?template=bug_report_en.yml) or open the [issue chooser](https://github.com/tgeruzov/hh-auto-responder/issues/new/choose). Report vulnerabilities through the [Security Policy](../SECURITY.en.md), not a public bug report.
+Use the [English bug report form](https://github.com/tgeruzov/hh-apply-assistant/issues/new?template=bug_report_en.yml) or open the [issue chooser](https://github.com/tgeruzov/hh-apply-assistant/issues/new/choose). Report vulnerabilities through the [Security Policy](../SECURITY.en.md), not a public bug report.

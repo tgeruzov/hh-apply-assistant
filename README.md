@@ -3,12 +3,12 @@
 [Русский](README.md) | [English](README.en.md)
 
 [![Version](https://img.shields.io/badge/version-4.0.0-2563eb.svg)](CHANGELOG.md)
-[![CI](https://github.com/tgeruzov/hh-auto-responder/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tgeruzov/hh-auto-responder/actions/workflows/ci.yml?query=branch%3Amain)
+[![CI](https://github.com/tgeruzov/hh-apply-assistant/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tgeruzov/hh-apply-assistant/actions/workflows/ci.yml?query=branch%3Amain)
 [![License](https://img.shields.io/badge/license-GPL--3.0--only-2563eb.svg)](LICENSE)
 
 HH Apply Assistant — пользовательский скрипт для Tampermonkey, который автоматизирует стандартные отклики на вакансии hh.ru. Он добавляет боковую панель на страницы поиска и вакансий, обрабатывает текущую выдачу и сохраняет анкеты или неподтверждённые результаты в ручную очередь.
 
-**Установка:** [1. Установить Tampermonkey](https://www.tampermonkey.net/) → [2. Установить HH Apply Assistant](https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js)
+**Установка:** [1. Установить Tampermonkey](https://www.tampermonkey.net/) → [2. Установить HH Apply Assistant](https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js)
 
 [Подробная инструкция](docs/installation.md) · [Руководство](docs/usage.md) · [Решение проблем](docs/troubleshooting.md)
 
@@ -42,7 +42,7 @@ HH.ru может менять страницы и порядок отправк�
 1. Установите [Tampermonkey](https://www.tampermonkey.net/).
 2. В Chrome 138 и новее откройте сведения о расширении Tampermonkey и включите **Allow User Scripts / Разрешить пользовательские скрипты**.
 3. Разрешите Tampermonkey работать на hh.ru и проверять обновления. Вариант с ограниченным доступом к сайтам описан в [подробной инструкции](docs/installation.md).
-4. Откройте [HH Apply Assistant](https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js) и подтвердите установку.
+4. Откройте [HH Apply Assistant](https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js) и подтвердите установку.
 5. Откройте **Tampermonkey → Dashboard** и убедитесь, что HH Apply Assistant включён.
 6. Войдите в hh.ru, откройте [поиск вакансий](https://hh.ru/search/vacancy) и обновите страницу. Справа должна появиться панель HH Apply Assistant.
 
@@ -77,7 +77,7 @@ HH.ru может менять страницы и порядок отправк�
 
 ## Участие в разработке
 
-Проект не требует сборки и npm-зависимостей. Правила локальной установки, тестирования и pull request описаны в [CONTRIBUTING.md](CONTRIBUTING.md). Ошибки можно сообщать через [Issue templates](https://github.com/tgeruzov/hh-auto-responder/issues/new/choose); уязвимости — по [Security Policy](SECURITY.md).
+Проект не требует сборки и npm-зависимостей. Правила локальной установки, тестирования и pull request описаны в [CONTRIBUTING.md](CONTRIBUTING.md). Ошибки можно сообщать через [Issue templates](https://github.com/tgeruzov/hh-apply-assistant/issues/new/choose); уязвимости — по [Security Policy](SECURITY.md).
 
 ## Лицензия
 

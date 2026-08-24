@@ -11,8 +11,8 @@ const EXPECTED_PRODUCT_VERSION = '4.0.0';
 const EXPECTED_RUNTIME_KEY = '__hhApplyAssistantRuntime';
 const EXPECTED_STORAGE_SCHEMA_VERSION = 1;
 const EXPECTED_STORAGE_PREFIX = 'hh_apply_assistant_s1_';
-const REPOSITORY_URL = 'https://github.com/tgeruzov/hh-auto-responder';
-const RAW_URL = 'https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js';
+const REPOSITORY_URL = 'https://github.com/tgeruzov/hh-apply-assistant';
+const RAW_URL = 'https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js';
 const DEVELOPMENT_REPOSITORY_NAME = 'hh-auto-responder' + '-dev';
 const ISSUE_FORM_NAMES = [
     'bug_report.yml',

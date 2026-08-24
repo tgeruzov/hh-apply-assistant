@@ -1,6 +1,6 @@
 # Contributing
 
-HH Apply Assistant welcomes focused bug fixes, UI improvements, tests, and documentation changes. Report an ordinary problem with the [English bug form](https://github.com/tgeruzov/hh-auto-responder/issues/new?template=bug_report_en.yml). Please open a [feature request](https://github.com/tgeruzov/hh-auto-responder/issues/new?template=feature_request_en.yml) before a large change to application behavior, stored data, or browser permissions.
+HH Apply Assistant welcomes focused bug fixes, UI improvements, tests, and documentation changes. Report an ordinary problem with the [English bug form](https://github.com/tgeruzov/hh-apply-assistant/issues/new?template=bug_report_en.yml). Please open a [feature request](https://github.com/tgeruzov/hh-apply-assistant/issues/new?template=feature_request_en.yml) before a large change to application behavior, stored data, or browser permissions.
 
 Report vulnerabilities through the [Security Policy](SECURITY.en.md), not a public bug report. Project discussions also follow the [Code of Conduct](CODE_OF_CONDUCT.md), which is currently maintained in Russian.
 
@@ -11,8 +11,8 @@ You need Git and Node.js 24. Desktop Chrome with Tampermonkey is needed only for
 Clone the canonical public repository and create your branch from `main`:
 
 ```bash
-git clone https://github.com/tgeruzov/hh-auto-responder.git
-cd hh-auto-responder
+git clone https://github.com/tgeruzov/hh-apply-assistant.git
+cd hh-apply-assistant
 git switch main
 git switch -c fix/short-description
 ```

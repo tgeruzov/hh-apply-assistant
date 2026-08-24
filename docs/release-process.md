@@ -2,7 +2,7 @@
 
 Production-источником установки и автоматических обновлений является `main` canonical repository:
 
-`https://github.com/tgeruzov/hh-auto-responder`
+`https://github.com/tgeruzov/hh-apply-assistant`
 
 Metadata, install links и support links должны указывать именно на этот адрес. GitHub redirects не считаются частью update contract. Этот документ описывает переиспользуемый выпуск любой версии `X.Y.Z`; одноразовый перенос первого публичного выпуска HH Apply Assistant 4.0.0 вынесен в [temporary migration plan](migration-plan.md).
 
@@ -66,7 +66,7 @@ External write-операции выполняются только после �
 
 1. Доставьте release commit в canonical `main` через принятый repository workflow, без force-push и переписывания истории.
 2. Дождитесь успешного CI на canonical `main`.
-3. Откройте `https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js` и проверьте имя, `@version`, `@updateURL` и `@downloadURL`.
+3. Откройте `https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js` и проверьте имя, `@version`, `@updateURL` и `@downloadURL`.
 4. Установите production Raw URL в чистую запись Tampermonkey и выполните минимальный hh.ru smoke.
 5. Создайте annotated tag `vX.Y.Z` на уже проверенном production commit.
 6. Создайте GitHub Release из `docs/release-notes/vX.Y.Z.md`.
@@ -78,10 +78,10 @@ External write-операции выполняются только после �
 git remote get-url canonical
 git tag -a vX.Y.Z -m "HH Apply Assistant vX.Y.Z"
 git push canonical vX.Y.Z
-gh release create vX.Y.Z --repo tgeruzov/hh-auto-responder --title "HH Apply Assistant vX.Y.Z" --notes-file docs/release-notes/vX.Y.Z.md --verify-tag
+gh release create vX.Y.Z --repo tgeruzov/hh-apply-assistant --title "HH Apply Assistant vX.Y.Z" --notes-file docs/release-notes/vX.Y.Z.md --verify-tag
 ```
 
-`git remote get-url canonical` должен вывести `https://github.com/tgeruzov/hh-auto-responder.git`. Если remote отсутствует или URL отличается, остановите выпуск до явной проверки конфигурации.
+`git remote get-url canonical` должен вывести `https://github.com/tgeruzov/hh-apply-assistant.git`. Если remote отсутствует или URL отличается, остановите выпуск до явной проверки конфигурации.
 
 Tag и GitHub Release не создаются автоматически.
 

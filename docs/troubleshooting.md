@@ -53,7 +53,7 @@
 
 - убедитесь в Tampermonkey Dashboard, что включена обычная запись HH Apply Assistant, а не отдельная локальная копия;
 - разрешите Tampermonkey доступ к `raw.githubusercontent.com` либо временно выберите в настройке доступа к сайтам вариант **On all sites / На всех сайтах**;
-- вручную откройте [ссылку установки](https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js) и сравните предложенную версию;
+- вручную откройте [ссылку установки](https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js) и сравните предложенную версию;
 - если вы создавали локальную копию вручную, временно выключите её и повторите проверку основной записи.
 
 ## Подготовка сообщения об ошибке
@@ -65,4 +65,4 @@
 5. Удалите из файла чувствительные URL и параметры, персональные фрагменты текста, cookies и токены.
 6. Укажите версию HH Apply Assistant, Chrome, Tampermonkey, режим, тип страницы, шаги, ожидаемый и фактический результат.
 
-Используйте [форму сообщения об ошибке](https://github.com/tgeruzov/hh-auto-responder/issues/new/choose). Состав отчёта подробно описан в [документации по диагностике](diagnostics.md).
+Используйте [форму сообщения об ошибке](https://github.com/tgeruzov/hh-apply-assistant/issues/new/choose). Состав отчёта подробно описан в [документации по диагностике](diagnostics.md).

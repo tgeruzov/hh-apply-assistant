@@ -24,7 +24,7 @@
 
 Откройте ссылку:
 
-**[Установить HH Apply Assistant](https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js)**
+**[Установить HH Apply Assistant](https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js)**
 
 Tampermonkey должен показать страницу установки с именем **HH Apply Assistant**. Нажмите **Install / Установить**. Установка файла с окончанием `.user.js` является штатным способом Tampermonkey; см. [FAQ Q102](https://www.tampermonkey.net/faq.php?locale=en&q=Q102).
 

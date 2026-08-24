@@ -31,4 +31,4 @@
 - Участие в разработке: [RU](../CONTRIBUTING.md) · [EN](../CONTRIBUTING.en.md).
 - Сообщение об уязвимости: [RU](../SECURITY.md) · [EN](../SECURITY.en.md).
 - [Кодекс поведения](../CODE_OF_CONDUCT.md).
-- [Сообщения об ошибках и предложения](https://github.com/tgeruzov/hh-auto-responder/issues/new/choose) через структурированные формы.
+- [Сообщения об ошибках и предложения](https://github.com/tgeruzov/hh-apply-assistant/issues/new/choose) через структурированные формы.

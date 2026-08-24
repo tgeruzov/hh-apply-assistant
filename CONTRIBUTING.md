@@ -4,7 +4,7 @@
 
 HH Apply Assistant принимает bug fixes, улучшения распознавания сценариев, UI-правки, тесты и документацию. Крупное изменение automation behavior, storage schema или модели разрешений сначала лучше обсудить в Issue: такие изменения труднее безопасно проверить на реальном hh.ru.
 
-Обычные ошибки сообщайте через [форму сообщения об ошибке](https://github.com/tgeruzov/hh-auto-responder/issues/new?template=bug_report.yml). Уязвимости и случаи с чувствительными данными направляйте по [Security Policy](SECURITY.md), а не в публичную форму. Во всех обсуждениях действует [Code of Conduct](CODE_OF_CONDUCT.md).
+Обычные ошибки сообщайте через [форму сообщения об ошибке](https://github.com/tgeruzov/hh-apply-assistant/issues/new?template=bug_report.yml). Уязвимости и случаи с чувствительными данными направляйте по [Security Policy](SECURITY.md), а не в публичную форму. Во всех обсуждениях действует [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Окружение
 
@@ -17,8 +17,8 @@ HH Apply Assistant принимает bug fixes, улучшения распоз
 Сборки и установки npm-пакетов нет.
 
 ```bash
-git clone https://github.com/tgeruzov/hh-auto-responder.git
-cd hh-auto-responder
+git clone https://github.com/tgeruzov/hh-apply-assistant.git
+cd hh-apply-assistant
 node --check hh-apply-assistant.user.js
 node --test
 ```
