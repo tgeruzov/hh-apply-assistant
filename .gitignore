@@ -1,0 +1,12 @@
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+.idea/
+.vscode/
+*.swp
+*.tmp
+*.log
+
+node_modules/
+coverage/
