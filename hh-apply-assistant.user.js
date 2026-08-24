@@ -5,6 +5,10 @@
 // @description  HH Apply Assistant — инструмент автоматизации откликов на вакансии hh.ru (HeadHunter)
 // @author       Timur Geruzov
 // @license      GPL-3.0-only
+// @homepageURL  https://github.com/tgeruzov/hh-auto-responder
+// @supportURL   https://github.com/tgeruzov/hh-auto-responder/issues
+// @updateURL    https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js
+// @downloadURL  https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js
 // @match        *://*.hh.ru/search/vacancy*
 // @match        *://*.hh.ru/vacancy/*
 // @match        *://*.hh.ru/applicant/vacancy_response*

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
-const SCRIPT_PATH = resolve(TEST_DIR, '..', 'script.js');
+const SCRIPT_PATH = resolve(TEST_DIR, '..', 'hh-apply-assistant.user.js');
 const SCRIPT_SOURCE = readFileSync(SCRIPT_PATH, 'utf8');
 const HOOK_MARKER = '    // Перехват необработанных ошибок:';
 const V4_PREFIX = 'hh_apply_assistant_v4_';

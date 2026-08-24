@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
-const SCRIPT_SOURCE = readFileSync(resolve(TEST_DIR, '..', 'script.js'), 'utf8');
+const SCRIPT_SOURCE = readFileSync(resolve(TEST_DIR, '..', 'hh-apply-assistant.user.js'), 'utf8');
 
 test('help tooltips expose descriptions and keep localized interactive state', () => {
     assert.match(SCRIPT_SOURCE, /id="ar-warning-help-btn"[^>]*aria-describedby="ar-warning-help-popover"[^>]*aria-controls="ar-warning-help-popover"[^>]*aria-expanded="false"/);
