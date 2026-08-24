@@ -1,87 +1,80 @@
-# Архитектура HH Apply Assistant v4.0.0
+# Архитектура
 
-Документ предназначен для contributors и maintainers. Пользовательские инструкции находятся в [README](../README.md) и [руководстве](user-guide.md).
+HH Apply Assistant поставляется одним production-файлом [hh-apply-assistant.user.js](../hh-apply-assistant.user.js). Build step и внешние runtime-зависимости отсутствуют. Внутри IIFE код разделён на логические секции; это не отдельные JavaScript modules, но границы ответственности стабильны и используются тестами.
 
-## Структура репозитория
+## Карта runtime
 
-- `script.js` — production userscript без build step и внешних runtime-зависимостей;
-- `tests/*.test.mjs` — тесты на встроенном Node.js test runner;
-- `tests/hh-docking-browser-fixture.html` — browser fixture для docking/responsive сценариев;
-- `README.md` и `docs/` — пользовательская и техническая документация;
-- `.github/` — CI и минимальные contribution templates.
+| Подсистема | Ответственность |
+|---|---|
+| Metadata и singleton | `@match`, permissions, update source и защита от второй инъекции в тот же document через `window.__hhApplyAssistantV4Runtime` |
+| Configuration и i18n | defaults, валидация настроек, RU/EN translations и форматирование UI/diagnostics |
+| Storage layer | безопасные local/session wrappers, verified writes для критического состояния и v4 namespace |
+| State | processed IDs, run counters, URL возврата, Manual Queue, trap lock и cross-tab lease |
+| Diagnostics | постоянный log, metrics, snapshots, Healthcheck и report export |
+| DOM adapter | точные selectors, scoped compatibility fallbacks, heuristics, visibility checks и ожидание через MutationObserver |
+| Automation engine | выбор карточки, переход на вакансию, чтение, распознавание response flow, submit confirmation и terminal outcome |
+| Watchdog | проверка URL/состояния раз в секунду, response page flow, CAPTCHA, lease heartbeat и remount UI |
+| UI | панель, режимы, settings autosave, статистика, ручная очередь, diagnostics и responsive docking |
 
-## Runtime
+## Поток управления
 
-Metadata ограничивает запуск страницами поиска, вакансии и формы отклика hh.ru. Runtime защищён от повторной инъекции в тот же document.
+1. Metadata запускает файл на search, vacancy и applicant response paths.
+2. Runtime загружает язык и валидированную конфигурацию, создаёт `TAB_ID`, инициализирует log/metrics и запускает watchdog.
+3. `bootstrap()` монтирует панель. Если `is_active` пережил full-page navigation, через 1,5 секунды планируется resume.
+4. Start создаёт новый `runId`, сохраняет running state и пытается захватить lease с read-back проверкой.
+5. Search loop получает видимые apply buttons, исключает processed IDs и обрабатывает текущую страницу. При SPA-перерисовке допускается до трёх rescans исчезнувших карточек.
+6. Vacancy flow получает стабильный ID и title, имитирует чтение по выбранному профилю, затем распознаёт standard form, уже отправленный отклик, reject warning, relocation dialog, response redirect, questionnaire, CAPTCHA или timeout.
+7. Успех фиксируется только после commit guard и надёжного подтверждения. Неясный исход сохраняется в Manual Queue; критическая ошибка persistence останавливает run.
+8. Watchdog обрабатывает `/applicant/vacancy_response`, возвращает вкладку к сохранённой выдаче и при установленном reload flag обновляет только search page.
 
-Основной поток:
+Подробная последовательность состояний находится в [lifecycle.md](lifecycle.md).
 
-1. UI загружает валидированную конфигурацию из storage.
-2. **Старт** создаёт новое поколение run и пытается захватить cross-tab lease.
-3. Поисковый цикл собирает ещё не обработанные карточки текущей страницы.
-4. Vacancy flow открывает карточку, выполняет профиль чтения и распознаёт сценарий отклика.
-5. До необратимого click/submit/navigation проверяются актуальный `runId` и поколение lease.
-6. Итог сохраняется как подтверждённый успех, Manual Queue outcome или пропуск.
-7. Watchdog поддерживает SPA/reload lifecycle и возврат к выдаче.
+## DOM integration
 
-## Cross-tab lease
+`SELECTORS` содержит известные `data-qa` и compatibility selectors hh.ru. Поиск устроен ступенчато:
 
-Lease хранится в `localStorage` и содержит `tabId`, уникальный `leaseId` и timestamp. Вкладка получает ownership только после записи и точной read-back проверки. Активная вкладка продлевает lease, а истёкший lease может быть захвачен другим поколением.
+1. точный selector;
+2. scoped fallback внутри активной формы или modal;
+3. semantic heuristic только для поддерживаемого элемента.
 
-Ошибки чтения, записи или подтверждения трактуются fail-closed. Старая вкладка не должна проходить commit guard после takeover и не перезаписывает чужое поколение.
+Широкий document scan не должен превращать произвольный текст вакансии в подтверждение отправки. Post-submit strong text разрешён только в отдельной confirmation phase, а обычное распознавание outcome ограничено response scope.
 
-## Навигация и trap lock
+`waitForElement` и `waitForCondition` используют MutationObserver и ограниченный fallback polling. Mutations, созданные собственной панелью, отфильтровываются, чтобы diagnostics/UI не будили response detector.
 
-Watchdog следит за URL, поддерживает UI после SPA-перерисовок и обрабатывает `/applicant/vacancy_response`. Обычная full-page форма отправляется в рамках стандартного flow, а анкета с вопросами сохраняется в Manual Queue.
+## Идентификаторы вакансий
 
-Trap lock в `sessionStorage` содержит token, `runId` и expiration. Просроченная или невалидная запись удаляется; timer проверяет token перед очисткой, чтобы старое поколение не сняло новый lock.
+Предпочтительный ID извлекается из `/vacancy/{id}`, `vacancyId` или encoded `vacancyId`. При отсутствии числового ID создаётся FNV-1a alias по URL или содержимому карточки. Это позволяет завершить обработку рекламных/нестандартных карточек без бесконечного повтора.
 
-## Распознавание сценариев
+Title для Manual Queue выбирается по приоритету: vacancy DOM, JSON-LD `JobPosting`, Open Graph, очищенный `document.title`, затем session cache последней вакансии.
 
-После клика скрипт ждёт первый надёжно распознанный outcome:
+## Concurrency и fencing
 
-- стандартная modal/form;
-- предложение прикрепить письмо после отклика;
-- прямое подтверждение;
-- предупреждение о вероятном отказе;
-- relocation modal;
-- редирект на форму или вопросы;
-- CAPTCHA;
-- timeout или неподтверждённый исход.
+Внутри вкладки `runId` отделяет поколения Start/Stop/Start. Старый async continuation не считается актуальным после увеличения `currentRunId` или AbortController cancellation.
 
-Модалка с ещё не отправленной формой проверяется раньше post-submit предложения письма. Состояние «Вы откликнулись» распознаётся до нового клика и не увеличивает счётчик.
+Между вкладками используется generation-aware lease в `localStorage`: `tabId`, уникальный `leaseId`, timestamp и TTL 30 секунд. Захват включает запись, 60-миллисекундное race window и точный read-back. Heartbeat продлевает только текущее подтверждённое поколение.
 
-## Идентификаторы и Manual Queue
+Перед submit, записью успеха и критической навигацией `guardOwnedCommit()` последовательно проверяет `runId` и обновляет lease. Неопределённость чтения/записи трактуется как потеря ownership.
 
-Предпочтительный ID извлекается из vacancy URL. Если числовой ID недоступен, используется стабильный псевдоним по URL или содержимому карточки. Для рекламных ссылок обработанными могут быть помечены и alias карточки, и фактический vacancy ID.
+## Persistence policy
 
-Название вакансии берётся по приоритету:
+Критические значения (`is_active`, processed IDs, sent count и Manual Queue) требуют успешной записи; для terminal-state и очереди используется read-back. Settings failure во время активного run также приводит к остановке.
 
-1. DOM страницы вакансии;
-2. JSON-LD `JobPosting`;
-3. Open Graph title;
-4. очищенный `document.title`.
+Diagnostic log, metrics и часть UI state являются best-effort. При storage quota pressure log сокращается, snapshots оставляют меньшее окно, но automation не падает только из-за невозможности сохранить вспомогательную диагностику.
 
-Последняя метаинформация о вакансии кэшируется в `sessionStorage`, чтобы сохранить понятное название после редиректа.
+Все ключи и их lifetime описаны в [storage.md](storage.md).
 
-## Persistence
+## UI
 
-Критические settings и terminal-state записи проверяются после записи. Неопределённый итог не считается успехом: run останавливается, чтобы не продолжать с недостоверным состоянием.
+Панель строится программно и не использует Shadow DOM. `HostLayoutReservation` измеряет доступную ширину и выбирает full, compact или overlay mode. Docked panel резервирует место у реального root hh.ru, не меняя глобальную ширину `body`.
 
-Diagnostics и часть UI persistence являются best-effort. При storage quota pressure журнал и DOM snapshots сокращаются до меньшего окна.
+UI поддерживает remount после SPA-удаления, keyboard navigation для интерактивных controls, синхронизацию RU/EN и отдельные controllers для slider, diagnostics, stats и Manual Queue. Turbo animation создаётся только при видимом Turbo mode и очищается при скрытии/переходе режима.
 
-## Диагностика и privacy boundary
+## Security и privacy boundary
 
-Diagnostic report включает версию, время, текущий URL, user agent, состояние run, storage/lease summary, метрики, журнал и ограниченные snapshots. `coverText` заменяется количеством символов; значения полей не сохраняются в snapshot.
-
-Manual Queue export и diagnostic report создаются через `Blob` и object URL. Runtime не содержит внешнего transport API, `@require` или динамического исполнения кода. Эти свойства проверяются при release pass и должны сохраняться либо явно документироваться при изменении модели.
+Userscript работает с `@grant none` в page context hh.ru. Runtime не загружает внешний код и не использует transport API. Diagnostic и queue exports формируются через `Blob`/object URL. Это упрощает аудит, но означает, что storage origin hh.ru находится в общей границе с кодом страницы; подробности приведены в [PRIVACY.md](../PRIVACY.md).
 
 ## Проверки
 
-```bash
-node --check script.js
-node --test
-git diff --check
-```
+Node tests извлекают отдельные production sections и запускают их в контролируемых harnesses. Они покрывают response confirmation, persistence failures, singleton, SPA remount, diagnostics, performance, concurrency fencing и responsive docking. Browser fixture для docking хранится отдельно и не заменяет ручной smoke на hh.ru.
 
-Изменения storage, navigation, selector fallbacks, RU/EN или необратимых действий требуют соответствующих regression tests.
+Команды и тестовый workflow описаны в [development.md](development.md).
