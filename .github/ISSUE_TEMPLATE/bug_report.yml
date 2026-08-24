@@ -1,0 +1,101 @@
+name: Bug report
+description: Сообщить о воспроизводимой проблеме HH Apply Assistant
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Не публикуйте cookies, токены, текст сопроводительного письма и персональные данные. Diagnostic report может содержать URL, query parameters и фрагменты диагностической разметки; просмотрите и отредактируйте его перед отправкой.
+
+  - type: input
+    id: script_version
+    attributes:
+      label: Версия HH Apply Assistant
+      description: Указана в Tampermonkey Dashboard и metadata userscript.
+      placeholder: v4.0.0 или commit hash
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Браузер
+      placeholder: Chrome 140.0.x
+    validations:
+      required: true
+
+  - type: input
+    id: tampermonkey
+    attributes:
+      label: Версия Tampermonkey
+      placeholder: 5.3.x
+    validations:
+      required: true
+
+  - type: dropdown
+    id: page_type
+    attributes:
+      label: Тип страницы
+      options:
+        - Поиск вакансий
+        - Страница вакансии
+        - Форма отклика или анкета
+        - Другой поддерживаемый URL
+    validations:
+      required: true
+
+  - type: dropdown
+    id: work_mode
+    attributes:
+      label: Режим
+      options:
+        - Безопасный / Safe
+        - Баланс / Balanced
+        - Быстрый / Fast
+        - Турбо / Turbo
+        - Прогон не был запущен
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: Укажите минимальную последовательность. Вместо полного URL достаточно типа страницы и безопасной части path.
+      placeholder: |
+        1. Открыл страницу поиска...
+        2. Выбрал режим...
+        3. Нажал...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемое поведение
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактическое поведение
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Диагностика
+      description: Результат Healthcheck, релевантный отредактированный log и screenshot без персональных данных.
+      render: text
+
+  - type: checkboxes
+    id: privacy_check
+    attributes:
+      label: Проверка данных
+      options:
+        - label: Я проверил все приложенные материалы и удалил персональные данные, cookies, токены и чувствительные параметры URL.
+          required: true

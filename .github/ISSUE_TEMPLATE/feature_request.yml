@@ -1,0 +1,57 @@
+name: Feature request
+description: Предложить новый сценарий или улучшение существующего поведения
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Опишите пользовательскую проблему, а не только желаемую кнопку. Для крупных изменений automation, storage или permissions полезно объяснить безопасный terminal outcome.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Проблема или use case
+      description: Что сейчас нельзя сделать или приходится делать вручную?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_behavior
+    attributes:
+      label: Предлагаемое поведение
+      description: Как должен выглядеть результат для пользователя?
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_workaround
+    attributes:
+      label: Текущий workaround
+      description: Как задача решается сейчас, если решается?
+
+  - type: checkboxes
+    id: affected_areas
+    attributes:
+      label: Возможная область влияния
+      options:
+        - label: Automation или response confirmation
+        - label: UI или responsive layout
+        - label: RU/EN localization
+        - label: Storage или backward compatibility
+        - label: Diagnostics, privacy или permissions
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Дополнительный контекст
+      description: Примеры DOM/data-qa допустимы только без персональных данных и секретов.
+
+  - type: checkboxes
+    id: privacy_check
+    attributes:
+      label: Проверка данных
+      options:
+        - label: В описании и приложениях нет персональных данных, cookies, токенов или неотредактированных diagnostic reports.
+          required: true
