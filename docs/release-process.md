@@ -4,7 +4,7 @@ Production-источником установки и автоматически
 
 `https://github.com/tgeruzov/hh-auto-responder`
 
-Metadata, install links и support links должны указывать именно на этот адрес. GitHub redirects не считаются частью update contract. Этот документ описывает переиспользуемый выпуск любой версии `X.Y.Z`; одноразовый перенос первого публичного выпуска HH Apply Assistant 2.0.0 вынесен в [temporary migration plan](migration-plan.md).
+Metadata, install links и support links должны указывать именно на этот адрес. GitHub redirects не считаются частью update contract. Этот документ описывает переиспользуемый выпуск любой версии `X.Y.Z`; одноразовый перенос первого публичного выпуска HH Apply Assistant 4.0.0 вынесен в [temporary migration plan](migration-plan.md).
 
 ## Источники версии
 
@@ -19,15 +19,15 @@ Metadata, install links и support links должны указывать име�
 
 `scripts/validate-repository.mjs` получает текущую версию из metadata, сверяет с ней runtime-константу `VERSION` и проверяет остальные locations. Отдельного файла `VERSION` в repository нет: source of truth для release tooling — userscript metadata.
 
-## SemVer начиная с 2.0.0
+## SemVer начиная с 4.0.0
 
 - **MAJOR:** несовместимое изменение пользовательского compatibility contract, включая обязательный несовместимый переход данных или установки.
 - **MINOR:** новая пользовательская возможность или поддержанный сценарий с обратной совместимостью.
 - **PATCH:** исправление поведения, совместимости с hh.ru, интерфейса или документации без несовместимого изменения.
 
-Версия 2.0.0 начинает нормализованную SemVer-линию HH Apply Assistant: backwards-compatible bugfix выпускается как 2.0.1, backwards-compatible feature — как 2.1.0, а breaking user-facing compatibility change — как 3.0.0. Большой diff, UI redesign, refactor или количество строк сами по себе не требуют MAJOR. Legacy-поколение HH.ru Auto Responder относится к линии 1.x; нормализация его historical public tags/releases выполняется отдельно без переписывания Git commit history. Version bump выполняется при подготовке публикации, а не в каждом feature commit.
+Версия 4.0.0 начинает SemVer-линию HH Apply Assistant после опубликованного public `v3.3.0`: backwards-compatible bugfix выпускается как 4.0.1, backwards-compatible feature — как 4.1.0, а breaking user-facing compatibility change — как 5.0.0. Большой diff, UI redesign, refactor или количество строк сами по себе не требуют MAJOR. Historical public tags/releases HH.ru Auto Responder остаются неизменными; Git commit history не переписывается. Version bump выполняется при подготовке публикации, а не в каждом feature commit.
 
-Storage schema version движется независимо от product SemVer и увеличивается только тогда, когда текущие persisted data нельзя корректно прочитать без migration. Поэтому, например, HH Apply Assistant 2.5.0 может продолжать использовать storage schema 1.
+Storage schema version движется независимо от product SemVer и увеличивается только тогда, когда текущие persisted data нельзя корректно прочитать без migration. Поэтому, например, HH Apply Assistant 4.5.0 может продолжать использовать storage schema 1.
 
 ## Подготовка release candidate
 

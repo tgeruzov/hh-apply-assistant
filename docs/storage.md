@@ -1,6 +1,6 @@
 # Storage и состояние
 
-Текущая версия схемы хранения — 1 (`STORAGE_SCHEMA_VERSION = 1`); все основные ключи используют префикс `hh_apply_assistant_s1_`. Product SemVer и storage schema независимы: например, HH Apply Assistant 2.5.0 может продолжать использовать schema 1. `STORAGE_SCHEMA_VERSION` увеличивается только тогда, когда существующие persisted data нельзя корректно прочитать без migration. Совместимые обновления сохраняют namespace и данные, а несовместимое изменение требует явной migration strategy и release note.
+Текущая версия схемы хранения — 1 (`STORAGE_SCHEMA_VERSION = 1`); все основные ключи используют префикс `hh_apply_assistant_s1_`. Product SemVer и storage schema независимы: например, HH Apply Assistant 4.5.0 может продолжать использовать schema 1. `STORAGE_SCHEMA_VERSION` увеличивается только тогда, когда существующие persisted data нельзя корректно прочитать без migration. Совместимые обновления сохраняют namespace и данные, а несовместимое изменение требует явной migration strategy и release note.
 
 `localStorage` и `sessionStorage` относятся к origin hh.ru. `sessionStorage` живёт в пределах вкладки и сохраняется при full-page navigation этой вкладки; после её закрытия session state исчезает. `localStorage` остаётся между сессиями браузера.
 

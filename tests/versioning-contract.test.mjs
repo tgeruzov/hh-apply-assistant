@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const SCRIPT_SOURCE = readFileSync(new URL('../hh-apply-assistant.user.js', import.meta.url), 'utf8');
-const EXPECTED_PRODUCT_VERSION = '2.0.0';
+const EXPECTED_PRODUCT_VERSION = '4.0.0';
 const EXPECTED_STORAGE_SCHEMA_VERSION = 1;
+const EXPECTED_STORAGE_PREFIX = 'hh_apply_assistant_s1_';
 const EXPECTED_RUNTIME_KEY = '__hhApplyAssistantRuntime';
 
 function metadataValue(key) {
@@ -51,8 +52,11 @@ test('storage schema and namespace are independent from product SemVer', () => {
     )?.[0] || '';
     assert.ok(prefixDeclaration, 'STORAGE_PREFIX must derive from STORAGE_SCHEMA_VERSION');
     assert.doesNotMatch(prefixDeclaration, /\bVERSION\b/);
+    assert.equal(`hh_apply_assistant_s${schemaVersion}_`, EXPECTED_STORAGE_PREFIX);
     assert.doesNotMatch(SCRIPT_SOURCE, /hh_apply_assistant_v\d+_/);
     assert.doesNotMatch(SCRIPT_SOURCE, /hh_apply_assistant_s\d+_/);
     const productMajor = EXPECTED_PRODUCT_VERSION.split('.')[0];
     assert.equal(SCRIPT_SOURCE.includes(`hh_apply_assistant_v${productMajor}_`), false);
+    assert.equal(SCRIPT_SOURCE.includes('hh_apply_assistant_v4_'), false);
+    assert.equal(SCRIPT_SOURCE.includes('__hhApplyAssistantV4Runtime'), false);
 });

@@ -7,8 +7,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE_NAME = 'hh-apply-assistant.user.js';
 const SOURCE_PATH = path.join(ROOT, SOURCE_NAME);
 const PRODUCT_NAME = 'HH Apply Assistant';
+const EXPECTED_PRODUCT_VERSION = '4.0.0';
 const EXPECTED_RUNTIME_KEY = '__hhApplyAssistantRuntime';
 const EXPECTED_STORAGE_SCHEMA_VERSION = 1;
+const EXPECTED_STORAGE_PREFIX = 'hh_apply_assistant_s1_';
 const REPOSITORY_URL = 'https://github.com/tgeruzov/hh-auto-responder';
 const RAW_URL = 'https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js';
 const DEVELOPMENT_REPOSITORY_NAME = 'hh-auto-responder' + '-dev';
@@ -143,6 +145,9 @@ async function validateMetadata(source) {
     if (productVersionRaw !== PRODUCT_VERSION) {
         report(`${SOURCE_NAME}: @version must omit the v prefix: ${productVersionRaw}`);
     }
+    if (PRODUCT_VERSION !== EXPECTED_PRODUCT_VERSION) {
+        report(`${SOURCE_NAME}: @version is ${PRODUCT_VERSION}, expected ${EXPECTED_PRODUCT_VERSION}`);
+    }
 
     const runtimeVersionMatches = [...source.matchAll(/^\s*const VERSION = '([^']+)';$/gm)];
     if (runtimeVersionMatches.length !== 1) {
@@ -205,6 +210,9 @@ async function validateMetadata(source) {
     const STORAGE_PREFIX = Number.isSafeInteger(STORAGE_SCHEMA_VERSION)
         ? `hh_apply_assistant_s${STORAGE_SCHEMA_VERSION}_`
         : '';
+    if (STORAGE_PREFIX !== EXPECTED_STORAGE_PREFIX) {
+        report(`${SOURCE_NAME}: storage prefix is ${STORAGE_PREFIX}, expected ${EXPECTED_STORAGE_PREFIX}`);
+    }
     return { PRODUCT_VERSION, TAG_VERSION, STORAGE_SCHEMA_VERSION, STORAGE_PREFIX, RUNTIME_KEY };
 }
 

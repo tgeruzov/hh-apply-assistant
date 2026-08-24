@@ -22,9 +22,9 @@
 ## Maintainer
 
 - [Выпуск версии](release-process.md): переиспользуемый SemVer flow, release candidate, публикация и post-release checks.
-- [Changelog](../CHANGELOG.md): подтверждённые пользовательские изменения, начиная с 2.0.0.
-- [Release notes 2.0.0](release-notes/v2.0.0.md): пользовательское описание первого публичного выпуска HH Apply Assistant.
-- [Temporary 2.0.0 cutover plan](migration-plan.md): одноразовый runbook только для первой миграции HH Apply Assistant; не использовать для следующих релизов.
+- [Changelog](../CHANGELOG.md): подтверждённые пользовательские изменения, начиная с 4.0.0.
+- [Release notes 4.0.0](release-notes/v4.0.0.md): пользовательское описание первого публичного выпуска HH Apply Assistant после legacy-поколения.
+- [Temporary 4.0.0 cutover plan](migration-plan.md): одноразовый runbook только для первого публичного выпуска HH Apply Assistant; не использовать для следующих релизов.
 
 ## Community
 

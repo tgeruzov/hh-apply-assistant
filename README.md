@@ -2,7 +2,7 @@
 
 [Русский](README.md) | [English](README.en.md)
 
-[![Version](https://img.shields.io/badge/version-2.0.0-2563eb.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.0.0-2563eb.svg)](CHANGELOG.md)
 [![CI](https://github.com/tgeruzov/hh-auto-responder/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tgeruzov/hh-auto-responder/actions/workflows/ci.yml?query=branch%3Amain)
 [![License](https://img.shields.io/badge/license-GPL--3.0--only-2563eb.svg)](LICENSE)
 

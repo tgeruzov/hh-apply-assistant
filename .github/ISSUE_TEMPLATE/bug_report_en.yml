@@ -14,7 +14,7 @@ body:
     attributes:
       label: HH Apply Assistant version
       description: Find it in the Tampermonkey Dashboard.
-      placeholder: 2.0.0 or a commit hash
+      placeholder: 4.0.0 or a commit hash
     validations:
       required: true
 

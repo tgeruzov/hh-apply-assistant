@@ -14,7 +14,7 @@ body:
     attributes:
       label: Версия HH Apply Assistant
       description: Указана в панели управления Tampermonkey.
-      placeholder: 2.0.0 или хеш коммита
+      placeholder: 4.0.0 или хеш коммита
     validations:
       required: true
 

@@ -1,15 +1,15 @@
-# Temporary: первый публичный cutover HH Apply Assistant 2.0.0
+# Temporary: первый публичный cutover HH Apply Assistant 4.0.0
 
 > [!IMPORTANT]
-> Это одноразовый migration runbook для первой публикации HH Apply Assistant 2.0.0 в `tgeruzov/hh-auto-responder/main`. Он не относится к последующим релизам и не разрешает внешние write-операции. Обычные версии выпускаются по [release process](release-process.md).
+> Это одноразовый migration runbook для первой публикации HH Apply Assistant 4.0.0 в `tgeruzov/hh-auto-responder/main`. Он не относится к последующим релизам и не разрешает внешние write-операции. Обычные версии выпускаются по [release process](release-process.md).
 
 Документ намеренно не фиксирует public tip, число commits или состояние working tree: эти данные устаревают после любого изменения. Их нужно получить заново непосредственно перед migration.
 
 ## Цель и стратегия
 
-Предпочтительный результат — точный проверенный release commit HH Apply Assistant 2.0.0 в canonical `main` без force-push и без потери review history.
+Предпочтительный результат — точный проверенный release commit HH Apply Assistant 4.0.0 в canonical `main` без force-push и без потери review history.
 
-Нормализация historical public tags/releases — отдельная контролируемая операция до или вместе с final public cutover. Этот dev-only runbook не определяет окончательный список операций с опубликованными tags/releases, не разрешает их выполнять в текущем pass и не предполагает переписывание Git commit history.
+Historical public tags/releases остаются неизменными. Этот dev-only runbook не разрешает операции с опубликованными tags/releases и не предполагает переписывание Git commit history.
 
 Если актуальный public `main` является предком release commit, допустим controlled non-force fast-forward. Если repository rules требуют pull request, используйте review-preserving migration branch без squash и повторно проверьте итоговый merge SHA. Если histories разошлись, автоматический fast-forward больше не считается безопасным: migration останавливается до отдельного conflict, security и release review.
 
@@ -47,7 +47,7 @@ git diff --name-status canonical/main...HEAD
 4. Перед реальной записью выполните dry run выбранной операции. Для прямого fast-forward: `git push --dry-run canonical HEAD:main`.
 5. Доставьте exact проверенный commit без force-push. Не переносите незакоммиченный working tree, локальные refs, credentials или repository settings.
 6. Дождитесь CI на canonical `main`, затем проверьте production Raw URL и чистую установку в Tampermonkey.
-7. Только после production smoke создайте tag `v2.0.0` и GitHub Release **HH Apply Assistant v2.0.0** из `docs/release-notes/v2.0.0.md`.
+7. Только после production smoke создайте tag `v4.0.0` и GitHub Release **HH Apply Assistant v4.0.0** из `docs/release-notes/v4.0.0.md`.
 
 ## Stop conditions
 

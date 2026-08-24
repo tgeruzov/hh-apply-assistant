@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
+// @version      4.0.0
 // @description  HH Apply Assistant — инструмент автоматизации откликов на вакансии hh.ru (HeadHunter)
 // @author       Timur Geruzov
 // @license      GPL-3.0-only
@@ -19,7 +19,7 @@
 (function () {
     'use strict';
 
-    const VERSION = '2.0.0';
+    const VERSION = '4.0.0';
 
     // Повторная инъекция userscript в тот же document не должна создавать второй runtime.
     // Полная навигация получает новый window, а SPA/bfcache продолжают использовать эту запись.
