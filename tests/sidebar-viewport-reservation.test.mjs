@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 
-const production = readFileSync(new URL('../hh-apply-assistant.user.js', import.meta.url), 'utf8');
+const production = readFileSync(new URL('../hh-apply-assistant.user.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const labUrl = new URL('../hh-apply-assistant-ui-lab.html', import.meta.url);
 const lab = existsSync(labUrl) ? readFileSync(labUrl, 'utf8') : '';
 

@@ -7,7 +7,7 @@ import vm from 'node:vm';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const SCRIPT_PATH = resolve(TEST_DIR, '..', 'hh-apply-assistant.user.js');
-const SCRIPT_SOURCE = readFileSync(SCRIPT_PATH, 'utf8');
+const SCRIPT_SOURCE = readFileSync(SCRIPT_PATH, 'utf8').replace(/\r\n/g, '\n');
 
 const submitStart = SCRIPT_SOURCE.indexOf('    async function submitResponsePage');
 const submitEnd = SCRIPT_SOURCE.indexOf('\n\n    // Открываем вакансию со списка', submitStart);
