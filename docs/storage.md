@@ -1,12 +1,12 @@
 # Storage и состояние
 
-Все основные ключи версии 4 используют префикс `hh_apply_assistant_v4_`. Код не читает namespace предыдущих версий, не мигрирует его и не удаляет. Обновления внутри v4 сохраняют текущие данные, пока release notes не укажут обратное.
+Текущая версия схемы хранения — 1 (`STORAGE_SCHEMA_VERSION = 1`); все основные ключи используют префикс `hh_apply_assistant_s1_`. Product SemVer и storage schema независимы: например, HH Apply Assistant 2.5.0 может продолжать использовать schema 1. `STORAGE_SCHEMA_VERSION` увеличивается только тогда, когда существующие persisted data нельзя корректно прочитать без migration. Совместимые обновления сохраняют namespace и данные, а несовместимое изменение требует явной migration strategy и release note.
 
 `localStorage` и `sessionStorage` относятся к origin hh.ru. `sessionStorage` живёт в пределах вкладки и сохраняется при full-page navigation этой вкладки; после её закрытия session state исчезает. `localStorage` остаётся между сессиями браузера.
 
 ## Настройки
 
-Объект `hh_apply_assistant_v4_settings` нормализуется при чтении:
+Объект `hh_apply_assistant_s1_settings` нормализуется при чтении:
 
 | Поле | Тип | Default | Валидация |
 |---|---|---|---|
@@ -27,8 +27,8 @@
 | `language` | `ru` или `en`; при отсутствии определяется по языку document/browser, затем fallback `ru` | `I18n.init/setLanguage` | остаётся между сессиями; полный сброс вручную |
 | `manual_queue` | array до 500 объектов `{vid,url,returnUrl,ts,title}`; default `[]` | automation/watchdog добавляют, UI читает/удаляет/очищает | отдельная кнопка **Очистить** или полный сброс |
 | `instance_lock` | `{tabId,leaseId,ts}`; default отсутствует | Start/acquire, watchdog heartbeat, commit guard | удаляется владельцем при Stop/terminal state; stale запись перестаёт быть активной через 30 с и может быть перезаписана |
-| `diagnostic_log` | array `{t,lvl,path,tab,lang,msg,...i18n}`; default `[]` | `DiagLog`, Diagnostics UI/export | до 1000 записей; **Очистить всё**; при quota pressure окно сокращается до 300 |
-| `metrics` | `{startedAt,counters,timings,selectors,snapshots}` | automation, selectors, health/diagnostic export | **Очистить всё**; до 15 snapshots, при failed save остаются последние 3 |
+| `diagnostic_log` | array `{t,lvl,path,tab,lang,msg,...i18n}`; default `[]` | `DiagLog`, Diagnostics UI/export | до 1000 записей; **Очистить сохранённый лог и метрики**; при quota pressure окно сокращается до 300 |
+| `metrics` | `{startedAt,counters,timings,selectors,snapshots}` | automation, selectors, проверка страницы/diagnostic export | **Очистить сохранённый лог и метрики**; до 15 snapshots, при failed save остаются последние 3 |
 | `ui_open` | строка `0` или `1`; отсутствие означает open | dock/compact panel controller | меняется при collapse/expand; overlay state не сохраняется |
 
 `manual_queue` проверяет URL и требует успешного write/read-back. Одновременное редактирование очереди в нескольких вкладках не является транзакционным merge: последняя подтверждённая запись может основываться на уже устаревшем snapshot списка.
@@ -52,11 +52,11 @@
 
 ## Состояние экспортированной очереди
 
-Интерактивный HTML Manual Queue использует `hh_apply_assistant_v4_manual_processed` в `localStorage` контекста самой экспортированной страницы. Ключ содержит map открытых записей. Production userscript на hh.ru его не читает и не очищает; доступность storage для `file:`/`blob:` зависит от браузера, поэтому сохранение markers является best-effort.
+Интерактивный HTML Manual Queue использует `hh_apply_assistant_s1_manual_processed` в `localStorage` контекста самой экспортированной страницы. Ключ содержит map открытых записей. Production userscript на hh.ru его не читает и не очищает; доступность storage для `file:`/`blob:` зависит от браузера, поэтому сохранение markers является best-effort.
 
 ## Volatile state
 
-Не всё runtime-состояние хранится в browser storage. В памяти document находятся `currentRunId`, AbortController, timers, флаги loop/response handler и UI controller state. `window.__hhApplyAssistantV4Runtime` предотвращает вторую активную копию текущего runtime в том же document. При полном переходе создаётся новый document и память восстанавливается из session/local state.
+Не всё runtime-состояние хранится в browser storage. В памяти document находятся `currentRunId`, AbortController, timers, флаги loop/response handler и UI controller state. Стабильный `window.__hhApplyAssistantRuntime` предотвращает вторую активную копию текущего runtime в том же document и не меняется вместе с product version. При полном переходе создаётся новый document и память восстанавливается из session/local state.
 
 ## Очистка
 
@@ -64,6 +64,6 @@
 
 - **Сбросить историю**: `processed_ids`, `sent_count`, `run_stats`;
 - **Ручная очередь → Очистить**: `manual_queue`;
-- **Диагностика → Очистить всё**: `diagnostic_log`, `metrics`.
+- **Диагностика → Дополнительно → Очистить сохранённый лог и метрики**: удаляет прежние `diagnostic_log` и `metrics`; после очистки может появиться новая служебная запись журнала о самом действии.
 
-Для полного сброса удалите ключи с префиксом `hh_apply_assistant_v4_` из Local Storage и Session Storage для hh.ru. Не удаляйте все данные сайта без необходимости: это может завершить hh.ru session. Удаление userscript не очищает origin storage автоматически.
+Для полного сброса удалите ключи с префиксом `hh_apply_assistant_s1_` из Local Storage и Session Storage для hh.ru. Не удаляйте все данные сайта без необходимости: это может завершить hh.ru session. Удаление userscript не очищает origin storage автоматически.

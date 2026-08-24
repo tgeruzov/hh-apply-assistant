@@ -6,11 +6,11 @@ HH Apply Assistant поставляется одним production-файлом [
 
 | Подсистема | Ответственность |
 |---|---|
-| Metadata и singleton | `@match`, permissions, update source и защита от второй инъекции в тот же document через `window.__hhApplyAssistantV4Runtime` |
+| Metadata и singleton | `@match`, permissions, update source и защита от второй инъекции в тот же document через стабильный `window.__hhApplyAssistantRuntime` |
 | Configuration и i18n | defaults, валидация настроек, RU/EN translations и форматирование UI/diagnostics |
-| Storage layer | безопасные local/session wrappers, verified writes для критического состояния и v4 namespace |
+| Storage layer | безопасные local/session wrappers, verified writes для критического состояния и независимый namespace storage schema 1 |
 | State | processed IDs, run counters, URL возврата, Manual Queue, trap lock и cross-tab lease |
-| Diagnostics | постоянный log, metrics, snapshots, Healthcheck и report export |
+| Diagnostics | постоянный log, metrics, snapshots, **Проверить страницу** и report export |
 | DOM adapter | точные selectors, scoped compatibility fallbacks, heuristics, visibility checks и ожидание через MutationObserver |
 | Automation engine | выбор карточки, переход на вакансию, чтение, распознавание response flow, submit confirmation и terminal outcome |
 | Watchdog | проверка URL/состояния раз в секунду, response page flow, CAPTCHA, lease heartbeat и remount UI |

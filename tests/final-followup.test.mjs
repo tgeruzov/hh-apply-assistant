@@ -9,7 +9,7 @@ const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const SCRIPT_PATH = resolve(TEST_DIR, '..', 'hh-apply-assistant.user.js');
 const SCRIPT_SOURCE = readFileSync(SCRIPT_PATH, 'utf8');
 const HOOK_MARKER = '    // Перехват необработанных ошибок:';
-const SETTINGS_KEY = 'hh_apply_assistant_v4_settings';
+const SETTINGS_KEY = 'hh_apply_assistant_s1_settings';
 
 class FakeStorage {
     constructor(initial = {}) {

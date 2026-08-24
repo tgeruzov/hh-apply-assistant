@@ -377,20 +377,32 @@ ${marker}`);
     vm.createContext(context);
 
     vm.runInContext(instrumented, context, { filename: SCRIPT_PATH });
-    const firstRecord = context.__hhApplyAssistantV4Runtime;
+    const firstRecord = context.__hhApplyAssistantRuntime;
     const afterFirst = counts();
+    const productVersion = SCRIPT_SOURCE.match(/const VERSION = '([^']+)'/)?.[1];
     assert.equal(firstRecord.active, true);
+    assert.equal(firstRecord.version, productVersion);
     assert.equal(afterFirst.intervalsCreated, 1);
     assert.equal(firstRecord.watchdogIntervalId, 1);
     assert.ok(firstRecord.globalListeners.length >= 3);
 
     vm.runInContext(instrumented, context, { filename: SCRIPT_PATH });
-    assert.equal(context.__hhApplyAssistantV4Runtime, firstRecord);
+    assert.equal(context.__hhApplyAssistantRuntime, firstRecord);
+    assert.deepEqual(counts(), afterFirst);
+    assert.equal(context.__singletonReached, 1);
+
+    const futureVersionInstrumented = instrumented.replace(
+        /const VERSION = '(\d+)\.(\d+)\.(\d+)';/,
+        (_, major, minor) => `const VERSION = '${major}.${Number(minor) + 1}.0';`
+    );
+    assert.notEqual(futureVersionInstrumented, instrumented);
+    vm.runInContext(futureVersionInstrumented, context, { filename: SCRIPT_PATH });
+    assert.equal(context.__hhApplyAssistantRuntime, firstRecord);
     assert.deepEqual(counts(), afterFirst);
     assert.equal(context.__singletonReached, 1);
 
     firstRecord.teardown();
-    assert.equal(context.__hhApplyAssistantV4Runtime, undefined);
+    assert.equal(context.__hhApplyAssistantRuntime, undefined);
     assert.equal(counts().intervalsCleared, 1);
     assert.equal(counts().listenersRemoved, afterFirst.listenersAdded);
 

@@ -1,4 +1,4 @@
-name: Bug report
+name: Сообщить об ошибке
 description: Сообщить о воспроизводимой проблеме HH Apply Assistant
 title: "[Bug] "
 labels:
@@ -7,14 +7,14 @@ body:
   - type: markdown
     attributes:
       value: |
-        Не публикуйте cookies, токены, текст сопроводительного письма и персональные данные. Diagnostic report может содержать URL, query parameters и фрагменты диагностической разметки; просмотрите и отредактируйте его перед отправкой.
+        Не публикуйте cookies, токены, текст сопроводительного письма и персональные данные. Диагностический отчёт может содержать адреса страниц, параметры URL и короткие фрагменты текста страницы; просмотрите и отредактируйте его перед отправкой.
 
   - type: input
     id: script_version
     attributes:
       label: Версия HH Apply Assistant
-      description: Указана в Tampermonkey Dashboard и metadata userscript.
-      placeholder: v4.0.0 или commit hash
+      description: Указана в панели управления Tampermonkey.
+      placeholder: 2.0.0 или хеш коммита
     validations:
       required: true
 
@@ -63,7 +63,7 @@ body:
     id: steps
     attributes:
       label: Шаги воспроизведения
-      description: Укажите минимальную последовательность. Вместо полного URL достаточно типа страницы и безопасной части path.
+      description: Укажите минимальную последовательность. Вместо полного URL достаточно типа страницы и безопасной части адреса.
       placeholder: |
         1. Открыл страницу поиска...
         2. Выбрал режим...
@@ -89,7 +89,7 @@ body:
     id: diagnostics
     attributes:
       label: Диагностика
-      description: Результат Healthcheck, релевантный отредактированный log и screenshot без персональных данных.
+      description: Результат «Проверить страницу», релевантный отредактированный журнал и снимок экрана без персональных данных.
       render: text
 
   - type: checkboxes

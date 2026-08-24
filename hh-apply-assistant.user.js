@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         HH Apply Assistant v4.0.0
+// @name         HH Apply Assistant
 // @namespace    http://tampermonkey.net/
-// @version      v4.0.0
+// @version      2.0.0
 // @description  HH Apply Assistant — инструмент автоматизации откликов на вакансии hh.ru (HeadHunter)
 // @author       Timur Geruzov
 // @license      GPL-3.0-only
@@ -19,15 +19,17 @@
 (function () {
     'use strict';
 
+    const VERSION = '2.0.0';
+
     // Повторная инъекция userscript в тот же document не должна создавать второй runtime.
     // Полная навигация получает новый window, а SPA/bfcache продолжают использовать эту запись.
-    const RUNTIME_KEY = '__hhApplyAssistantV4Runtime';
+    const RUNTIME_KEY = '__hhApplyAssistantRuntime';
     const existingRuntime = window[RUNTIME_KEY];
     if (existingRuntime && existingRuntime.active) return;
 
     const runtimeRecord = {
         active: true,
-        version: '4.0.0',
+        version: VERSION,
         watchdogIntervalId: null,
         domReadyObserver: null,
         globalListeners: [],
@@ -45,15 +47,14 @@
     //  1. КОНСТАНТЫ И КОНФИГУРАЦИЯ
     // ─────────────────────────────────────────────────────────────
 
-    const VERSION = '4.0.0';
-
     const HHA_PREFERRED_PANEL_WIDTH = 410;
     const HHA_MIN_PANEL_WIDTH = 340;
     // Minimum practical width reserved for hh.ru desktop layout before compact assistant mode is used.
     const HHA_MIN_HOST_WIDTH = 980;
 
-    // Чистая v4-схема. Данные предыдущих namespace намеренно не мигрируются.
-    const STORAGE_PREFIX = 'hh_apply_assistant_v4_';
+    // Версия storage schema меняется только при несовместимом формате persisted data.
+    const STORAGE_SCHEMA_VERSION = 1;
+    const STORAGE_PREFIX = `hh_apply_assistant_s${STORAGE_SCHEMA_VERSION}_`;
     const KEYS = {
         settings: STORAGE_PREFIX + 'settings',
         language: STORAGE_PREFIX + 'language',
@@ -65,6 +66,7 @@
         instanceLock: STORAGE_PREFIX + 'instance_lock',
         lastAttempt: STORAGE_PREFIX + 'last_attempt_id',
         manualList: STORAGE_PREFIX + 'manual_queue',
+        manualProcessed: STORAGE_PREFIX + 'manual_processed',
         lastVacancyMeta: STORAGE_PREFIX + 'last_vacancy_meta',
         tabId: STORAGE_PREFIX + 'tab_id',
         sentCount: STORAGE_PREFIX + 'sent_count',
@@ -1159,7 +1161,7 @@
     // ─────────────────────────────────────────────────────────────
 
     const Settings = {
-        // Defensive validation актуальной v4-схемы: defaults, типы и диапазоны.
+        // Defensive validation актуальной storage schema: defaults, типы и диапазоны.
         normalize(raw = {}) {
             const defaultCover = getDefaultCoverText();
             const merged = { ...DEFAULTS, coverText: defaultCover, ...(raw || {}) };
@@ -8286,7 +8288,7 @@
                 let sortKey = 'ts_desc';
                 let filterText = '';
                 let viewMode = 'new';
-                const PROCESSED_KEY = 'hh_apply_assistant_v4_manual_processed';
+                const PROCESSED_KEY = ${JSON.stringify(KEYS.manualProcessed)};
                 let processed = {};
                 try {
                     const raw = localStorage.getItem(PROCESSED_KEY);

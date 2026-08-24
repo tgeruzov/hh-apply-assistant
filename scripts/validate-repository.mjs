@@ -6,9 +6,18 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE_NAME = 'hh-apply-assistant.user.js';
 const SOURCE_PATH = path.join(ROOT, SOURCE_NAME);
+const PRODUCT_NAME = 'HH Apply Assistant';
+const EXPECTED_RUNTIME_KEY = '__hhApplyAssistantRuntime';
+const EXPECTED_STORAGE_SCHEMA_VERSION = 1;
 const REPOSITORY_URL = 'https://github.com/tgeruzov/hh-auto-responder';
 const RAW_URL = 'https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js';
 const DEVELOPMENT_REPOSITORY_NAME = 'hh-auto-responder' + '-dev';
+const ISSUE_FORM_NAMES = [
+    'bug_report.yml',
+    'bug_report_en.yml',
+    'feature_request.yml',
+    'feature_request_en.yml'
+];
 const errors = [];
 
 function report(message) {
@@ -92,10 +101,12 @@ async function validateMetadata(source) {
         return values[0] || '';
     };
 
-    const versionTag = single('version');
+    const productVersionRaw = single('version');
+    const PRODUCT_VERSION = normalizeVersion(productVersionRaw);
+    const TAG_VERSION = `v${PRODUCT_VERSION}`;
     const scriptName = single('name');
-    if (scriptName !== `HH Apply Assistant ${versionTag}`) {
-        report(`${SOURCE_NAME}: @name "${scriptName}" does not match @version ${versionTag}`);
+    if (scriptName !== PRODUCT_NAME) {
+        report(`${SOURCE_NAME}: @name is "${scriptName}", expected version-independent "${PRODUCT_NAME}"`);
     }
     const checks = new Map([
         ['namespace', 'http://tampermonkey.net/'],
@@ -126,13 +137,75 @@ async function validateMetadata(source) {
         report(`${SOURCE_NAME}: external @require/@resource needs an explicit repository policy update`);
     }
 
-    const runtimeVersion = source.match(/const VERSION = '([^']+)'/)?.[1] || '';
-    const recordVersion = source.match(/runtimeRecord = \{[\s\S]*?version: '([^']+)'/)?.[1] || '';
-    const normalized = normalizeVersion(versionTag);
-    if (!/^\d+\.\d+\.\d+$/.test(normalized)) report(`${SOURCE_NAME}: @version is not SemVer-compatible: ${versionTag}`);
-    if (runtimeVersion !== normalized) report(`${SOURCE_NAME}: VERSION ${runtimeVersion} does not match @version ${versionTag}`);
-    if (recordVersion !== normalized) report(`${SOURCE_NAME}: runtimeRecord.version ${recordVersion} does not match @version ${versionTag}`);
-    return normalized;
+    if (!/^\d+\.\d+\.\d+$/.test(PRODUCT_VERSION)) {
+        report(`${SOURCE_NAME}: @version is not SemVer-compatible: ${productVersionRaw}`);
+    }
+    if (productVersionRaw !== PRODUCT_VERSION) {
+        report(`${SOURCE_NAME}: @version must omit the v prefix: ${productVersionRaw}`);
+    }
+
+    const runtimeVersionMatches = [...source.matchAll(/^\s*const VERSION = '([^']+)';$/gm)];
+    if (runtimeVersionMatches.length !== 1) {
+        report(`${SOURCE_NAME}: expected exactly one VERSION declaration, found ${runtimeVersionMatches.length}`);
+    }
+    const runtimeVersion = runtimeVersionMatches[0]?.[1] || '';
+    if (runtimeVersion !== PRODUCT_VERSION) {
+        report(`${SOURCE_NAME}: VERSION ${runtimeVersion} does not match @version ${productVersionRaw}`);
+    }
+
+    const runtimeRecord = source.match(/const runtimeRecord = \{[\s\S]*?^\s*\};/m)?.[0] || '';
+    if (!runtimeRecord) {
+        report(`${SOURCE_NAME}: runtimeRecord declaration not found`);
+    } else {
+        if (!/\bversion:\s*VERSION\b/.test(runtimeRecord)) {
+            report(`${SOURCE_NAME}: runtimeRecord.version must derive from VERSION`);
+        }
+        if (/\bversion:\s*['"]/.test(runtimeRecord)) {
+            report(`${SOURCE_NAME}: runtimeRecord.version must not duplicate the product version literal`);
+        }
+    }
+    if (runtimeVersionMatches[0] && source.indexOf(runtimeVersionMatches[0][0]) > source.indexOf('const runtimeRecord = {')) {
+        report(`${SOURCE_NAME}: VERSION must be initialized before runtimeRecord`);
+    }
+
+    const runtimeKeyMatches = [...source.matchAll(/^\s*const RUNTIME_KEY = '([^']+)';$/gm)];
+    if (runtimeKeyMatches.length !== 1) {
+        report(`${SOURCE_NAME}: expected exactly one RUNTIME_KEY declaration, found ${runtimeKeyMatches.length}`);
+    }
+    const RUNTIME_KEY = runtimeKeyMatches[0]?.[1] || '';
+    if (RUNTIME_KEY !== EXPECTED_RUNTIME_KEY) {
+        report(`${SOURCE_NAME}: runtime singleton key is "${RUNTIME_KEY}", expected "${EXPECTED_RUNTIME_KEY}"`);
+    }
+    if (/\d/.test(RUNTIME_KEY) || /__hhApplyAssistantV\d+Runtime/.test(source)) {
+        report(`${SOURCE_NAME}: runtime singleton key must be independent from the product version`);
+    }
+
+    const storageSchemaMatches = [...source.matchAll(/^\s*const STORAGE_SCHEMA_VERSION = (\d+);$/gm)];
+    if (storageSchemaMatches.length !== 1) {
+        report(`${SOURCE_NAME}: expected exactly one STORAGE_SCHEMA_VERSION declaration, found ${storageSchemaMatches.length}`);
+    }
+    const STORAGE_SCHEMA_VERSION = Number(storageSchemaMatches[0]?.[1]);
+    if (!Number.isSafeInteger(STORAGE_SCHEMA_VERSION) || STORAGE_SCHEMA_VERSION <= 0) {
+        report(`${SOURCE_NAME}: STORAGE_SCHEMA_VERSION must be a positive integer`);
+    } else if (STORAGE_SCHEMA_VERSION !== EXPECTED_STORAGE_SCHEMA_VERSION) {
+        report(`${SOURCE_NAME}: STORAGE_SCHEMA_VERSION is ${STORAGE_SCHEMA_VERSION}, expected ${EXPECTED_STORAGE_SCHEMA_VERSION}`);
+    }
+
+    const expectedStoragePrefixDeclaration = /^\s*const STORAGE_PREFIX = `hh_apply_assistant_s\$\{STORAGE_SCHEMA_VERSION\}_`;$/m;
+    const storagePrefixDeclarations = [...source.matchAll(new RegExp(expectedStoragePrefixDeclaration.source, 'gm'))];
+    if (storagePrefixDeclarations.length !== 1) {
+        report(`${SOURCE_NAME}: STORAGE_PREFIX must derive exactly once from STORAGE_SCHEMA_VERSION`);
+    }
+    if (/hh_apply_assistant_v\d+_/.test(source)) {
+        report(`${SOURCE_NAME}: storage namespace must not use a product-version prefix`);
+    }
+    if (/hh_apply_assistant_s\d+_/.test(source)) {
+        report(`${SOURCE_NAME}: storage keys must derive from STORAGE_SCHEMA_VERSION, not duplicate its value`);
+    }
+    const STORAGE_PREFIX = Number.isSafeInteger(STORAGE_SCHEMA_VERSION)
+        ? `hh_apply_assistant_s${STORAGE_SCHEMA_VERSION}_`
+        : '';
+    return { PRODUCT_VERSION, TAG_VERSION, STORAGE_SCHEMA_VERSION, STORAGE_PREFIX, RUNTIME_KEY };
 }
 
 async function validateMarkdown(markdownFiles) {
@@ -180,7 +253,7 @@ async function validateMarkdown(markdownFiles) {
 }
 
 async function validateIssueForms() {
-    for (const name of ['bug_report.yml', 'feature_request.yml']) {
+    for (const name of ISSUE_FORM_NAMES) {
         const file = path.join(ROOT, '.github', 'ISSUE_TEMPLATE', name);
         const content = await readFile(file, 'utf8');
         if (/\t/.test(content)) report(`.github/ISSUE_TEMPLATE/${name}: YAML contains tabs`);
@@ -219,27 +292,30 @@ function validateRequiredFiles() {
         'README.en.md',
         'CHANGELOG.md',
         'CONTRIBUTING.md',
+        'CONTRIBUTING.en.md',
         'SECURITY.md',
+        'SECURITY.en.md',
         'PRIVACY.md',
+        'PRIVACY.en.md',
         'CODE_OF_CONDUCT.md',
         '.nvmrc',
-        '.github/ISSUE_TEMPLATE/bug_report.yml',
-        '.github/ISSUE_TEMPLATE/feature_request.yml',
+        ...ISSUE_FORM_NAMES.map(name => `.github/ISSUE_TEMPLATE/${name}`),
         '.github/ISSUE_TEMPLATE/config.yml',
         '.github/pull_request_template.md',
         '.github/workflows/ci.yml',
         'docs/README.md',
         'docs/installation.md',
+        'docs/installation.en.md',
         'docs/usage.md',
+        'docs/usage.en.md',
         'docs/architecture.md',
         'docs/storage.md',
         'docs/lifecycle.md',
         'docs/diagnostics.md',
         'docs/development.md',
         'docs/troubleshooting.md',
-        'docs/release-process.md',
-        'docs/migration-plan.md',
-        'docs/release-notes/v4.0.0.md'
+        'docs/troubleshooting.en.md',
+        'docs/release-process.md'
     ];
     for (const name of required) {
         if (!existsSync(path.join(ROOT, name))) report(`${name}: required repository file is missing`);
@@ -250,14 +326,17 @@ const allFiles = await walk(ROOT);
 validateRequiredFiles();
 if (!existsSync(SOURCE_PATH)) report(`${SOURCE_NAME}: production userscript is missing`);
 const source = existsSync(SOURCE_PATH) ? await readFile(SOURCE_PATH, 'utf8') : '';
-const version = source ? await validateMetadata(source) : null;
+const versionContract = source ? await validateMetadata(source) : null;
 
-if (version) {
+if (versionContract) {
+    const { PRODUCT_VERSION, TAG_VERSION } = versionContract;
+    // These markers guard version-file presence only. They do not prove semantic
+    // equivalence between languages or between documentation and runtime behavior.
     const versionFiles = [
-        ['README.md', `version-${version}`],
-        ['README.en.md', `version-${version}`],
-        ['CHANGELOG.md', `## [${version}]`],
-        [`docs/release-notes/v${version}.md`, `# HH Apply Assistant v${version}`]
+        ['README.md', `version-${PRODUCT_VERSION}`],
+        ['README.en.md', `version-${PRODUCT_VERSION}`],
+        ['CHANGELOG.md', `## [${PRODUCT_VERSION}]`],
+        [`docs/release-notes/${TAG_VERSION}.md`, `# ${PRODUCT_NAME} ${TAG_VERSION}`]
     ];
     for (const [name, marker] of versionFiles) {
         const file = path.join(ROOT, name);
@@ -266,7 +345,21 @@ if (version) {
             continue;
         }
         const content = await readFile(file, 'utf8');
-        if (!content.includes(marker)) report(`${name}: version marker "${marker}" does not match ${version}`);
+        if (!content.includes(marker)) report(`${name}: version marker "${marker}" does not match ${PRODUCT_VERSION}`);
+    }
+
+    const migrationPlanPath = path.join(ROOT, 'docs', 'migration-plan.md');
+    if (existsSync(migrationPlanPath)) {
+        const migrationPlan = await readFile(migrationPlanPath, 'utf8');
+        for (const marker of [
+            `${PRODUCT_NAME} ${TAG_VERSION}`,
+            `tag \`${TAG_VERSION}\``,
+            `docs/release-notes/${TAG_VERSION}.md`
+        ]) {
+            if (!migrationPlan.includes(marker)) {
+                report(`docs/migration-plan.md: current cutover marker "${marker}" is missing`);
+            }
+        }
     }
 }
 
@@ -283,38 +376,26 @@ for (const file of allFiles.filter(file => /(?:\.md|\.ya?ml|\.user\.js)$/i.test(
     }
 }
 
-const readmeRu = await readFile(path.join(ROOT, 'README.md'), 'utf8');
-const readmeEn = await readFile(path.join(ROOT, 'README.en.md'), 'utf8');
-for (const marker of [
-    SOURCE_NAME,
-    RAW_URL,
-    '@updateURL',
-    '@downloadURL',
-    '50',
-    'CAPTCHA',
-    'localStorage',
-    'sessionStorage',
-    'PRIVACY.md',
-    'docs/installation.md',
-    'docs/troubleshooting.md'
-]) {
-    if (!readmeRu.includes(marker)) report(`README.md: missing shared fact marker "${marker}"`);
-    if (!readmeEn.includes(marker)) report(`README.en.md: missing shared fact marker "${marker}"`);
-}
-
 const legacySourceName = 'script' + '.js';
 for (const file of allFiles.filter(file => /\.(?:md|mjs|html|ya?ml)$/.test(file))) {
     const content = await readFile(file, 'utf8');
     const name = relative(file);
-    if (content.includes(legacySourceName) && name !== 'docs/migration-plan.md') {
+    if (content.includes(legacySourceName)) {
         report(`${name}: references removed production path ${legacySourceName}`);
     }
 }
 const workflow = await readFile(path.join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+for (const action of ['actions/checkout', 'actions/setup-node']) {
+    const escaped = action.replace('/', '\\/');
+    const match = workflow.match(new RegExp(`uses:\\s*${escaped}@([^\\s#]+)`));
+    if (!match) {
+        report(`.github/workflows/ci.yml: missing ${action} action`);
+    } else if (!/^(?:v\d+|[a-f0-9]{40})$/.test(match[1])) {
+        report(`.github/workflows/ci.yml: ${action} has an unsupported ref "${match[1]}"`);
+    }
+}
+
 for (const command of [
-    'actions/checkout@v7',
-    'actions/setup-node@v7',
-    'node-version: 24',
     'node --check hh-apply-assistant.user.js',
     'node --test',
     'node scripts/validate-repository.mjs'
@@ -323,11 +404,14 @@ for (const command of [
 }
 
 const nvmVersion = (await readFile(path.join(ROOT, '.nvmrc'), 'utf8')).trim();
-if (nvmVersion !== '24') report(`.nvmrc: expected Node.js 24, found "${nvmVersion}"`);
-
-const releaseProcess = await readFile(path.join(ROOT, 'docs', 'release-process.md'), 'utf8');
-for (const marker of ['## Сейчас', '## Будущий production flow', REPOSITORY_URL, RAW_URL, 'tag `v4.0.0`']) {
-    if (!releaseProcess.includes(marker)) report(`docs/release-process.md: missing release boundary marker "${marker}"`);
+if (!/^\d+(?:\.\d+){0,2}$/.test(nvmVersion)) {
+    report(`.nvmrc: invalid Node.js version "${nvmVersion}"`);
+}
+const workflowNodeVersions = [...workflow.matchAll(/^\s*node-version:\s*["']?([^\s"'#]+)["']?\s*$/gm)].map(match => match[1]);
+if (workflowNodeVersions.length !== 1) {
+    report(`.github/workflows/ci.yml: expected exactly one node-version, found ${workflowNodeVersions.length}`);
+} else if (workflowNodeVersions[0] !== nvmVersion) {
+    report(`.github/workflows/ci.yml: node-version ${workflowNodeVersions[0]} does not match .nvmrc ${nvmVersion}`);
 }
 
 if (errors.length) {

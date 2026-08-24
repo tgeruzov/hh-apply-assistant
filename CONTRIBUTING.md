@@ -1,8 +1,10 @@
 # Участие в разработке
 
+[Русский](CONTRIBUTING.md) | [English](CONTRIBUTING.en.md)
+
 HH Apply Assistant принимает bug fixes, улучшения распознавания сценариев, UI-правки, тесты и документацию. Крупное изменение automation behavior, storage schema или модели разрешений сначала лучше обсудить в Issue: такие изменения труднее безопасно проверить на реальном hh.ru.
 
-Уязвимости и случаи с чувствительными данными сообщайте по [Security Policy](SECURITY.md), а не в публичном bug report. Во всех обсуждениях действует [Code of Conduct](CODE_OF_CONDUCT.md).
+Обычные ошибки сообщайте через [форму сообщения об ошибке](https://github.com/tgeruzov/hh-auto-responder/issues/new?template=bug_report.yml). Уязвимости и случаи с чувствительными данными направляйте по [Security Policy](SECURITY.md), а не в публичную форму. Во всех обсуждениях действует [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Окружение
 
@@ -25,10 +27,10 @@ node --test
 
 ## Работа над изменением
 
-1. Создайте отдельную ветку от актуальной development branch.
+1. Обновите `main` в canonical public repository и создайте от него отдельную ветку. Доступ к приватному development repository внешнему contributor не нужен.
 2. Сведите изменение к одному понятному bug или use case.
 3. Если затронут пользовательский текст, обновите RU и EN в `TRANSLATIONS`. Если изменился основной README, синхронизируйте `README.md` и `README.en.md` по фактам.
-4. Для новых storage fields определите default, валидацию, lifetime и совместимость с уже сохранённой v4-схемой.
+4. Для новых storage fields определите default, валидацию, lifetime и совместимость с текущей storage schema. Увеличивайте её версию только для несовместимого persisted format, а не вместе с product major.
 5. Не ослабляйте `runId`/lease guards перед click, submit, записью успеха или навигацией.
 6. Обновите тесты и документацию публичного поведения.
 
@@ -47,11 +49,11 @@ git diff --check
 
 Изменения UI или automation дополнительно проверяются в Tampermonkey:
 
-- Start, Stop и повторный Start;
+- **Запустить отклики**, **Остановить** и повторный запуск;
 - нужный тип страницы hh.ru и возврат к выдаче;
 - RU и EN;
-- широкая, compact и overlay-компоновка, если затронут UI;
-- Manual Queue и Diagnostics, если изменён соответствующий flow;
+- широкая, компактная и открытая поверх страницы компоновка, если затронут интерфейс;
+- **Ручная очередь** и **Диагностика**, если изменён соответствующий сценарий;
 - отсутствие новых console errors.
 
 Используйте тестовый контекст без реальных персональных данных. Не добавляйте в fixtures, screenshots, issues и commits cookies, токены, сопроводительные письма или неотредактированные diagnostic exports.

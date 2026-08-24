@@ -9,19 +9,21 @@ const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const SCRIPT_PATH = resolve(TEST_DIR, '..', 'hh-apply-assistant.user.js');
 const SCRIPT_SOURCE = readFileSync(SCRIPT_PATH, 'utf8');
 const HOOK_MARKER = '    // Перехват необработанных ошибок:';
-const V4_PREFIX = 'hh_apply_assistant_v4_';
+const STORAGE_PREFIX = 'hh_apply_assistant_s1_';
+// Historical HH.ru Auto Responder fixture; its internal suffix is unrelated to
+// the HH Apply Assistant product version and must remain ignored, not migrated.
 const PREVIOUS_PREFIX = 'hh_ar_v2_';
 
 const KEYS = {
-    settings: V4_PREFIX + 'settings',
-    isRunning: V4_PREFIX + 'is_active',
-    trap: 'hh_apply_assistant_v4_trap_lock',
-    history: 'hh_apply_assistant_v4_processed_ids',
-    sent: 'hh_apply_assistant_v4_sent_count',
-    manual: 'hh_apply_assistant_v4_manual_queue',
-    lastAttempt: 'hh_apply_assistant_v4_last_attempt_id',
-    diagLog: V4_PREFIX + 'diagnostic_log',
-    metrics: V4_PREFIX + 'metrics'
+    settings: STORAGE_PREFIX + 'settings',
+    isRunning: STORAGE_PREFIX + 'is_active',
+    trap: STORAGE_PREFIX + 'trap_lock',
+    history: STORAGE_PREFIX + 'processed_ids',
+    sent: STORAGE_PREFIX + 'sent_count',
+    manual: STORAGE_PREFIX + 'manual_queue',
+    lastAttempt: STORAGE_PREFIX + 'last_attempt_id',
+    diagLog: STORAGE_PREFIX + 'diagnostic_log',
+    metrics: STORAGE_PREFIX + 'metrics'
 };
 
 class FakeStorage {
@@ -197,9 +199,9 @@ function createHarness({
     return { hooks: context.__hhApplyAssistantTestHooks, clock, context, sessionStorage, localStorage };
 }
 
-test('production source uses only the canonical v4 namespace and brand', () => {
-    assert.match(SCRIPT_SOURCE, /const STORAGE_PREFIX = 'hh_apply_assistant_v4_'/);
-    assert.match(SCRIPT_SOURCE, /HH Apply Assistant v4\.0\.0/);
+test('production source uses the schema namespace and ignores legacy Auto Responder storage', () => {
+    assert.match(SCRIPT_SOURCE, /const STORAGE_SCHEMA_VERSION = 1/);
+    assert.match(SCRIPT_SOURCE, /const STORAGE_PREFIX = `hh_apply_assistant_s\$\{STORAGE_SCHEMA_VERSION\}_`/);
     assert.doesNotMatch(SCRIPT_SOURCE, /hh_ar_v2_|hh_ar_manual_processed|LEGACY_PROCESSED_KEY|applomat/i);
 });
 
@@ -261,7 +263,7 @@ test('previous namespace data is ignored without cleanup or migration', () => {
     assert.equal(sessionStorage.getItem(PREVIOUS_PREFIX + 'is_active'), '1');
 });
 
-test('invalid current settings schema falls back to defensive v4 defaults', () => {
+test('invalid current settings schema falls back to defensive defaults', () => {
     const corrupted = createHarness({
         localStorage: new FakeStorage({ [KEYS.settings]: '{not-json' })
     });
@@ -278,24 +280,24 @@ test('invalid current settings schema falls back to defensive v4 defaults', () =
     assert.equal(typeof partial.hooks.getConfig().coverText, 'string');
 });
 
-test('fresh v4 storage persists current settings, history, manual queue, diagnostics, metrics and trap', () => {
+test('fresh schema storage persists current settings, history, manual queue, diagnostics, metrics and trap', () => {
     const { hooks, localStorage, sessionStorage } = createHarness({ now: 5_000 });
     const settings = { ...hooks.getConfig(), preset: 'fast', limit: 17 };
     assert.equal(hooks.Settings.save(settings), true);
     assert.equal(hooks.State.addProcessedID('v_17'), true);
     assert.equal(hooks.State.addManualEntry({ vid: 'v_18', url: 'https://hh.ru/vacancy/18', title: 'Engineer' }), 'ADDED');
     assert.ok(hooks.State.setTrapLock(1_000));
-    hooks.DiagLog.push('fresh-v4', true);
-    hooks.Metrics.snapshot('fresh-v4', { path: '/search/vacancy' });
+    hooks.DiagLog.push('fresh-schema', true);
+    hooks.Metrics.snapshot('fresh-schema', { path: '/search/vacancy' });
 
     assert.deepEqual(JSON.parse(localStorage.getItem(KEYS.settings)), settings);
     assert.deepEqual(JSON.parse(sessionStorage.getItem(KEYS.history)), ['v_17']);
     assert.equal(JSON.parse(localStorage.getItem(KEYS.manual))[0].vid, 'v_18');
-    assert.equal(JSON.parse(localStorage.getItem(KEYS.diagLog))[0].msg, 'fresh-v4');
-    assert.equal(JSON.parse(localStorage.getItem(KEYS.metrics)).snapshots[0].label, 'fresh-v4');
+    assert.equal(JSON.parse(localStorage.getItem(KEYS.diagLog))[0].msg, 'fresh-schema');
+    assert.equal(JSON.parse(localStorage.getItem(KEYS.metrics)).snapshots[0].label, 'fresh-schema');
     assert.ok(JSON.parse(sessionStorage.getItem(KEYS.trap)).expiresAt > 5_000);
-    assert.ok([...localStorage.values.keys()].every(key => key.startsWith(V4_PREFIX)));
-    assert.ok([...sessionStorage.values.keys()].every(key => key.startsWith(V4_PREFIX)));
+    assert.ok([...localStorage.values.keys()].every(key => key.startsWith(STORAGE_PREFIX)));
+    assert.ok([...sessionStorage.values.keys()].every(key => key.startsWith(STORAGE_PREFIX)));
 });
 
 test('trap create persists ownership and expiration, then expires', () => {
@@ -371,7 +373,7 @@ test('Start -> Stop cancels the pending acquire continuation', async () => {
     assert.equal(hooks.State.amIRunning(), false);
     assert.equal(hooks.runtime().isLoopActive, false);
     assert.equal(hooks.runtime().stopSignal, true);
-    assert.equal(localStorage.getItem('hh_apply_assistant_v4_instance_lock'), null);
+    assert.equal(localStorage.getItem(STORAGE_PREFIX + 'instance_lock'), null);
 });
 
 test('Start -> Stop -> Start keeps stale run invalidated', async () => {
@@ -399,7 +401,7 @@ test('Start fails closed when is_active cannot be persisted and recovers on the 
     assert.equal(hooks.runtime().isLoopActive, false);
     assert.equal(hooks.runtime().stopSignal, true);
     assert.equal(hooks.runtime().hasAbortController, false);
-    assert.equal(localStorage.getItem(V4_PREFIX + 'instance_lock'), null);
+    assert.equal(localStorage.getItem(STORAGE_PREFIX + 'instance_lock'), null);
 
     sessionStorage.failSet.delete(KEYS.isRunning);
     const recovered = hooks.startLoop();
@@ -423,7 +425,7 @@ test('fresh Start fails closed when sent_count reset cannot be persisted', async
     assert.equal(hooks.runtime().isLoopActive, false);
     assert.equal(hooks.runtime().stopSignal, true);
     assert.equal(hooks.runtime().hasAbortController, false);
-    assert.equal(localStorage.getItem(V4_PREFIX + 'instance_lock'), null);
+    assert.equal(localStorage.getItem(STORAGE_PREFIX + 'instance_lock'), null);
 });
 
 test('critical storage writes require read-back instead of trusting a silent no-op', () => {

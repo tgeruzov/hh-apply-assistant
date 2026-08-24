@@ -27,7 +27,7 @@ stateDiagram-v2
 
 ## Initial load
 
-Metadata использует `@run-at document-idle`. В начале файл проверяет `window.__hhApplyAssistantV4Runtime`; если в текущем document уже есть active runtime, повторная инъекция завершается без второго watchdog и listener set.
+Metadata использует `@run-at document-idle`. В начале файл проверяет стабильный `window.__hhApplyAssistantRuntime`; если в текущем document уже есть active runtime, повторная инъекция завершается без второго watchdog и listener set.
 
 До `bootstrap()` код:
 

@@ -11,8 +11,8 @@ const SCRIPT_SOURCE = readFileSync(SCRIPT_PATH, 'utf8');
 const HOOK_MARKER = '    // Перехват необработанных ошибок:';
 
 const KEYS = {
-    lock: 'hh_apply_assistant_v4_instance_lock',
-    tabId: 'hh_apply_assistant_v4_tab_id'
+    lock: 'hh_apply_assistant_s1_instance_lock',
+    tabId: 'hh_apply_assistant_s1_tab_id'
 };
 const TTL = 30_000;
 

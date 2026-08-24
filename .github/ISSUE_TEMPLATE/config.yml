@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Security report
+  - name: Security report / Сообщить об уязвимости
     url: https://github.com/tgeruzov/hh-auto-responder/security/policy
-    about: Не публикуйте детали уязвимости в обычном Issue.
+    about: Не публикуйте детали в Issue / Do not post vulnerability details in an Issue.

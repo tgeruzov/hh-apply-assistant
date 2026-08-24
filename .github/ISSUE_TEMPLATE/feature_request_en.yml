@@ -1,0 +1,57 @@
+name: Feature request (English)
+description: Suggest an HH Apply Assistant improvement in English
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the user problem, not only the control or implementation you would add.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What can you not do today, or what must you do manually?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_behavior
+    attributes:
+      label: Proposed behavior
+      description: What result should the user see?
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_workaround
+    attributes:
+      label: Current workaround
+      description: How do you handle this today, if at all?
+
+  - type: checkboxes
+    id: affected_areas
+    attributes:
+      label: Areas that may be affected
+      options:
+        - label: Application flow or confirmation
+        - label: Interface or responsive layout
+        - label: Russian or English localization
+        - label: Stored data or compatibility
+        - label: Diagnostics, privacy, or browser permissions
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add examples or screenshots only after removing personal data and private URLs.
+
+  - type: checkboxes
+    id: privacy_check
+    attributes:
+      label: Privacy check
+      options:
+        - label: My description and attachments contain no personal data, cookies, tokens, cover letters, or unredacted diagnostic reports.
+          required: true

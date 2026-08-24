@@ -1,4 +1,4 @@
-name: Feature request
+name: Предложить улучшение
 description: Предложить новый сценарий или улучшение существующего поведения
 title: "[Feature] "
 labels:
@@ -7,12 +7,12 @@ body:
   - type: markdown
     attributes:
       value: |
-        Опишите пользовательскую проблему, а не только желаемую кнопку. Для крупных изменений automation, storage или permissions полезно объяснить безопасный terminal outcome.
+        Опишите пользовательскую проблему, а не только желаемую кнопку. Для крупных изменений автоматизации, хранения данных или разрешений браузера объясните ожидаемое безопасное поведение при остановке.
 
   - type: textarea
     id: problem
     attributes:
-      label: Проблема или use case
+      label: Проблема или сценарий
       description: Что сейчас нельзя сделать или приходится делать вручную?
     validations:
       required: true
@@ -28,7 +28,7 @@ body:
   - type: textarea
     id: current_workaround
     attributes:
-      label: Текущий workaround
+      label: Текущий обходной способ
       description: Как задача решается сейчас, если решается?
 
   - type: checkboxes
@@ -36,22 +36,22 @@ body:
     attributes:
       label: Возможная область влияния
       options:
-        - label: Automation или response confirmation
-        - label: UI или responsive layout
-        - label: RU/EN localization
-        - label: Storage или backward compatibility
-        - label: Diagnostics, privacy или permissions
+        - label: Автоматизация отклика или подтверждение отправки
+        - label: Интерфейс или адаптация к размеру окна
+        - label: Русский или английский интерфейс
+        - label: Сохранённые данные или совместимость
+        - label: Диагностика, приватность или разрешения браузера
 
   - type: textarea
     id: context
     attributes:
       label: Дополнительный контекст
-      description: Примеры DOM/data-qa допустимы только без персональных данных и секретов.
+      description: Добавляйте технические примеры только после удаления персональных данных и секретов.
 
   - type: checkboxes
     id: privacy_check
     attributes:
       label: Проверка данных
       options:
-        - label: В описании и приложениях нет персональных данных, cookies, токенов или неотредактированных diagnostic reports.
+        - label: В описании и приложениях нет персональных данных, cookies, токенов или неотредактированных диагностических отчётов.
           required: true

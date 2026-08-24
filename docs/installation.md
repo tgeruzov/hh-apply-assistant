@@ -1,50 +1,51 @@
 # Установка и обновление
 
-Основной документированный сценарий — настольный Google Chrome с актуальным Tampermonkey. Другие userscript managers и мобильные браузеры в текущую test matrix не входят.
+Проверенный сценарий — настольный Google Chrome с актуальной версией Tampermonkey. Другие менеджеры пользовательских скриптов и мобильные браузеры сейчас не проверяются.
 
 ## 1. Установите Tampermonkey
 
-Установите расширение с [официальной страницы Tampermonkey](https://www.tampermonkey.net/) и убедитесь, что оно включено в Chrome.
+1. Установите расширение с [официальной страницы Tampermonkey](https://www.tampermonkey.net/).
+2. Откройте `chrome://extensions` и убедитесь, что переключатель Tampermonkey включён.
+3. В актуальном **Chrome 138 и новее** откройте **Details / Сведения** Tampermonkey и включите **Allow User Scripts / Разрешить пользовательские скрипты**.
 
-Для Tampermonkey 5.3+ в Chromium требуется отдельное разрешение User Scripts API. Порядок зависит от версии браузера:
+В Chrome до 138 и старых Chromium-сборках вместо этого используется общий переключатель **Developer mode / Режим разработчика** на странице `chrome://extensions`. В Chrome 138+ включать режим разработчика только ради Tampermonkey не требуется.
 
-- **Chrome 138 и новее:** откройте `chrome://extensions`, найдите Tampermonkey, нажмите **Details / Сведения** и включите **Allow User Scripts / Разрешить пользовательские скрипты**;
-- **Chrome до 138 и старые Chromium-сборки:** на странице `chrome://extensions` включите общий **Developer mode / Режим разработчика**.
+Подробнее: [документация Chrome о пользовательских скриптах](https://developer.chrome.com/docs/extensions/reference/api/userScripts#enable-usage-of-the-userscripts-api) и [ответ Tampermonkey Q209](https://www.tampermonkey.net/faq.php?locale=en&q=Q209).
 
-Эта разница описана в [документации Chrome User Scripts API](https://developer.chrome.com/docs/extensions/reference/api/userScripts#enable-usage-of-the-userscripts-api) и [Tampermonkey FAQ Q209](https://www.tampermonkey.net/faq.php?locale=en&q=Q209). В Chrome 138+ включать Developer mode только ради Tampermonkey не требуется.
+## 2. Проверьте доступ к сайтам
 
-## 2. Проверьте Site access
+Откройте **Details / Сведения** Tampermonkey. Самый простой вариант — **On all sites / На всех сайтах**. Так Tampermonkey сможет запускать установленные скрипты на разрешённых ими страницах и проверять обновления.
 
-Откройте **Details / Сведения** Tampermonkey. Для самого простого и предсказуемого варианта выберите **On all sites / На всех сайтах**. Это позволяет менеджеру запускать установленные userscripts на их `@match`-адресах и проверять update URL.
+Если вы выбираете **On specific sites / На выбранных сайтах**, разрешите домены hh.ru из списка поддерживаемых страниц ниже и `raw.githubusercontent.com` для установки и обновлений. Ограниченный доступ может мешать проверке обновлений; это описано в [Tampermonkey FAQ Q306](https://www.tampermonkey.net/faq.php?locale=en&q=Q306).
 
-Если вы намеренно используете **On specific sites**, разрешите как минимум домены hh.ru, указанные в metadata, и `raw.githubusercontent.com` для установки/обновлений. Ограниченный Site access может блокировать update checks; это отдельно отмечено в [Tampermonkey FAQ Q306](https://www.tampermonkey.net/faq.php?locale=en&q=Q306).
+Разрешение **On all sites** относится к расширению Tampermonkey. Сам HH Apply Assistant запускается только на трёх группах страниц hh.ru, перечисленных ниже. Сетевое поведение скрипта описано в [документе о приватности](../PRIVACY.md#сетевое-поведение).
 
-Широкое разрешение относится к расширению Tampermonkey. Сам HH Apply Assistant ограничен тремя группами `@match`, работает с `@grant none` и не содержит внешнего runtime transport.
-
-## 3. Установите userscript
+## 3. Установите скрипт
 
 Откройте ссылку:
 
 **[Установить HH Apply Assistant](https://raw.githubusercontent.com/tgeruzov/hh-auto-responder/main/hh-apply-assistant.user.js)**
 
-Tampermonkey должен показать страницу установки с именем **HH Apply Assistant v4.0.0**. Просмотрите metadata и нажмите **Install / Установить**. Установка raw-файла с окончанием `.user.js` является штатным способом Tampermonkey; см. [FAQ Q102](https://www.tampermonkey.net/faq.php?locale=en&q=Q102).
+Tampermonkey должен показать страницу установки с именем **HH Apply Assistant**. Нажмите **Install / Установить**. Установка файла с окончанием `.user.js` является штатным способом Tampermonkey; см. [FAQ Q102](https://www.tampermonkey.net/faq.php?locale=en&q=Q102).
+
+После установки откройте панель управления **Tampermonkey Dashboard** и убедитесь, что запись **HH Apply Assistant** включена.
 
 Если вместо окна Tampermonkey браузер показывает исходный текст:
 
-1. проверьте, что расширение включено;
-2. включите Allow User Scripts или Developer mode по инструкции выше;
-3. повторно откройте install URL;
-4. при необходимости используйте ручной способ из следующего раздела.
+1. проверьте на `chrome://extensions`, что Tampermonkey включён;
+2. включите **Allow User Scripts** или, для старого Chromium, **Developer mode** по инструкции выше;
+3. закройте вкладку с текстом и снова откройте ссылку установки;
+4. если окно установки всё равно не появляется, используйте [ручную установку](#ручная-установка).
 
 ## 4. Проверьте запуск
 
 1. Войдите в hh.ru.
 2. Откройте `https://hh.ru/search/vacancy` с нужными фильтрами.
 3. Обновите страницу после установки.
-4. Справа должна появиться панель **HH Apply Assistant**. На узком окне виден свёрнутый переключатель, который открывает overlay.
-5. Откройте **Диагностика** и запустите Healthcheck. Отсутствующий элемент формы вне открытой формы может быть помечен как неприменимый; ошибка обязательного селектора на текущей странице требует проверки.
+4. Справа должна появиться панель **HH Apply Assistant**. На узком окне виден свёрнутый переключатель, который открывает панель поверх страницы.
+5. Необязательно: откройте **Диагностика** и нажмите **Проверить страницу**. Пометка «не применимо» нормальна для элементов формы, которая сейчас не открыта.
 
-Metadata запускает скрипт только на:
+Скрипт запускается только на:
 
 - `*://*.hh.ru/search/vacancy*`;
 - `*://*.hh.ru/vacancy/*`;
@@ -54,28 +55,22 @@ Metadata запускает скрипт только на:
 
 ## Ручная установка
 
-Этот способ полезен для development-копии или если raw URL не перехватывается:
+Этот способ пригодится, если ссылка установки открывается как обычный текст:
 
-1. Откройте Tampermonkey Dashboard.
-2. Создайте новый script.
+1. Откройте панель управления Tampermonkey Dashboard.
+2. Создайте новый скрипт.
 3. Откройте [hh-apply-assistant.user.js](../hh-apply-assistant.user.js), скопируйте файл целиком и замените шаблон редактора.
-4. Сохраните (`Ctrl+S`) и включите запись.
+4. Сохраните (`Ctrl+S`) и убедитесь в Dashboard, что новая запись включена.
 5. Обновите поддерживаемую страницу hh.ru.
 
-Не держите одновременно две включённые копии с разными именами: singleton защищает один document от повторной инъекции текущего runtime, но две независимо изменённые копии затрудняют диагностику и обновление.
+Не включайте одновременно две копии HH Apply Assistant: это может привести к повторным действиям и затруднить обновление и диагностику.
 
 ## Обновление
 
-Metadata содержит:
+Tampermonkey проверяет обновления по адресу, записанному в установленном скрипте. Для ручной проверки используйте команду проверки обновлений в Dashboard или снова откройте ссылку установки. Если новая версия не находится, проверьте доступ Tampermonkey к `raw.githubusercontent.com`.
 
-- `@updateURL` для проверки доступной версии;
-- `@downloadURL` для загрузки обновления;
-- `@version`, по которому Tampermonkey сравнивает версии.
-
-Tampermonkey выполняет update checks по собственному расписанию и настройкам. Для ручной проверки используйте функцию проверки обновлений в Dashboard либо снова откройте install URL. Если обновление не находится, сначала проверьте Site access к `raw.githubusercontent.com`.
-
-Обновление файла в рамках namespace v4 не удаляет настройки или очередь. Если будущий релиз изменит storage namespace или migration policy, это будет указано в changelog и release notes.
+Обычное обновление с совместимой storage schema не удаляет настройки и ручную очередь. Если будущему выпуску потребуется сброс или перенос данных, это будет указано в описании изменений и выпуска.
 
 ## Удаление
 
-Удалите HH Apply Assistant в Tampermonkey Dashboard. Browser storage на hh.ru может остаться после удаления userscript. Способы выборочной очистки приведены в [storage-документации](storage.md#очистка).
+Удалите HH Apply Assistant в Tampermonkey Dashboard. Сохранённые на hh.ru настройки, очередь и диагностика могут остаться после удаления скрипта. Способы выборочной очистки приведены в [документации о хранении данных](storage.md#очистка).

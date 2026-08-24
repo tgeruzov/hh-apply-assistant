@@ -1,0 +1,101 @@
+name: Bug report (English)
+description: Report a reproducible HH Apply Assistant problem in English
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not post cookies, tokens, cover letters, personal data, or unredacted diagnostic reports. Review URLs, screenshots, and logs before submitting them.
+
+  - type: input
+    id: script_version
+    attributes:
+      label: HH Apply Assistant version
+      description: Find it in the Tampermonkey Dashboard.
+      placeholder: 2.0.0 or a commit hash
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Chrome 140.0.x
+    validations:
+      required: true
+
+  - type: input
+    id: tampermonkey
+    attributes:
+      label: Tampermonkey version
+      placeholder: 5.3.x
+    validations:
+      required: true
+
+  - type: dropdown
+    id: page_type
+    attributes:
+      label: Page type
+      options:
+        - Vacancy search
+        - Individual vacancy
+        - Application or questionnaire
+        - Another supported hh.ru page
+    validations:
+      required: true
+
+  - type: dropdown
+    id: work_mode
+    attributes:
+      label: Work mode
+      options:
+        - Safe
+        - Balanced
+        - Fast
+        - Turbo
+        - The run was not started
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Give the shortest sequence that reproduces the problem. A page type and safe path are enough; do not paste a private full URL.
+      placeholder: |
+        1. Opened a vacancy search...
+        2. Selected Balanced...
+        3. Selected Start applying...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Add the Check page result and a relevant redacted log or screenshot, if available.
+      render: text
+
+  - type: checkboxes
+    id: privacy_check
+    attributes:
+      label: Privacy check
+      options:
+        - label: I reviewed all submitted material and removed personal data, cookies, tokens, private URLs, and sensitive page text.
+          required: true

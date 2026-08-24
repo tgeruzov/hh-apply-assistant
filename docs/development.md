@@ -51,7 +51,7 @@ node --test
 
 ## Storage и совместимость
 
-v4 намеренно игнорирует старые namespaces. Внутри `hh_apply_assistant_v4_` изменение schema должно быть backward-compatible либо сопровождаться явной migration strategy и release note.
+Storage schema version не связана с product major. Текущая schema 1 использует namespace `hh_apply_assistant_s1_`; совместимые изменения сохраняют его, а несовместимое изменение persisted format требует отдельной migration strategy, увеличения schema version и release note.
 
 Для нового persistent field определите:
 
@@ -97,7 +97,7 @@ UI string добавляется в обе ветки `TRANSLATIONS` с один
 - Start, Stop во время wait и повторный Start;
 - переход search → vacancy → response/search;
 - сценарий Manual Queue без фактической повторной отправки;
-- Healthcheck, filter/search, report export;
+- **Проверить страницу**, фильтры/поиск, экспорт отчёта;
 - RU/EN;
 - wide dock, compact и overlay; collapse/expand и keyboard focus;
 - две вкладки для busy lease, если затронут concurrency.

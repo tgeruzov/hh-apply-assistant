@@ -1,23 +1,34 @@
 # Документация HH Apply Assistant
 
-Документы сгруппированы по задаче читателя. Версия описываемого userscript: 4.0.0.
+[Главная страница на русском](../README.md) · [Project overview in English](../README.en.md)
+
+Документы сгруппированы по задаче и аудитории. Для основных пользовательских сценариев и работы с сообществом доступны русская и английская версии.
 
 ## Пользователю
 
-- [Установка и обновление](installation.md): Chrome, Tampermonkey, разрешения, install URL и проверка запуска.
-- [Использование](usage.md): панель, режимы, настройки, run flow и ручная очередь.
-- [Решение проблем](troubleshooting.md): панель, Site access, locks, CAPTCHA и диагностика bug report.
-- [Данные и приватность](../PRIVACY.md): локальное хранение, сетевой boundary и состав экспортов.
+- Установка и обновление: [RU](installation.md) · [EN](installation.en.md) — Chrome, Tampermonkey, разрешения и проверка запуска.
+- Использование: [RU](usage.md) · [EN](usage.en.md) — панель, режимы, настройки, запуск, остановка и ручная очередь.
+- Решение проблем: [RU](troubleshooting.md) · [EN](troubleshooting.en.md) — установка, появление панели, CAPTCHA, обновление и подготовка сообщения об ошибке.
+- Данные и приватность: [RU](../PRIVACY.md) · [EN](../PRIVACY.en.md) — локальное хранение, сетевое поведение и состав экспортов.
 
 ## Разработчику
 
-- [Архитектура](architecture.md): карта runtime и ответственность подсистем.
-- [Storage](storage.md): ключи, schema, defaults, readers/writers и lifetime.
-- [Lifecycle](lifecycle.md): загрузка, Start/Stop, навигация, resume, locks и terminal states.
-- [Diagnostics](diagnostics.md): журнал, метрики, snapshots, Healthcheck и report export.
-- [Development](development.md): локальная установка, тесты и browser smoke.
-- [Release process](release-process.md): версия, changelog, tag и GitHub Release.
-- [План будущей миграции](migration-plan.md): ancestry, рекомендуемый controlled fast-forward и stop conditions.
-- [Release notes 4.0.0](release-notes/v4.0.0.md): готовый текст для первого публичного релиза.
+- [Архитектура](architecture.md): карта production-файла и границы подсистем.
+- [Storage](storage.md): ключи, значения по умолчанию, совместимость и время жизни данных.
+- [Lifecycle](lifecycle.md): загрузка, запуск и остановка, навигация, восстановление и состояния завершения.
+- [Diagnostics](diagnostics.md): журнал, метрики, снимки DOM, проверка страницы и экспорт отчёта.
+- [Development](development.md): локальная development-копия, тесты и browser smoke.
 
-Правила contributions находятся в [CONTRIBUTING.md](../CONTRIBUTING.md), сообщения об уязвимостях — в [SECURITY.md](../SECURITY.md).
+## Maintainer
+
+- [Выпуск версии](release-process.md): переиспользуемый SemVer flow, release candidate, публикация и post-release checks.
+- [Changelog](../CHANGELOG.md): подтверждённые пользовательские изменения, начиная с 2.0.0.
+- [Release notes 2.0.0](release-notes/v2.0.0.md): пользовательское описание первого публичного выпуска HH Apply Assistant.
+- [Temporary 2.0.0 cutover plan](migration-plan.md): одноразовый runbook только для первой миграции HH Apply Assistant; не использовать для следующих релизов.
+
+## Community
+
+- Участие в разработке: [RU](../CONTRIBUTING.md) · [EN](../CONTRIBUTING.en.md).
+- Сообщение об уязвимости: [RU](../SECURITY.md) · [EN](../SECURITY.en.md).
+- [Кодекс поведения](../CODE_OF_CONDUCT.md).
+- [Сообщения об ошибках и предложения](https://github.com/tgeruzov/hh-auto-responder/issues/new/choose) через структурированные формы.
