@@ -47,6 +47,18 @@
     //  1. КОНСТАНТЫ И КОНФИГУРАЦИЯ
     // ─────────────────────────────────────────────────────────────
 
+    function deepFreeze(obj) {
+        if (!obj || typeof obj !== 'object' || Object.isFrozen(obj)) return obj;
+        Object.freeze(obj);
+        for (const key of Object.getOwnPropertyNames(obj)) {
+            const val = obj[key];
+            if (val && typeof val === 'object') {
+                deepFreeze(val);
+            }
+        }
+        return obj;
+    }
+
     const HHA_PREFERRED_PANEL_WIDTH = 410;
     const HHA_MIN_PANEL_WIDTH = 340;
     // Minimum practical width reserved for hh.ru desktop layout before compact assistant mode is used.
@@ -55,7 +67,7 @@
     // Версия storage schema меняется только при несовместимом формате persisted data.
     const STORAGE_SCHEMA_VERSION = 1;
     const STORAGE_PREFIX = `hh_apply_assistant_s${STORAGE_SCHEMA_VERSION}_`;
-    const KEYS = {
+    const KEYS = deepFreeze({
         settings: STORAGE_PREFIX + 'settings',
         language: STORAGE_PREFIX + 'language',
         isRunning: STORAGE_PREFIX + 'is_active',
@@ -74,17 +86,17 @@
         metrics: STORAGE_PREFIX + 'metrics',
         uiOpen: STORAGE_PREFIX + 'ui_open',
         stats: STORAGE_PREFIX + 'run_stats'
-    };
+    });
 
     // Технические тайминги - не настраиваются пользователем.
-    const TUNING = {
+    const TUNING = deepFreeze({
         scrollStepMs: 200,        // шаг человеческого скролла
         waitForModalMs: 8000,     // ожидание реакции после клика Откликнуться
         confirmWaitMs: 6000,      // ожидание подтверждения после отправки формы
         responsePagePendingMs: 16000, // обычный full-page submit ждём без повторного клика
         instanceLockTtl: 30000,   // TTL кросс-вкладочной блокировки
         forceSubmitAttempts: 3    // попыток дожать отправку при предупреждении об отказе
-    };
+    });
 
     // Максимум записей в постоянном диагностическом логе (защита от переполнения localStorage)
     const DIAG_LOG_MAX = 1000;
@@ -92,7 +104,7 @@
     const DOM_SNAPSHOT_MAX = 15;
 
     // Важные селекторы, используемые в скрипте
-    const SELECTORS = {
+    const SELECTORS = deepFreeze({
         // Кнопка "Откликнуться" в карточке результатов поиска
         applyBtn: '[data-qa="vacancy-serp__vacancy_response"], button[data-qa="vacancy-serp__vacancy_response"]',
         // Кнопки "Откликнуться" на странице самой вакансии (верхняя/нижняя)
@@ -113,22 +125,22 @@
         rejectWarning: '[data-qa="response-reject-warning"]',
         vacancyLink: 'a[data-qa="serp-item__title"], a[data-qa="vacancy-serp__vacancy-title"]',
         vacancyCard: 'div[data-qa="vacancy-serp__vacancy"], .vacancy-serp-item'
-    };
+    });
 
 
     // ─────────────────────────────────────────────────────────────
     //  1.1. ЛОКАЛИЗАЦИЯ (i18n Core)
     // ─────────────────────────────────────────────────────────────
 
-    const SUPPORTED_LANGUAGES = ['ru', 'en'];
+    const SUPPORTED_LANGUAGES = deepFreeze(['ru', 'en']);
     const DEFAULT_LANGUAGE = 'ru';
 
-    const LOCALE_TAGS = {
+    const LOCALE_TAGS = deepFreeze({
         ru: 'ru-RU',
         en: 'en-US'
-    };
+    });
 
-    const TRANSLATIONS = {
+    const TRANSLATIONS = deepFreeze({
         ru: {
             presets: {
                 safe: {
@@ -829,7 +841,7 @@
                 confirmReset: 'Clear opened status from all vacancies? Entries will not be deleted and will reappear under New.'
             }
         }
-    };
+    });
 
     const I18n = (() => {
         let _currentLang = null;
@@ -968,7 +980,7 @@
     //  delay  - пауза перед переходом к следующей вакансии;
     //  view   - чтение страницы вакансии (имитация просмотра);
     //  action - микро-паузы между отдельными действиями (клики, ввод).
-    const PRESETS = {
+    const PRESETS = deepFreeze({
         safe: {
             delay: [4000, 8000],
             view: [15000, 35000],
@@ -989,8 +1001,8 @@
             view: [0, 0],
             action: [25, 80]
         }
-    };
-    const WORK_MODE_KEYS = ['safe', 'balanced', 'fast', 'turbo'];
+    });
+    const WORK_MODE_KEYS = deepFreeze(['safe', 'balanced', 'fast', 'turbo']);
     const DEFAULT_PRESET = 'balanced';
     const presetLabel = (key) => I18n.t(`presets.${key || DEFAULT_PRESET}.label`);
     const modeKeyToIndex = (key) => {
@@ -1007,14 +1019,14 @@
     };
 
     // Пользовательские настройки по умолчанию
-    const DEFAULTS = {
+    const DEFAULTS = deepFreeze({
         coverText: TRANSLATIONS[DEFAULT_LANGUAGE].cover.defaultText,
         useCover: true,
         applyOnRejectWarning: false,
         skipHidden: true,
         preset: DEFAULT_PRESET,
         limit: 50
-    };
+    });
 
     // ─────────────────────────────────────────────────────────────
     //  2. УТИЛИТЫ
@@ -1116,18 +1128,149 @@
     // ─────────────────────────────────────────────────────────────
     //  3. БЕЗОПАСНАЯ ОБЁРТКА НАД ХРАНИЛИЩАМИ
     //  localStorage/sessionStorage могут кидать исключения
-    //  (приватный режим, переполнение квоты) - гасим их здесь.
+    //  (приватный режим, переполнение квоты, SecurityError) - гасим их здесь.
     // ─────────────────────────────────────────────────────────────
 
+    function logStorageError(storageType, op, key, error) {
+        try {
+            const errName = (error && error.name) ? error.name : 'StorageError';
+            const errMsg = (error && error.message) ? error.message : String(error || 'unknown');
+            const logMsg = `[STORAGE_ERROR] ${storageType}.${op}("${key}"): ${errName} - ${errMsg}`;
+            console.warn(`[HH Apply Assistant] ${logMsg}`);
+            // Защита от бесконечной рекурсии при сбое записи логов и метрик
+            if (key === KEYS.diagLog || key === KEYS.metrics) {
+                return;
+            }
+            if (typeof DiagLog !== 'undefined' && typeof DiagLog.push === 'function') {
+                DiagLog.push(logMsg, true);
+            }
+            if (typeof Metrics !== 'undefined' && typeof Metrics.bump === 'function') {
+                Metrics.bump(`storage.error.${storageType}.${op}`);
+            }
+        } catch (_) {
+            // Никогда не выбрасываем исключения из логгера хранилища
+        }
+    }
+
+    const getLocalStorage = () => {
+        try {
+            return typeof window !== 'undefined' && window.localStorage ? window.localStorage : (typeof localStorage !== 'undefined' ? localStorage : null);
+        } catch (e) {
+            logStorageError('local', 'access', 'localStorage', e);
+            return null;
+        }
+    };
+
+    const getSessionStorage = () => {
+        try {
+            return typeof window !== 'undefined' && window.sessionStorage ? window.sessionStorage : (typeof sessionStorage !== 'undefined' ? sessionStorage : null);
+        } catch (e) {
+            logStorageError('session', 'access', 'sessionStorage', e);
+            return null;
+        }
+    };
+
     const storage = {
-        localGet: (key) => { try { return localStorage.getItem(key); } catch (e) { return null; } },
-        localRead: (key) => { try { return { ok: true, value: localStorage.getItem(key) }; } catch (e) { return { ok: false, value: null }; } },
-        localSet: (key, value) => { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } },
-        localRemove: (key) => { try { localStorage.removeItem(key); return true; } catch (e) { return false; } },
-        sessionGet: (key) => { try { return sessionStorage.getItem(key); } catch (e) { return null; } },
-        sessionRead: (key) => { try { return { ok: true, value: sessionStorage.getItem(key) }; } catch (e) { return { ok: false, value: null }; } },
-        sessionSet: (key, value) => { try { sessionStorage.setItem(key, value); return true; } catch (e) { return false; } },
-        sessionRemove: (key) => { try { sessionStorage.removeItem(key); return true; } catch (e) { return false; } }
+        localGet: (key) => {
+            try {
+                const s = getLocalStorage();
+                return s ? s.getItem(key) : null;
+            } catch (e) {
+                logStorageError('local', 'getItem', key, e);
+                return null;
+            }
+        },
+        localRead: (key) => {
+            try {
+                const s = getLocalStorage();
+                if (!s) {
+                    logStorageError('local', 'read', key, new Error('localStorage unavailable'));
+                    return { ok: false, value: null };
+                }
+                return { ok: true, value: s.getItem(key) };
+            } catch (e) {
+                logStorageError('local', 'read', key, e);
+                return { ok: false, value: null };
+            }
+        },
+        localSet: (key, value) => {
+            try {
+                const s = getLocalStorage();
+                if (!s) {
+                    logStorageError('local', 'setItem', key, new Error('localStorage unavailable'));
+                    return false;
+                }
+                s.setItem(key, value);
+                return true;
+            } catch (e) {
+                logStorageError('local', 'setItem', key, e);
+                return false;
+            }
+        },
+        localRemove: (key) => {
+            try {
+                const s = getLocalStorage();
+                if (!s) {
+                    logStorageError('local', 'removeItem', key, new Error('localStorage unavailable'));
+                    return false;
+                }
+                s.removeItem(key);
+                return true;
+            } catch (e) {
+                logStorageError('local', 'removeItem', key, e);
+                return false;
+            }
+        },
+        sessionGet: (key) => {
+            try {
+                const s = getSessionStorage();
+                return s ? s.getItem(key) : null;
+            } catch (e) {
+                logStorageError('session', 'getItem', key, e);
+                return null;
+            }
+        },
+        sessionRead: (key) => {
+            try {
+                const s = getSessionStorage();
+                if (!s) {
+                    logStorageError('session', 'read', key, new Error('sessionStorage unavailable'));
+                    return { ok: false, value: null };
+                }
+                return { ok: true, value: s.getItem(key) };
+            } catch (e) {
+                logStorageError('session', 'read', key, e);
+                return { ok: false, value: null };
+            }
+        },
+        sessionSet: (key, value) => {
+            try {
+                const s = getSessionStorage();
+                if (!s) {
+                    logStorageError('session', 'setItem', key, new Error('sessionStorage unavailable'));
+                    return false;
+                }
+                s.setItem(key, value);
+                return true;
+            } catch (e) {
+                logStorageError('session', 'setItem', key, e);
+                return false;
+            }
+        },
+        sessionRemove: (key) => {
+            try {
+                const s = getSessionStorage();
+                if (!s) {
+                    logStorageError('session', 'removeItem', key, new Error('sessionStorage unavailable'));
+                    return false;
+                }
+                s.removeItem(key);
+                return true;
+            } catch (e) {
+                logStorageError('session', 'removeItem', key, e);
+                return false;
+            }
+        }
     };
 
     function writeSessionVerified(key, value) {
@@ -1205,6 +1348,9 @@
     let currentInstanceLeaseId = null;
     let instanceLeaseVerified = false;
     let pendingInstanceLeaseId = null;
+    let activeWebLockAbortController = null;
+    let activeWebLockReleaseResolver = null;
+    let hasActiveWebLock = false;
     // Флаг: уже обрабатываем полностраничную форму отклика (защита от повторного входа из watchdog).
     // Сбрасывается сам при загрузке новой страницы (новый экземпляр скрипта).
     let handlingResponsePage = false;
@@ -1566,7 +1712,7 @@
     // новый запуск. Отдельные счётчики: сколько попыток отклика было предпринято, сколько
     // из них успешно отправлено, сколько ушло в ручной список (вопросы/блокировки),
     // сколько пропущено (уже откликались / нет кнопки / битая карточка).
-    const STATS_FIELDS = ['success', 'manual', 'skipped'];
+    const STATS_FIELDS = deepFreeze(['success', 'manual', 'skipped']);
     const Stats = {
         _get() {
             const s = parseJson(storage.sessionGet(KEYS.stats), null);
@@ -1875,12 +2021,9 @@
     }
 
     function readInstanceLock() {
-        try {
-            const raw = localStorage.getItem(KEYS.instanceLock);
-            return { ok: true, lock: parseJson(raw, null) };
-        } catch (e) {
-            return { ok: false, lock: null };
-        }
+        const read = storage.localRead(KEYS.instanceLock);
+        if (!read.ok) return { ok: false, lock: null };
+        return { ok: true, lock: parseJson(read.value, null) };
     }
 
     function sameInstanceLease(lock, tabId, leaseId) {
@@ -1991,8 +2134,8 @@
         getLastVacancyMeta: () => parseJson(storage.sessionGet(KEYS.lastVacancyMeta), null),
 
         // Кросс-вкладочный lease: TAB_ID задаёт вкладку, leaseId — конкретное поколение.
-        // После записи обязательно перечитываем ключ: localStorage не даёт атомарного CAS,
-        // поэтому ownership появляется только после точного read-back совпадения.
+        // Интеграция Web Locks API для нативной защиты от троттлинга фоновых вкладок
+        // с обязательным сохранением обратной совместимости через localStorage read-back.
         acquireInstanceLock: async (tabId) => {
             const now = Date.now();
             const current = readInstanceLock();
@@ -2006,6 +2149,51 @@
                 return false;
             }
 
+            // Web Locks API: нативная межвкладочная синхронизация
+            const supportsWebLocks = typeof navigator !== 'undefined'
+                && !!navigator.locks
+                && typeof navigator.locks.request === 'function';
+
+            if (supportsWebLocks) {
+                let webLockAcquired = false;
+                const lockController = new AbortController();
+
+                try {
+                    const lockPromise = new Promise((resolveAcquire) => {
+                        navigator.locks.request(
+                            KEYS.instanceLock,
+                            { mode: 'exclusive', ifAvailable: true, signal: lockController.signal },
+                            (lock) => {
+                                if (!lock) {
+                                    resolveAcquire(false);
+                                    return;
+                                }
+                                webLockAcquired = true;
+                                hasActiveWebLock = true;
+                                activeWebLockAbortController = lockController;
+                                resolveAcquire(true);
+                                return new Promise((resolveRelease) => {
+                                    activeWebLockReleaseResolver = resolveRelease;
+                                });
+                            }
+                        ).catch(() => {
+                            hasActiveWebLock = false;
+                            if (!webLockAcquired) {
+                                resolveAcquire(null);
+                            }
+                        });
+                    });
+
+                    const lockResult = await lockPromise;
+                    if (lockResult === false) {
+                        instanceLeaseVerified = false;
+                        return false;
+                    }
+                } catch (e) {
+                    // При ошибке вызова Web Locks API продолжаем фоллбек через storage
+                }
+            }
+
             const leaseId = newInstanceLeaseId(tabId);
             const candidate = { tabId, leaseId, ts: now };
             currentInstanceLeaseId = leaseId;
@@ -2013,6 +2201,12 @@
             pendingInstanceLeaseId = leaseId;
             if (!storage.localSet(KEYS.instanceLock, JSON.stringify(candidate))) {
                 if (pendingInstanceLeaseId === leaseId) pendingInstanceLeaseId = null;
+                if (hasActiveWebLock) {
+                    try { activeWebLockReleaseResolver?.(); activeWebLockAbortController?.abort(); } catch (_) {}
+                    hasActiveWebLock = false;
+                    activeWebLockReleaseResolver = null;
+                    activeWebLockAbortController = null;
+                }
                 return false;
             }
 
@@ -2027,6 +2221,12 @@
             );
             if (pendingInstanceLeaseId === leaseId) pendingInstanceLeaseId = null;
             if (currentInstanceLeaseId === leaseId) instanceLeaseVerified = owned;
+            if (!owned && hasActiveWebLock) {
+                try { activeWebLockReleaseResolver?.(); activeWebLockAbortController?.abort(); } catch (_) {}
+                hasActiveWebLock = false;
+                activeWebLockReleaseResolver = null;
+                activeWebLockAbortController = null;
+            }
             return owned;
         },
         verifyInstanceLock: (tabId, leaseId = currentInstanceLeaseId) => {
@@ -2035,10 +2235,27 @@
             const owned = current.ok
                 && sameInstanceLease(current.lock, tabId, leaseId)
                 && isLiveInstanceLease(current.lock);
-            if (!owned && leaseId === currentInstanceLeaseId) instanceLeaseVerified = false;
+            if (!owned && leaseId === currentInstanceLeaseId) {
+                instanceLeaseVerified = false;
+                if (hasActiveWebLock) {
+                    try { activeWebLockReleaseResolver?.(); activeWebLockAbortController?.abort(); } catch (_) {}
+                    hasActiveWebLock = false;
+                    activeWebLockReleaseResolver = null;
+                    activeWebLockAbortController = null;
+                }
+            }
             return owned ? 'OWNED' : 'LOST';
         },
         releaseInstanceLock: (tabId, leaseId = currentInstanceLeaseId) => {
+            if (hasActiveWebLock || activeWebLockReleaseResolver || activeWebLockAbortController) {
+                try {
+                    if (typeof activeWebLockReleaseResolver === 'function') activeWebLockReleaseResolver();
+                    if (activeWebLockAbortController) activeWebLockAbortController.abort();
+                } catch (_) {}
+                activeWebLockReleaseResolver = null;
+                activeWebLockAbortController = null;
+                hasActiveWebLock = false;
+            }
             let removed = false;
             const current = readInstanceLock();
             if (current.ok && sameInstanceLease(current.lock, tabId, leaseId)) {
@@ -2252,6 +2469,7 @@
     }
 
     function runHeuristic(key, root) {
+        root = root || document;
         try {
             switch (key) {
                 case 'applyBtn':
@@ -2260,7 +2478,7 @@
                     const elements = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     const matchText = /откликнуться|отклик без резюме|перейти к отклику|apply|respond|no resume necessary|apply now/i;
                     for (const el of elements) {
-                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
+                        if (matchText.test((el?.textContent || '').trim()) && isVisible(el)) {
                             return el;
                         }
                     }
@@ -2270,7 +2488,7 @@
                     const candidates = qa('a[href*="/applicant/vacancy_response"], a[data-qa*="response"], button[data-qa*="response"], a[data-qa*="apply"], button[data-qa*="apply"], [role="button"][data-qa*="response"]', root);
                     const notApply = /status|success|view-topic|error|chat/i;
                     for (const el of candidates) {
-                        const qaAttr = el.getAttribute('data-qa') || '';
+                        const qaAttr = el?.getAttribute?.('data-qa') || '';
                         if (notApply.test(qaAttr)) continue;
                         if (isVisible(el)) return el;
                     }
@@ -2282,7 +2500,7 @@
                     // Сначала ищем среди интерактивных элементов
                     const activeEls = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     for (const el of activeEls) {
-                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
+                        if (matchText.test((el?.textContent || '').trim()) && isVisible(el)) {
                             return el;
                         }
                     }
@@ -2294,8 +2512,8 @@
                     if (visibleTextarea) return visibleTextarea;
                     const matchText = /сопроводительное|письмо|cover|message|letter/i;
                     for (const t of textareas) {
-                        const placeholder = t.getAttribute('placeholder') || '';
-                        const name = t.name || '';
+                        const placeholder = t?.getAttribute?.('placeholder') || '';
+                        const name = t?.name || '';
                         if (matchText.test(placeholder) || matchText.test(name)) {
                             return t;
                         }
@@ -2306,14 +2524,14 @@
                     const elements = Array.from(root.querySelectorAll('button, input[type="submit"], [role="button"]'));
                     const matchText = /отправить|откликнуться|готово|send|submit|done|apply/i;
                     for (const el of elements) {
-                        if (!matchText.test((el.textContent || '').trim())) continue;
-                        const qaAttr = el.getAttribute('data-qa') || '';
+                        if (!matchText.test((el?.textContent || '').trim())) continue;
+                        const qaAttr = el?.getAttribute?.('data-qa') || '';
                         if (qaAttr.includes('vacancy-response-link') || qaAttr.includes('vacancy-serp__vacancy_response')) continue;
                         if (isVisible(el)) return el;
                     }
                     const submitBtn = root.querySelector('button[type="submit"], input[type="submit"]');
                     if (submitBtn && isVisible(submitBtn)) {
-                        const qaAttr = submitBtn.getAttribute('data-qa') || '';
+                        const qaAttr = submitBtn?.getAttribute?.('data-qa') || '';
                         if (qaAttr.includes('vacancy-response-link') || qaAttr.includes('vacancy-serp__vacancy_response')) {
                             // skip
                         } else {
@@ -2328,13 +2546,13 @@
                     // подстроки /да/, и за кнопку подтверждения принимались Задать вопрос,
                     // ...Дальнего Востока и любой текст с да внутри.
                     const scopeSelector = '[data-qa*="relocation" i], [role="dialog"], [data-qa*="modal" i], [class*="modal" i]';
-                    const scope = root.matches?.(scopeSelector) ? root : root.querySelector(scopeSelector);
+                    const scope = root.matches?.(scopeSelector) ? root : root.querySelector?.(scopeSelector);
                     if (!scope) break;
                     const elements = Array.from(scope.querySelectorAll('button, a, [role="button"]'));
                     const exact = /^(да|yes|ok|хорошо)[.!]?$/i;
                     const phrase = /всё равно|все равно|подтвердить|подтверждаю|согласен|продолжить|confirm|agree|proceed|apply anyway/i;
                     for (const el of elements) {
-                        const t = collapseSpaces(el.textContent || '');
+                        const t = collapseSpaces(el?.textContent || '');
                         if (!t || !isVisible(el)) continue;
                         if (exact.test(t) || phrase.test(t)) return el;
                     }
@@ -2344,7 +2562,7 @@
                     const elements = Array.from(root.querySelectorAll('div, span, p, h1, h2, h3'));
                     const matchText = /(?:скорее всего|вероятн\w*|возможен|может быть)\W{0,30}отказ|(?:likely|probably|may)\W{0,30}(?:reject|declin)|likely to get a rejection/i;
                     for (const el of elements) {
-                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
+                        if (matchText.test((el?.textContent || '').trim()) && isVisible(el)) {
                             return el;
                         }
                     }
@@ -2354,7 +2572,7 @@
                     const elements = Array.from(root.querySelectorAll('a, button'));
                     const matchText = /перейти (?:в|к) (?:чат|переписк\w*|сообщени\w*)|написать сообщени\w*|открыть чат|(?:go|open|view) (?:the )?(?:chat|conversation|topic)|message (?:the )?employer/i;
                     for (const el of elements) {
-                        if (matchText.test((el.textContent || '').trim()) && isVisible(el)) {
+                        if (matchText.test((el?.textContent || '').trim()) && isVisible(el)) {
                             return el;
                         }
                     }
@@ -2365,7 +2583,8 @@
                 case 'vacancyCard': {
                     const cards = Array.from(root.querySelectorAll('div'));
                     for (const c of cards) {
-                        if (c.className && (c.className.includes('serp-item') || c.className.includes('vacancy-serp-item'))) {
+                        const cls = typeof c?.className === 'string' ? c.className : '';
+                        if (cls && (cls.includes('serp-item') || cls.includes('vacancy-serp-item'))) {
                             return c;
                         }
                     }
@@ -2384,22 +2603,23 @@
     }
 
     function runHeuristicAll(key, root) {
+        root = root || document;
         try {
             switch (key) {
                 case 'applyBtn': {
                     const buttons = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     const matchText = /откликнуться|отклик без резюме|apply|respond|no resume necessary/i;
-                    const results = buttons.filter(el => matchText.test((el.textContent || '').trim()) && isVisible(el));
+                    const results = buttons.filter(el => matchText.test((el?.textContent || '').trim()) && isVisible(el));
                     if (results.length > 0) return results;
                     // Только интерактивные элементы и без служебных data-qa (см. runHeuristic)
                     const notApply = /status|success|view-topic|error|chat/i;
                     const hrefs = Array.from(root.querySelectorAll('a[href*="/applicant/vacancy_response"], a[data-qa*="response"], button[data-qa*="response"], a[data-qa*="apply"], button[data-qa*="apply"]'));
-                    return hrefs.filter(el => !notApply.test(el.getAttribute('data-qa') || '') && isVisible(el));
+                    return hrefs.filter(el => !notApply.test(el?.getAttribute?.('data-qa') || '') && isVisible(el));
                 }
                 case 'vacancyApply': {
                     const buttons = Array.from(root.querySelectorAll('button, a, [role="button"]'));
                     const matchText = /откликнуться|respond|apply/i;
-                    return buttons.filter(el => matchText.test((el.textContent || '').trim()) && isVisible(el));
+                    return buttons.filter(el => matchText.test((el?.textContent || '').trim()) && isVisible(el));
                 }
             }
         } catch (e) {
@@ -2411,16 +2631,16 @@
     function getVacancyCard(node) {
         if (!node) return null;
         let card = null;
-        try { card = node.closest(SELECTORS.vacancyCard); } catch (e) {}
+        try { card = node.closest?.(SELECTORS.vacancyCard); } catch (e) {}
         if (card) return card;
         // Карточка содержит РОВНО ОДНУ ссылку на вакансию. Без этой проверки подъём
         // по предкам цеплял контейнер всей выдачи (data-qa="vacancy-serp__results"
         // тоже содержит "vacancy") - и все кнопки страницы получали ID первой вакансии.
-        const isSingleVacancyNode = (el) => qa('a[href*="/vacancy/"]', el).length === 1;
+        const isSingleVacancyNode = (el) => el ? qa('a[href*="/vacancy/"]', el).length === 1 : false;
         let curr = node.parentElement;
         while (curr && curr !== document.body) {
-            const className = curr.className || '';
-            const dataQa = curr.getAttribute('data-qa') || '';
+            const className = typeof curr.className === 'string' ? curr.className : '';
+            const dataQa = curr.getAttribute?.('data-qa') || '';
             if (className.includes('serp-item') || className.includes('vacancy-serp-item') || dataQa.includes('vacancy') || dataQa.includes('serp-item')) {
                 if (isSingleVacancyNode(curr)) return curr;
                 break; // поднялись до контейнера списка - карточки выше нет
@@ -2440,9 +2660,9 @@
     function getNativeWrapper(el) {
         if (!el) return null;
         let wrapper = null;
-        try { wrapper = el.closest(SELECTORS.nativeWrapper); } catch (e) {}
+        try { wrapper = el.closest?.(SELECTORS.nativeWrapper); } catch (e) {}
         if (wrapper) return wrapper;
-        return el.closest('[data-qa="textarea-native-wrapper"]') || el.closest('[class*="native-wrapper"]') || el.parentElement;
+        return el.closest?.('[data-qa="textarea-native-wrapper"]') || el.closest?.('[class*="native-wrapper"]') || el.parentElement;
     }
 
         // Ждём появления элемента - MutationObserver помогает при динамическом DOM,
@@ -3054,7 +3274,7 @@
     //  9. СТАТУС В ПАНЕЛИ
     // ─────────────────────────────────────────────────────────────
 
-    const STATUS_KEYS = ['idle', 'running', 'stopped', 'error', 'done'];
+    const STATUS_KEYS = deepFreeze(['idle', 'running', 'stopped', 'error', 'done']);
 
     let currentStatusState = {
         statusKey: 'idle',
@@ -7645,7 +7865,7 @@
     const HostLayoutReservation = (() => {
         const SIDEBAR_WIDTH_PROPERTY = '--hha-sidebar-width';
         const PANEL_WIDTH_PROPERTY = '--hha-panel-width';
-        const MODE_CLASSES = ['hha-full-dock', 'hha-compact', 'hha-overlay'];
+        const MODE_CLASSES = deepFreeze(['hha-full-dock', 'hha-compact', 'hha-overlay']);
         let panel = null;
         let resizeObserver = null;
         let panelVisible = false;
