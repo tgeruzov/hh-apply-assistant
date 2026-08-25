@@ -30,7 +30,14 @@ async function walk(directory) {
     const entries = await readdir(directory, { withFileTypes: true });
     const files = [];
     for (const entry of entries) {
-        if (entry.name === '.git') continue;
+        if (
+            entry.name === '.git' ||
+            entry.name === 'node_modules' ||
+            entry.name === 'dist' ||
+            entry.name === '.vite' ||
+            entry.name === 'ui-reference' ||
+            entry.name === 'coverage'
+        ) continue;
         const absolute = path.join(directory, entry.name);
         if (entry.isDirectory()) files.push(...await walk(absolute));
         else files.push(absolute);
@@ -90,7 +97,60 @@ function extractMarkdownTargets(markdown) {
     return targets;
 }
 
-async function validateMetadata(source) {
+async function validatePackageAndViteVersions() {
+    const packageJsonPath = path.join(ROOT, 'package.json');
+    if (!existsSync(packageJsonPath)) {
+        report('package.json: missing file');
+        return null;
+    }
+    const pkg = JSON.parse(await readFile(packageJsonPath, 'utf8'));
+    const packageVersion = pkg.version;
+    if (!packageVersion) {
+        report('package.json: missing version field');
+    } else if (packageVersion !== EXPECTED_PRODUCT_VERSION) {
+        report(`package.json: version is "${packageVersion}", expected "${EXPECTED_PRODUCT_VERSION}"`);
+    }
+
+    const viteConfigPath = path.join(ROOT, 'vite.config.ts');
+    if (existsSync(viteConfigPath)) {
+        const viteConfig = await readFile(viteConfigPath, 'utf8');
+        const match = viteConfig.match(/version:\s*['"]([^'"]+)['"]/);
+        const viteVersion = match?.[1];
+        if (!viteVersion) {
+            report('vite.config.ts: missing userscript version in monkey configuration');
+        } else if (viteVersion !== packageVersion) {
+            report(`vite.config.ts: version "${viteVersion}" does not match package.json version "${packageVersion}"`);
+        }
+    }
+
+    const runtimeSourcePath = path.join(ROOT, 'src', 'core', 'runtime.ts');
+    if (existsSync(runtimeSourcePath)) {
+        const runtimeSource = await readFile(runtimeSourcePath, 'utf8');
+        const match = runtimeSource.match(/export\s+const\s+VERSION\s*=\s*['"]([^'"]+)['"]/);
+        const runtimeVersion = match?.[1];
+        if (!runtimeVersion) {
+            report('src/core/runtime.ts: missing VERSION declaration');
+        } else if (runtimeVersion !== packageVersion) {
+            report(`src/core/runtime.ts: VERSION "${runtimeVersion}" does not match package.json version "${packageVersion}"`);
+        }
+    }
+
+    const buildScriptPath = path.join(ROOT, 'scripts', 'build.mjs');
+    if (existsSync(buildScriptPath)) {
+        const buildScript = await readFile(buildScriptPath, 'utf8');
+        const match = buildScript.match(/\/\/\s*@version\s+([^\r\n]+)/);
+        const buildScriptVersion = match?.[1]?.trim();
+        if (!buildScriptVersion) {
+            report('scripts/build.mjs: missing @version in USER_SCRIPT_HEADER');
+        } else if (buildScriptVersion !== packageVersion) {
+            report(`scripts/build.mjs: header @version "${buildScriptVersion}" does not match package.json version "${packageVersion}"`);
+        }
+    }
+
+    return packageVersion;
+}
+
+async function validateMetadata(source, packageVersion) {
     const blockMatch = source.match(/^\/\/ ==UserScript==[\s\S]*?^\/\/ ==\/UserScript==/m);
     if (!blockMatch) {
         report(`${SOURCE_NAME}: metadata block not found at the beginning of the file`);
@@ -147,6 +207,9 @@ async function validateMetadata(source) {
     }
     if (PRODUCT_VERSION !== EXPECTED_PRODUCT_VERSION) {
         report(`${SOURCE_NAME}: @version is ${PRODUCT_VERSION}, expected ${EXPECTED_PRODUCT_VERSION}`);
+    }
+    if (packageVersion && PRODUCT_VERSION !== packageVersion) {
+        report(`${SOURCE_NAME}: @version "${PRODUCT_VERSION}" does not match package.json "${packageVersion}"`);
     }
 
     const runtimeVersionMatches = [...source.matchAll(/^\s*const VERSION = '([^']+)';$/gm)];
@@ -295,6 +358,11 @@ async function validateYaml(yamlFiles) {
 function validateRequiredFiles() {
     const required = [
         SOURCE_NAME,
+        'package.json',
+        'tsconfig.json',
+        'vite.config.ts',
+        'vitest.config.ts',
+        'scripts/build.mjs',
         'LICENSE',
         'README.md',
         'README.en.md',
@@ -332,9 +400,10 @@ function validateRequiredFiles() {
 
 const allFiles = await walk(ROOT);
 validateRequiredFiles();
+const packageVersion = await validatePackageAndViteVersions();
 if (!existsSync(SOURCE_PATH)) report(`${SOURCE_NAME}: production userscript is missing`);
 const source = existsSync(SOURCE_PATH) ? await readFile(SOURCE_PATH, 'utf8') : '';
-const versionContract = source ? await validateMetadata(source) : null;
+const versionContract = source ? await validateMetadata(source, packageVersion) : null;
 
 if (versionContract) {
     const { PRODUCT_VERSION, TAG_VERSION } = versionContract;
@@ -404,8 +473,10 @@ for (const action of ['actions/checkout', 'actions/setup-node']) {
 }
 
 for (const command of [
-    'node --check hh-apply-assistant.user.js',
-    'node --test',
+    'npm ci',
+    'npm run check',
+    'npm run test',
+    'npm run build',
     'node scripts/validate-repository.mjs'
 ]) {
     if (!workflow.includes(command)) report(`.github/workflows/ci.yml: missing command "${command}"`);

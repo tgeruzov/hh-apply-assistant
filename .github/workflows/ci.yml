@@ -9,27 +9,33 @@ permissions:
 
 jobs:
   test:
-    name: Syntax and tests
+    name: Syntax, types, tests and validation
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 24
           package-manager-cache: false
 
-      - name: Check userscript syntax
-        run: node --check hh-apply-assistant.user.js
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check types
+        run: npm run check
 
       - name: Run tests
-        run: node --test
+        run: npm run test
+
+      - name: Build userscript bundle
+        run: npm run build
 
       - name: Validate repository metadata and documentation
         run: node scripts/validate-repository.mjs

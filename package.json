@@ -1,0 +1,28 @@
+{
+  "name": "hh-apply-assistant",
+  "version": "4.0.0",
+  "type": "module",
+  "description": "HH Apply Assistant — инструмент автоматизации откликов на вакансии hh.ru (HeadHunter)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && node scripts/build.mjs",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "validate": "node scripts/validate-repository.mjs"
+  },
+  "keywords": [
+    "userscript",
+    "tampermonkey",
+    "hh",
+    "headhunter"
+  ],
+  "author": "Timur Geruzov",
+  "license": "GPL-3.0-only",
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.0",
+    "vite-plugin-monkey": "^5.0.7",
+    "vitest": "^4.1.11"
+  }
+}

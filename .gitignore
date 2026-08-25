@@ -9,4 +9,7 @@ Desktop.ini
 *.log
 
 node_modules/
+dist/
 coverage/
+.vite/
+ui-reference/
