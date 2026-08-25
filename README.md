@@ -1,6 +1,6 @@
 # HH Apply Assistant
 
-[Русский](README.md) | [English](README.en.md)
+[Русский](README.md) | [English](docs/i18n/README.en.md)
 
 [![Version](https://img.shields.io/badge/version-4.0.0-2563eb.svg)](CHANGELOG.md)
 [![CI](https://github.com/tgeruzov/hh-apply-assistant/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tgeruzov/hh-apply-assistant/actions/workflows/ci.yml?query=branch%3Amain)
@@ -33,7 +33,15 @@ HH.ru может менять страницы и порядок отправк�
 
 На широком экране панель закрепляется справа от страницы hh.ru. В узком окне она сначала становится компактнее, затем открывается поверх страницы. Панель можно свернуть, не останавливая активный прогон.
 
-Актуальных скриншотов пока нет. Они будут добавлены после проверки, что на изображениях отсутствуют персональные данные.
+![Широкая закреплённая панель на странице HeadHunter](docs/assets/screenshots/01-dock-wide-desktop.png)
+
+### Скриншоты режимов и возможностей
+
+- **Компактная панель и ручная очередь:** [02-dock-compact.png](docs/assets/screenshots/02-dock-compact.png)
+- **Диагностический лог в режиме оверлея:** [03-overlay-mobile.png](docs/assets/screenshots/03-overlay-mobile.png)
+- **Режим Турбо с динамической индикацией:** [04-turbo-mode-active.png](docs/assets/screenshots/04-turbo-mode-active.png)
+- **Пустое состояние очереди с иконкой:** [05-queue-empty-and-populated.png](docs/assets/screenshots/05-queue-empty-and-populated.png)
+- **Интерактивная справка режимов (EN):** [06-popover-help-i18n.png](docs/assets/screenshots/06-popover-help-i18n.png)
 
 ## Установка
 
@@ -66,7 +74,7 @@ HH.ru может менять страницы и порядок отправк�
 - Настройки, письмо, ручная очередь и диагностика хранятся локально в браузере на hh.ru. У проекта нет сервера, на который отправляются эти данные.
 - Диагностический отчёт может содержать адреса страниц, сведения о браузере, журнал и короткие фрагменты текста страницы. Просмотрите и при необходимости отредактируйте его перед публикацией.
 
-Подробности: [данные и приватность](PRIVACY.md), [хранение](docs/storage.md) и [диагностика](docs/diagnostics.md).
+Подробности: [данные и приватность](docs/PRIVACY.md), [хранение](docs/storage.md) и [диагностика](docs/diagnostics.md).
 
 ## Документация
 
@@ -77,7 +85,7 @@ HH.ru может менять страницы и порядок отправк�
 
 ## Участие в разработке
 
-Проект не требует сборки и npm-зависимостей. Правила локальной установки, тестирования и pull request описаны в [CONTRIBUTING.md](CONTRIBUTING.md). Ошибки можно сообщать через [Issue templates](https://github.com/tgeruzov/hh-apply-assistant/issues/new/choose); уязвимости — по [Security Policy](SECURITY.md).
+Проект не требует сборки и npm-зависимостей. Правила локальной установки, тестирования и pull request описаны в [CONTRIBUTING.md](.github/CONTRIBUTING.md). Ошибки можно сообщать через [Issue templates](https://github.com/tgeruzov/hh-apply-assistant/issues/new/choose); уязвимости — по [Security Policy](.github/SECURITY.md).
 
 ## Лицензия
 

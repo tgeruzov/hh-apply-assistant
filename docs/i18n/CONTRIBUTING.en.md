@@ -2,7 +2,7 @@
 
 HH Apply Assistant welcomes focused bug fixes, UI improvements, tests, and documentation changes. Report an ordinary problem with the [English bug form](https://github.com/tgeruzov/hh-apply-assistant/issues/new?template=bug_report_en.yml). Please open a [feature request](https://github.com/tgeruzov/hh-apply-assistant/issues/new?template=feature_request_en.yml) before a large change to application behavior, stored data, or browser permissions.
 
-Report vulnerabilities through the [Security Policy](SECURITY.en.md), not a public bug report. Project discussions also follow the [Code of Conduct](CODE_OF_CONDUCT.md), which is currently maintained in Russian.
+Report vulnerabilities through the [Security Policy](SECURITY.en.md), not a public bug report. Project discussions also follow the [Code of Conduct](../../.github/CODE_OF_CONDUCT.md), which is currently maintained in Russian.
 
 ## Setup
 

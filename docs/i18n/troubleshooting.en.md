@@ -58,4 +58,4 @@ Before reporting a bug:
 4. Remove personal data, cookies, tokens, full private URLs, and sensitive page text from everything you share.
 5. Note the HH Apply Assistant, Chrome, and Tampermonkey versions, page type, work mode, steps, expected result, and actual result.
 
-Use the [English bug report form](https://github.com/tgeruzov/hh-apply-assistant/issues/new?template=bug_report_en.yml) or open the [issue chooser](https://github.com/tgeruzov/hh-apply-assistant/issues/new/choose). Report vulnerabilities through the [Security Policy](../SECURITY.en.md), not a public bug report.
+Use the [English bug report form](https://github.com/tgeruzov/hh-apply-assistant/issues/new?template=bug_report_en.yml) or open the [issue chooser](https://github.com/tgeruzov/hh-apply-assistant/issues/new/choose). Report vulnerabilities through the [Security Policy](SECURITY.en.md), not a public bug report.

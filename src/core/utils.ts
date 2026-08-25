@@ -10,7 +10,6 @@ export const toNum = (v: unknown, fallback: number): number => {
     return Number.isFinite(n) ? n : fallback;
 };
 
-// Нормализация пробелов в тексте DOM/заголовка.
 export const collapseSpaces = (s: unknown): string => String(s || '').replace(/\s+/g, ' ').trim();
 
 // Простой стабильный хеш (FNV-1a 32) - запасной вариант генерации ID
@@ -24,7 +23,7 @@ export function fnv1a32(str: string): number {
     return h >>> 0;
 }
 
-// Разрешаем только http(s)-ссылки на домены hh.ru - защита от подстановки мусора в хранилище.
+// Разрешаем только http(s)-ссылки на домены hh.ru - защита от невалидных данных в хранилище.
 export const toSafeHhUrl = (rawUrl: unknown): string => {
     if (!rawUrl) return '';
     try {
@@ -65,9 +64,7 @@ const ESC_MAP: Record<string, string> = {
 
 export const escHtml = (v: unknown): string => String(v ?? '').replace(/[&<>"']/g, (ch) => ESC_MAP[ch] || ch);
 
-// Приводим любое сырое имя вакансии к читаемому виду: снимаем счётчик непрочитанных
-// из заголовка вкладки, разбираем SEO-обёртку hh.ru и служебные хвосты сайта.
-// Используется и при парсинге со страницы, и при рендере уже сохранённых записей.
+// Очистка сырого title вакансии от SEO-обёрток hh.ru и служебных фрагментов.
 export function prettifyTitle(raw: unknown): string {
     let t = collapseSpaces(raw);
     if (!t) return '';

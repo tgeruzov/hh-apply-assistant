@@ -30,7 +30,6 @@ export function registerPanelHandlers(mount: () => void, destroy: () => void): v
     panelDestroyHandler = destroy;
 }
 
-// Обнаружение капчи / анти-бот проверки hh.ru.
 export function detectCaptcha(): boolean {
     if (typeof document === 'undefined') return false;
     if (q('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="captcha" i], iframe[src*="smartcaptcha" i], iframe[title*="captcha" i], [data-qa*="captcha" i], .g-recaptcha, .h-captcha, .smart-captcha')) return true;
@@ -45,8 +44,7 @@ export function detectCaptcha(): boolean {
     return false;
 }
 
-// Останавливаем прогон из-за капчи: снимаем рабочие флаги, освобождаем межвкладочную
-// блокировку и показываем понятный статус.
+// Halt: CAPTCHA detected.
 export function haltForCaptcha(): void {
     incRunId();
     Metrics.bump('scenario.captcha');

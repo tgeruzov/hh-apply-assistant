@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && node scripts/build.mjs",
     "check": "tsc --noEmit",
     "test": "vitest run",
+    "test:ui": "node scripts/capture-ui-screenshots.mjs",
     "validate": "node scripts/validate-repository.mjs"
   },
   "keywords": [
@@ -20,6 +21,7 @@
   "license": "GPL-3.0-only",
   "devDependencies": {
     "@types/node": "^22.13.10",
+    "playwright": "^1.62.1",
     "typescript": "^5.8.2",
     "vite": "^6.2.0",
     "vite-plugin-monkey": "^5.0.7",

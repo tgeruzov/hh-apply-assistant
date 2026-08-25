@@ -1,6 +1,6 @@
 # Security Policy
 
-[Русский](SECURITY.md) | [English](SECURITY.en.md)
+[Русский](SECURITY.md) | [English](../docs/i18n/SECURITY.en.md)
 
 ## Поддерживаемые версии
 
@@ -41,4 +41,4 @@
 
 Production userscript работает с `@grant none` на origin hh.ru и хранит данные в browser storage этого origin. Код hh.ru и другие скрипты в том же page context находятся в той же технической границе доступа. Tampermonkey получает обновления с URL в metadata; компрометация репозитория или release-канала поэтому является существенным риском.
 
-Текущая модель данных и экспорта описана в [PRIVACY.md](PRIVACY.md).
+Текущая модель данных и экспорта описана в [PRIVACY.md](../docs/PRIVACY.md).

@@ -35,4 +35,4 @@ Open **Diagnostics** to review the log. Use **Check page** on the page where a p
 
 The assistant stops when it reaches the limit, finishes the current results page, detects a CAPTCHA, or encounters a critical storage error. An application whose outcome cannot be confirmed goes to the **Manual queue** instead of being counted as successful. The assistant does not bypass CAPTCHA and does not automatically continue after you solve one.
 
-For setup problems, see [Installation](installation.en.md) and [Troubleshooting](troubleshooting.en.md). For stored data and exports, see [Data and privacy](../PRIVACY.en.md).
+For setup problems, see [Installation](installation.en.md) and [Troubleshooting](troubleshooting.en.md). For stored data and exports, see [Data and privacy](PRIVACY.en.md).

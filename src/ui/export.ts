@@ -5,7 +5,6 @@ import { State, config, DiagLog, DiagnosticI18n, Metrics, log } from '../core/st
 import { I18n, TRANSLATIONS } from '../i18n/index.js';
 import { prettifyTitle } from '../core/utils.js';
 
-// Универсальная выгрузка файла через Blob-ссылку.
 export function downloadFile(filename: string, content: string, mime: string): void {
     if (typeof document === 'undefined') return;
     const blob = new Blob([content], { type: mime });
@@ -19,7 +18,6 @@ export function downloadFile(filename: string, content: string, mime: string): v
     URL.revokeObjectURL(url);
 }
 
-// Секция снимков DOM - по ней видно фактическую разметку в момент сбоя детекта.
 export function buildSnapshotsSection(): string {
     const pad2 = (n: number) => String(n).padStart(2, '0');
     const fmt = (t: number) => { const d = new Date(t); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; };
@@ -52,7 +50,6 @@ export function buildSnapshotsSection(): string {
     return lines.join('\n') + '\n';
 }
 
-// Секция метрик: распределение сценариев, тайминги, здоровье и варианты селекторов.
 export function buildMetricsSection(): string {
     const m = Metrics.getAll();
     const c = m.counters || {};
@@ -99,7 +96,6 @@ export function buildMetricsSection(): string {
     return lines.join('\n');
 }
 
-// Собираем диагностический отчёт: заголовок с окружением/состоянием + все строки лога.
 export function buildDiagnosticReport(): string {
     const pad2 = (n: number) => String(n).padStart(2, '0');
     const pad3 = (n: number) => String(n).padStart(3, '0');
@@ -142,7 +138,6 @@ export function buildDiagnosticReport(): string {
     return header + buildMetricsSection() + '\n' + body + '\n' + buildSnapshotsSection();
 }
 
-// Скачиваем диагностический отчёт файлом.
 export function exportDiagnosticReport(): void {
     try {
         const report = buildDiagnosticReport();

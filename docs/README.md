@@ -1,15 +1,15 @@
 # Документация HH Apply Assistant
 
-[Главная страница на русском](../README.md) · [Project overview in English](../README.en.md)
+[Главная страница на русском](../README.md) · [Project overview in English](i18n/README.en.md)
 
 Документы сгруппированы по задаче и аудитории. Для основных пользовательских сценариев и работы с сообществом доступны русская и английская версии.
 
 ## Пользователю
 
-- Установка и обновление: [RU](installation.md) · [EN](installation.en.md) — Chrome, Tampermonkey, разрешения и проверка запуска.
-- Использование: [RU](usage.md) · [EN](usage.en.md) — панель, режимы, настройки, запуск, остановка и ручная очередь.
-- Решение проблем: [RU](troubleshooting.md) · [EN](troubleshooting.en.md) — установка, появление панели, CAPTCHA, обновление и подготовка сообщения об ошибке.
-- Данные и приватность: [RU](../PRIVACY.md) · [EN](../PRIVACY.en.md) — локальное хранение, сетевое поведение и состав экспортов.
+- Установка и обновление: [RU](installation.md) · [EN](i18n/installation.en.md) — Chrome, Tampermonkey, разрешения и проверка запуска.
+- Использование: [RU](usage.md) · [EN](i18n/usage.en.md) — панель, режимы, настройки, запуск, остановка и ручная очередь.
+- Решение проблем: [RU](troubleshooting.md) · [EN](i18n/troubleshooting.en.md) — установка, появление панели, CAPTCHA, обновление и подготовка сообщения об ошибке.
+- Данные и приватность: [RU](PRIVACY.md) · [EN](i18n/PRIVACY.en.md) — локальное хранение, сетевое поведение и состав экспортов.
 
 ## Разработчику
 
@@ -28,7 +28,7 @@
 
 ## Community
 
-- Участие в разработке: [RU](../CONTRIBUTING.md) · [EN](../CONTRIBUTING.en.md).
-- Сообщение об уязвимости: [RU](../SECURITY.md) · [EN](../SECURITY.en.md).
-- [Кодекс поведения](../CODE_OF_CONDUCT.md).
+- Участие в разработке: [RU](../.github/CONTRIBUTING.md) · [EN](i18n/CONTRIBUTING.en.md).
+- Сообщение об уязвимости: [RU](../.github/SECURITY.md) · [EN](i18n/SECURITY.en.md).
+- [Кодекс поведения](../.github/CODE_OF_CONDUCT.md).
 - [Сообщения об ошибках и предложения](https://github.com/tgeruzov/hh-apply-assistant/issues/new/choose) через структурированные формы.

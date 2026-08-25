@@ -185,7 +185,6 @@ export const getDefaultCoverText = (lang?: SupportedLanguage): string => {
     return (TRANSLATIONS as any)[target]?.cover?.defaultText || TRANSLATIONS[DEFAULT_LANGUAGE].cover.defaultText;
 };
 
-// Пользовательские настройки по умолчанию
 export const DEFAULTS: AppSettings = deepFreeze({
     coverText: TRANSLATIONS[DEFAULT_LANGUAGE].cover.defaultText,
     useCover: true,

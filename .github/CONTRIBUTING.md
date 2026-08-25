@@ -1,6 +1,6 @@
 # Участие в разработке
 
-[Русский](CONTRIBUTING.md) | [English](CONTRIBUTING.en.md)
+[Русский](CONTRIBUTING.md) | [English](../docs/i18n/CONTRIBUTING.en.md)
 
 HH Apply Assistant принимает bug fixes, улучшения распознавания сценариев, UI-правки, тесты и документацию. Крупное изменение automation behavior, storage schema или модели разрешений сначала лучше обсудить в Issue: такие изменения труднее безопасно проверить на реальном hh.ru.
 
@@ -23,7 +23,7 @@ node --check hh-apply-assistant.user.js
 node --test
 ```
 
-Локальная установка development-копии и карта исходника описаны в [docs/development.md](docs/development.md).
+Локальная установка development-копии и карта исходника описаны в [docs/development.md](../docs/development.md).
 
 ## Работа над изменением
 

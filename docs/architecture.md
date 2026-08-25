@@ -71,7 +71,7 @@ UI поддерживает remount после SPA-удаления, keyboard na
 
 ## Security и privacy boundary
 
-Userscript работает с `@grant none` в page context hh.ru. Runtime не загружает внешний код и не использует transport API. Diagnostic и queue exports формируются через `Blob`/object URL. Это упрощает аудит, но означает, что storage origin hh.ru находится в общей границе с кодом страницы; подробности приведены в [PRIVACY.md](../PRIVACY.md).
+Userscript работает с `@grant none` в page context hh.ru. Runtime не загружает внешний код и не использует transport API. Diagnostic и queue exports формируются через `Blob`/object URL. Это упрощает аудит, но означает, что storage origin hh.ru находится в общей границе с кодом страницы; подробности приведены в [PRIVACY.md](PRIVACY.md).
 
 ## Проверки
 

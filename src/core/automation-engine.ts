@@ -116,7 +116,7 @@ export const ExecutionResult = {
     }
 };
 
-// Человеческий скролл: вниз до секции Подходящие вакансии в этой компании
+    // Имитация прокрутки: вниз до секции Подходящие вакансии в этой компании
 // (или до 60% страницы), пауза, и возврат вверх.
 export async function simulateReading(viewTime: number, runId = currentRunId): Promise<void> {
     if (!viewTime || viewTime <= 0) return;
@@ -231,7 +231,6 @@ export function detectResponseOutcomeOnce(runId = currentRunId, includeCompatibi
     return detectResponseOutcomeInRoot(scope, true);
 }
 
-// Динамически определяем, что произошло после клика "Откликнуться".
 export async function resolveResponseOutcome(timeout: number, runId = currentRunId): Promise<string> {
     let lastFallbackAt = -Infinity;
     const outcome = await waitForCondition(() => {
@@ -244,7 +243,6 @@ export async function resolveResponseOutcome(timeout: number, runId = currentRun
     return (outcome as string) || 'TIMEOUT';
 }
 
-// Определяем сценарий, по пути подтверждая окна Готовность к переезду (до 3 раз).
 export async function resolveWithRelocation(timeout: number, runId = currentRunId): Promise<string> {
     let outcome = await resolveResponseOutcome(timeout, runId);
     let guard = 0;
@@ -267,7 +265,6 @@ export async function resolveWithRelocation(timeout: number, runId = currentRunI
     return outcome;
 }
 
-// Заполнить сопроводительное письмо (если нужно) и отправить форму отклика.
 export async function fillLetterAndSubmit({ withCover = true, runId = currentRunId } = {}): Promise<boolean> {
     if (!isRunCurrent(runId)) return false;
     if (withCover) {
@@ -318,7 +315,7 @@ export async function fillLetterAndSubmit({ withCover = true, runId = currentRun
     return clicked && isRunCurrent(runId);
 }
 
-// Дожать отправку в модалке с предупреждением Скорее всего, будет отказ.
+    // Повторная отправка при предупреждении об отказе.
 export async function forceSubmitReject(maxAttempts = TUNING.forceSubmitAttempts, opts: { onResponsePage?: boolean; runId?: number; allowDocumentStrongText?: boolean } = {}): Promise<string> {
     const onPage = !!opts.onResponsePage;
     const runId = opts.runId || currentRunId;
@@ -520,7 +517,6 @@ export async function submitResponsePage(vid?: string | null, backUrl = '/search
     }
 }
 
-// Открываем вакансию со списка: запоминаем lastAttempt, название и переходим по ссылке
 export async function openVacancyFromList(vacancyLinkEl: HTMLAnchorElement, runId = currentRunId): Promise<string> {
     if (!isRunCurrent(runId)) return 'STOPPED';
     const hrefRaw = vacancyLinkEl?.href || (vacancyLinkEl.getAttribute && vacancyLinkEl.getAttribute('href'));
@@ -1139,7 +1135,6 @@ export function haltForLostInstanceLock(): void {
     log(I18n.t('logs.instanceLockLost'), true);
 }
 
-// Register halt handler in concurrency
 setHaltHandler(haltForLostInstanceLock);
 
 export function haltForPersistenceFailure(vid?: string | null, storageArea = 'manual'): void {

@@ -15,22 +15,18 @@ export const HHA_MIN_PANEL_WIDTH = 340;
 // Minimum practical width reserved for hh.ru desktop layout before compact assistant mode is used.
 export const HHA_MIN_HOST_WIDTH = 980;
 
-// Технические тайминги - не настраиваются пользователем.
 export const TUNING = deepFreeze({
     scrollStepMs: 200,        // шаг человеческого скролла
     waitForModalMs: 8000,     // ожидание реакции после клика Откликнуться
     confirmWaitMs: 6000,      // ожидание подтверждения после отправки формы
     responsePagePendingMs: 16000, // обычный full-page submit ждём без повторного клика
     instanceLockTtl: 30000,   // TTL кросс-вкладочной блокировки
-    forceSubmitAttempts: 3    // попыток дожать отправку при предупреждении об отказе
+    forceSubmitAttempts: 3    // попыток повторных отправок при предупреждении об отказе
 });
 
-// Максимум записей в постоянном диагностическом логе (защита от переполнения localStorage)
 export const DIAG_LOG_MAX = 1000;
-// Максимум снимков DOM, которые храним для анализа изменений вёрстки
 export const DOM_SNAPSHOT_MAX = 15;
 
-// Важные селекторы, используемые в скрипте
 export const SELECTORS = deepFreeze({
     // Кнопка "Откликнуться" в карточке результатов поиска
     applyBtn: '[data-qa="vacancy-serp__vacancy_response"], button[data-qa="vacancy-serp__vacancy_response"]',

@@ -21,7 +21,7 @@ const SCRIPT_PATH = path.join(ROOT, 'hh-apply-assistant.user.js');
 const SCRIPT_SOURCE = readFileSync(SCRIPT_PATH, 'utf8').replace(/\r\n/g, '\n');
 
 const submitStart = SCRIPT_SOURCE.indexOf('    async function submitResponsePage');
-const submitEnd = SCRIPT_SOURCE.indexOf('\n\n    // Открываем вакансию со списка', submitStart);
+const submitEnd = SCRIPT_SOURCE.indexOf('\n\n    async function openVacancyFromList', submitStart);
 const SUBMIT_RESPONSE_PAGE_SOURCE = SCRIPT_SOURCE.slice(submitStart, submitEnd);
 
 const postSubmitOutcomeStart = SCRIPT_SOURCE.indexOf('    function detectPostSubmitPageOutcome');
@@ -306,7 +306,7 @@ for (const postSubmitText of ['message', 'cover letter', 'reject warning', 'Эт
 
 test('response waiting uses filtered mutations, ignores assistant UI and throttles fallback scans', () => {
     const waitStart = SCRIPT_SOURCE.indexOf('async function waitForCondition');
-    const waitEnd = SCRIPT_SOURCE.indexOf('// Корректная вставка текста', waitStart);
+    const waitEnd = SCRIPT_SOURCE.indexOf('// Вставка текста в textarea', waitStart);
     const waitSource = SCRIPT_SOURCE.slice(waitStart, waitEnd);
     expect(waitSource).toMatch(/mutations\.every\(mutationBelongsToAssistantUI\)/);
     expect(waitSource).toMatch(/attributeFilter:\s*\[[^\]]*'data-qa'/s);
@@ -314,7 +314,7 @@ test('response waiting uses filtered mutations, ignores assistant UI and throttl
     expect(waitSource).not.toMatch(/requestAnimationFrame/);
 
     const resolveStart = SCRIPT_SOURCE.indexOf('async function resolveResponseOutcome');
-    const resolveEnd = SCRIPT_SOURCE.indexOf('// Определяем сценарий', resolveStart);
+    const resolveEnd = SCRIPT_SOURCE.indexOf('async function resolveWithRelocation', resolveStart);
     const resolveSource = SCRIPT_SOURCE.slice(resolveStart, resolveEnd);
     expect(resolveSource).toMatch(/now - lastFallbackAt >= 750/);
     expect(resolveSource).toMatch(/detectResponseOutcomeOnce\(runId, includeFallback\)/);

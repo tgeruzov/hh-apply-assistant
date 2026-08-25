@@ -43,7 +43,7 @@ The panel is expected on vacancy search pages, individual vacancy pages, and hh.
 Use this only if the Raw link is not handled by Tampermonkey:
 
 1. Open the Tampermonkey Dashboard and create a new script.
-2. Copy the complete contents of [hh-apply-assistant.user.js](../hh-apply-assistant.user.js) into the editor, replacing its template.
+2. Copy the complete contents of [hh-apply-assistant.user.js](../../hh-apply-assistant.user.js) into the editor, replacing its template.
 3. Save the script and make sure its Dashboard toggle is enabled.
 4. Reload a supported hh.ru page.
 
@@ -53,4 +53,4 @@ Keep only one enabled copy of HH Apply Assistant to avoid duplicate panels or co
 
 Tampermonkey can check for updates from the canonical Raw link. You can also use its Dashboard update check or reopen the install link. If no update is found, verify Site access for `raw.githubusercontent.com`.
 
-Remove the assistant from the Tampermonkey Dashboard. Uninstalling it does not necessarily remove data already stored on hh.ru; see [Data and privacy](../PRIVACY.en.md#deleting-local-data).
+Remove the assistant from the Tampermonkey Dashboard. Uninstalling it does not necessarily remove data already stored on hh.ru; see [Data and privacy](PRIVACY.en.md#deleting-local-data).

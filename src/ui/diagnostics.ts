@@ -575,7 +575,6 @@ export const DiagnosticsView = (() => {
     };
 })();
 
-// Пробегает по ключевым селекторам с учетом контекста страницы
 export function runHealthCheck(): void {
     const hasSearchCards = () => Boolean(q(SELECTORS.vacancyCard) || q(SELECTORS.vacancyLink) || q(SELECTORS.applyBtn) || q('a[href*="/vacancy/"]'));
     const isResponseModalOpen = () => {

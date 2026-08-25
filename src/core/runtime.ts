@@ -7,7 +7,6 @@ export const VERSION = '4.0.0';
 export const RUNTIME_KEY = '__hhApplyAssistantRuntime';
 const existingRuntime = typeof window !== 'undefined' ? (window as any)[RUNTIME_KEY] : null;
 if (existingRuntime && existingRuntime.active) {
-    // Early exit
 }
 
 export const runtimeRecord: RuntimeRecord = {

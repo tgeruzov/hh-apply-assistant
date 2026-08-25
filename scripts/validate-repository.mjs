@@ -355,6 +355,25 @@ async function validateYaml(yamlFiles) {
     }
 }
 
+async function validateAiMarkers(markdownFiles) {
+    const AI_MARKER_PATTERNS = [
+        { pattern: /\b(бесшовн|бескомпромиссн|всеобъемлющ|надежный инструмент|призван обеспечить|delve|tapestry|testament|seamlessly)\b/i, label: 'AI stopword' },
+        { pattern: /(ниже (представлен|приведен|описан)(а|о|ы)?|in the (following|below) (table|code))/i, label: 'meta-announcement' },
+        { pattern: /^(#{1,6}\s*)[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/um, label: 'emoji in heading' },
+        { pattern: /(?:«|“)[a-zA-Z0-9_\-.]+\(\)(?:»|”)/, label: 'typographic quotes around code identifier' }
+    ];
+
+    for (const file of markdownFiles) {
+        const content = await readFile(file, 'utf8');
+        for (const { pattern, label } of AI_MARKER_PATTERNS) {
+            const match = content.match(pattern);
+            if (match) {
+                report(`${relative(file)}: found ${label} ("${match[0]}")`);
+            }
+        }
+    }
+}
+
 function validateRequiredFiles() {
     const required = [
         SOURCE_NAME,
@@ -365,33 +384,33 @@ function validateRequiredFiles() {
         'scripts/build.mjs',
         'LICENSE',
         'README.md',
-        'README.en.md',
         'CHANGELOG.md',
-        'CONTRIBUTING.md',
-        'CONTRIBUTING.en.md',
-        'SECURITY.md',
-        'SECURITY.en.md',
-        'PRIVACY.md',
-        'PRIVACY.en.md',
-        'CODE_OF_CONDUCT.md',
+        '.github/CODE_OF_CONDUCT.md',
+        '.github/CONTRIBUTING.md',
+        '.github/SECURITY.md',
+        '.github/PULL_REQUEST_TEMPLATE.md',
         '.nvmrc',
         ...ISSUE_FORM_NAMES.map(name => `.github/ISSUE_TEMPLATE/${name}`),
         '.github/ISSUE_TEMPLATE/config.yml',
-        '.github/pull_request_template.md',
         '.github/workflows/ci.yml',
         'docs/README.md',
+        'docs/PRIVACY.md',
         'docs/installation.md',
-        'docs/installation.en.md',
         'docs/usage.md',
-        'docs/usage.en.md',
         'docs/architecture.md',
         'docs/storage.md',
         'docs/lifecycle.md',
         'docs/diagnostics.md',
         'docs/development.md',
         'docs/troubleshooting.md',
-        'docs/troubleshooting.en.md',
-        'docs/release-process.md'
+        'docs/release-process.md',
+        'docs/i18n/README.en.md',
+        'docs/i18n/CONTRIBUTING.en.md',
+        'docs/i18n/SECURITY.en.md',
+        'docs/i18n/PRIVACY.en.md',
+        'docs/i18n/installation.en.md',
+        'docs/i18n/usage.en.md',
+        'docs/i18n/troubleshooting.en.md'
     ];
     for (const name of required) {
         if (!existsSync(path.join(ROOT, name))) report(`${name}: required repository file is missing`);
@@ -411,7 +430,7 @@ if (versionContract) {
     // equivalence between languages or between documentation and runtime behavior.
     const versionFiles = [
         ['README.md', `version-${PRODUCT_VERSION}`],
-        ['README.en.md', `version-${PRODUCT_VERSION}`],
+        ['docs/i18n/README.en.md', `version-${PRODUCT_VERSION}`],
         ['CHANGELOG.md', `## [${PRODUCT_VERSION}]`],
         [`docs/release-notes/${TAG_VERSION}.md`, `# ${PRODUCT_NAME} ${TAG_VERSION}`]
     ];
@@ -443,6 +462,7 @@ if (versionContract) {
 const markdownFiles = allFiles.filter(file => path.extname(file).toLowerCase() === '.md');
 const yamlFiles = allFiles.filter(file => /\.ya?ml$/i.test(file));
 await validateMarkdown(markdownFiles);
+await validateAiMarkers(markdownFiles);
 await validateYaml(yamlFiles);
 await validateIssueForms();
 

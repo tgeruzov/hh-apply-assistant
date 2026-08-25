@@ -101,4 +101,4 @@ Report создаётся локально через `Blob` и object URL. Runt
 5. Просмотрите current URL, return URL, log paths и snapshot text; удалите персональные или секретные данные.
 6. Приложите только релевантный отредактированный фрагмент, если полный report не нужен.
 
-Bug form просит версию script/browser/Tampermonkey, режим, тип страницы и ожидаемый outcome. Privacy boundary описан в [PRIVACY.md](../PRIVACY.md).
+Bug form просит версию script/browser/Tampermonkey, режим, тип страницы и ожидаемый outcome. Privacy boundary описан в [PRIVACY.md](PRIVACY.md).

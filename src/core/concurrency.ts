@@ -54,16 +54,13 @@ export const TAB_ID: string = (() => {
     return id;
 })();
 
-// Проверяет, принадлежит ли вызов текущему активному поколению запуска.
-// Если произошёл Stop -> Start, старый runId !== currentRunId и выполнение прерывается.
 export const isRunCurrent = (runId?: number | null): boolean => {
     if (stopSignal) return false;
     if (runId !== undefined && runId !== null && runId !== currentRunId) return false;
     return storage.sessionGet(KEYS.isRunning) === '1';
 };
 
-// Прерываемая пауза (Interruptible sleep): опрашивает stopSignal и слушает AbortSignal,
-// гарантируя мгновенную реакцию на нажатие "Стоп" в любых режимах и на любых таймингах (<1 мс).
+// Прерываемая пауза: завершается досрочно по stopSignal или AbortSignal.
 export const interruptibleWait = (ms: number, signal?: AbortSignal | null): Promise<void> => new Promise(resolve => {
     const sig = signal || activeAbortController?.signal;
     if (stopSignal || sig?.aborted || ms <= 0) return resolve();
@@ -160,7 +157,6 @@ export async function acquireInstanceLock(tabId: string): Promise<boolean> {
         return false;
     }
 
-    // Web Locks API: нативная межвкладочная синхронизация
     const supportsWebLocks = typeof navigator !== 'undefined'
         && !!navigator.locks
         && typeof navigator.locks.request === 'function';
@@ -200,9 +196,7 @@ export async function acquireInstanceLock(tabId: string): Promise<boolean> {
                 instanceLeaseVerified = false;
                 return false;
             }
-        } catch (e) {
-            // При ошибке вызова Web Locks API продолжаем фоллбек через storage
-        }
+        } catch (e) {}
     }
 
     const leaseId = newInstanceLeaseId(tabId);

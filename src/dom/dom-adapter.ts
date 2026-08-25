@@ -71,7 +71,7 @@ export function queryHeuristic(key: string, root?: ParentNode | null): Element |
     return found;
 }
 
-// Интеллектуальный поиск элементов с эвристиками на случай изменения верстки
+// Поиск элемента с fallback на scoped/heuristic selectors
 export function query(keyOrSelector: string, root?: ParentNode | null): Element | null {
     const selector = (SELECTORS as any)[keyOrSelector];
     if (!selector) {
@@ -85,7 +85,6 @@ export function query(keyOrSelector: string, root?: ParentNode | null): Element 
     }
     const el = queryExact(keyOrSelector, root);
     if (el) return el;
-    // Запуск эвристического поиска
     return queryHeuristic(keyOrSelector, root);
 }
 
@@ -172,7 +171,7 @@ export function runHeuristic(key: string, root?: ParentNode | null): Element | n
                 if (submitBtn && isVisible(submitBtn)) {
                     const qaAttr = submitBtn?.getAttribute?.('data-qa') || '';
                     if (qaAttr.includes('vacancy-response-link') || qaAttr.includes('vacancy-serp__vacancy_response')) {
-                        // skip
+                        break;
                     } else {
                         return submitBtn;
                     }
@@ -436,7 +435,7 @@ export async function waitForCondition<T>(checkFn: () => T, timeout = TUNING.wai
     });
 }
 
-// Корректная вставка текста в textarea (учитывает React/Magritte)
+// Вставка текста в textarea с dispatch inputEvent (React/Magritte)
 export function fillTextarea(el: HTMLTextAreaElement, value: string): void {
     try {
         const descriptor = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
@@ -459,7 +458,7 @@ export function updateMousePos(x: number, y: number): void {
     lastMousePos.y = y;
 }
 
-// Максимально человеческий клик: полная последовательность pointer/mouse-событий + нативный click.
+// Dispatch полной цепочки pointer/mouse events + нативный click.
 export async function realisticClick(el: HTMLElement | null, runId = currentRunId): Promise<boolean> {
     if (!el || !isRunCurrent(runId)) return false;
     try { el.scrollIntoView({ block: 'center', behavior: 'auto' }); } catch (e) { /* ignore */ }

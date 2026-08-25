@@ -290,7 +290,7 @@ export const DiagLog = (() => {
             }
             const json = JSON.stringify(_cache);
             if (!storage.localSet(KEYS.diagLog, json)) {
-                // Переполнение квоты — агрессивно обрезаем и пробуем снова
+                // Quota exceeded — сокращаем лог и повторяем запись
                 const sourceChanged = _cache.length > 300;
                 _cache = _cache.slice(-300);
                 _errorCount = _cache.reduce((acc, item) => (item && item.lvl === 'ERR' ? acc + 1 : acc), 0);
@@ -459,7 +459,6 @@ export const Metrics = (() => {
     };
 })();
 
-// Hook up storage error logger and metrics
 registerStorageHooks(
     (msg: string, isErr: boolean) => DiagLog.push(msg, isErr),
     (metricName: string) => Metrics.bump(metricName)

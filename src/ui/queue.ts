@@ -42,7 +42,10 @@ export const ManualQueueView = (() => {
             if (!list || !list.length) {
                 const empty = document.createElement('div');
                 empty.className = 'ar-empty';
-                empty.textContent = I18n.t('panel.manualEmpty');
+                empty.innerHTML = `
+                    <span class="ar-empty-icon" aria-hidden="true">${uiIcon('inbox')}</span>
+                    <span class="ar-empty-text">${I18n.t('panel.manualEmpty')}</span>
+                `;
                 container.appendChild(empty);
                 return;
             }

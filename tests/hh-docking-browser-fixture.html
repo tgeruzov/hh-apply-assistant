@@ -23,12 +23,15 @@ button,input,a,[role="button"]{padding:7px;border:1px solid #aaa;background:#fff
 *{box-sizing:border-box}
 </style>
 <script>
-localStorage.setItem('hh_apply_assistant_s1_ui_open','1');
-localStorage.setItem('hh_apply_assistant_s1_is_active','0');
-localStorage.setItem('hh_apply_assistant_s1_manual_queue',JSON.stringify([
-  {vid:'1355693974',title:'Менеджер по продажам курсов обучения',url:'https://hh.ru/vacancy/1355693974',ts:Date.now()},
-  {vid:'135550694',title:'Менеджер по продажам удалённая работа',url:'https://hh.ru/vacancy/135550694',ts:Date.now()}
-]));
+if (!localStorage.getItem('hh_apply_assistant_s1_ui_open')) {
+  localStorage.setItem('hh_apply_assistant_s1_ui_open','1');
+}
+if (!localStorage.getItem('hh_apply_assistant_s1_manual_queue')) {
+  localStorage.setItem('hh_apply_assistant_s1_manual_queue',JSON.stringify([
+    {vid:'1355693974',title:'Менеджер по продажам курсов обучения',url:'https://hh.ru/vacancy/1355693974',ts:Date.now()},
+    {vid:'135550694',title:'Менеджер по продажам удалённая работа',url:'https://hh.ru/vacancy/135550694',ts:Date.now()}
+  ]));
+}
 </script>
 </head>
 <body>
