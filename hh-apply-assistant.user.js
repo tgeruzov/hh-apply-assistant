@@ -1785,7 +1785,7 @@
       white-space: nowrap;
       position: relative;
       transition: 
-        width 240ms cubic-bezier(0.16, 1, 0.3, 1),
+        width 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
         border-color 260ms ease,
         box-shadow 260ms ease,
         padding 260ms ease;
@@ -1799,14 +1799,18 @@
       width: min(360px, calc(100vw - 16px));
       max-width: min(360px, calc(100vw - 16px));
       box-sizing: border-box;
-      justify-content: space-between;
+      justify-content: flex-start;
       background: #ffffff;
       border: 1px solid #e2e8f0;
       border-radius: var(--hha-radius-full, 9999px);
       z-index: 2;
       padding: 3px;
       box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
-      transition: width 240ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms ease;
+      transition: width 280ms cubic-bezier(0.34, 1.25, 0.64, 1), box-shadow 200ms ease;
+    }
+
+    .hha-root.is-expanded .hha-btn-quick {
+      margin-left: auto;
     }
 
     .hha-pill-status-group {
@@ -1873,59 +1877,17 @@
     .hha-pill-limit-val {
       font-weight: 700;
       font-variant-numeric: tabular-nums;
-      cursor: pointer;
-      padding: 0 2px;
-      border-radius: var(--hha-radius-micro, 4px);
-      transition: background 140ms ease, color 140ms ease;
     }
 
-    .hha-pill-limit-val:hover,
-    .hha-pill-limit-val:focus,
-    .hha-pill-limit-val:focus-visible {
-      background: rgba(15, 23, 42, 0.08);
-      color: #0f172a;
-      outline: none;
-    }
-
-    .hha-pill-limit-input {
-      width: 38px;
-      height: 20px;
-      font-size: 11px;
-      font-weight: 700;
-      text-align: center;
-      border: 1px solid #94a3b8;
-      border-radius: var(--hha-radius-micro, 4px);
-      background: #ffffff;
-      color: #0f172a;
-      padding: 0 2px;
-      outline: none;
-      margin: 0;
-      box-sizing: border-box;
-      -moz-appearance: textfield;
-      transition: border-color 150ms ease, box-shadow 150ms ease;
-    }
-
-    .hha-pill-limit-input:focus {
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
-    }
-
-    .hha-pill-limit-input::-webkit-outer-spin-button,
-    .hha-pill-limit-input::-webkit-inner-spin-button {
-      -webkit-appearance: none;
-      margin: 0;
-    }
-
-    /* Pill Contextual Queue Badge (28px HIG Capsule, Orange Apple-chip) */
+    /* Pill Contextual Queue Badge (Apple Dynamic Island Fluid Spring Capsule) */
     .hha-pill-queue-badge {
-      display: none !important;
+      display: inline-flex;
       height: var(--hha-control-height, 28px);
       min-height: var(--hha-control-height, 28px);
-      min-width: var(--hha-control-height, 28px);
       box-sizing: border-box;
       align-items: center;
       justify-content: center;
-      padding: 0 9px;
+      padding: 0;
       border-radius: var(--hha-radius-full, 9999px);
       background: #ffedd5;
       color: #c2410c;
@@ -1936,14 +1898,34 @@
       user-select: none;
       white-space: nowrap;
       flex-shrink: 0;
-      margin-left: 0;
       vertical-align: middle;
-      transition: opacity 160ms ease, transform 140ms ease, background 140ms ease;
+      max-width: 0;
+      opacity: 0;
+      transform: scale(0.35);
+      margin-left: -4px; /* absorbs parent gap when hidden */
+      overflow: hidden;
+      visibility: hidden;
+      pointer-events: none;
+      will-change: max-width, opacity, transform, padding, margin;
+      transition: 
+        max-width 280ms cubic-bezier(0.34, 1.3, 0.64, 1),
+        padding 280ms cubic-bezier(0.34, 1.3, 0.64, 1),
+        margin 280ms cubic-bezier(0.34, 1.3, 0.64, 1),
+        transform 280ms cubic-bezier(0.34, 1.3, 0.64, 1),
+        opacity 220ms ease,
+        visibility 280ms;
     }
 
     .hha-pill-queue-badge.is-visible,
     .hha-pill-queue-badge.visible {
-      display: inline-flex !important;
+      max-width: 56px;
+      min-width: var(--hha-control-height, 28px);
+      padding: 0 9px;
+      margin-left: 0;
+      opacity: 1;
+      transform: scale(1);
+      visibility: visible;
+      pointer-events: auto;
     }
 
     .hha-pill-queue-badge:hover {
@@ -1951,7 +1933,23 @@
     }
 
     .hha-pill-queue-badge:active {
-      transform: scale(0.96);
+      transform: scale(0.94);
+    }
+
+    .hha-pill-queue-badge.is-popping {
+      animation: hhaBadgePop 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    @keyframes hhaBadgePop {
+      0% {
+        transform: scale(1);
+      }
+      45% {
+        transform: scale(1.18);
+      }
+      100% {
+        transform: scale(1);
+      }
     }
 
     /* Quick Action Button: Soft pastel tone, capsule shape */
@@ -2169,7 +2167,6 @@
     .hha-btn-icon:focus-visible,
     .hha-popover-close:focus-visible,
     .hha-info-trigger:focus-visible,
-    .hha-pill-limit-val:focus-visible,
     .hha-log-item-delete:focus-visible,
     .hha-log-seg-btn:focus-visible,
     .hha-checkbox:focus-visible,
@@ -2596,72 +2593,36 @@
       background: #f1f5f9;
     }
 
-    /* Custom Apple HIG Tooltips */
-    [data-tooltip],
-    .hha-tooltip-target {
-      position: relative;
-    }
-
-    [data-tooltip]::after,
-    .hha-tooltip-target::after {
-      content: attr(data-tooltip);
+    /* Custom Apple HIG Floating Tooltip (Dynamic Bounds-Clamped) */
+    .hha-tooltip {
       position: absolute;
-      bottom: calc(100% + 5px);
-      left: 50%;
-      transform: translateX(-50%) translateY(3px);
       background: #0f172a;
       color: #ffffff;
       font-size: 11px;
       font-weight: 500;
-      line-height: 1.2;
-      padding: 3px 7px;
+      line-height: 1.3;
+      padding: 4px 8px;
       border-radius: var(--hha-radius-xs, 6px);
-      white-space: nowrap;
+      max-width: 260px;
+      width: max-content;
+      white-space: normal;
+      word-break: break-word;
       box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
-      transition: opacity 120ms ease, transform 120ms ease;
+      transition: opacity 120ms ease;
       z-index: 1000;
     }
 
-    [data-tooltip]:hover::after,
-    .hha-tooltip-target:hover::after {
+    .hha-tooltip.is-visible {
       opacity: 1;
       visibility: visible;
-      transform: translateX(-50%) translateY(0);
     }
 
-    [data-tooltip][data-tooltip=""]::after,
-    .hha-tooltip-target[data-tooltip=""]::after {
+    [data-tooltip]::after,
+    .hha-tooltip-target::after {
       display: none !important;
-    }
-
-    .hha-tooltip-target.active::after,
-    [data-tooltip].active::after {
-      display: none !important;
-    }
-
-    [data-info="speed"].hha-tooltip-target::after,
-    .hha-info-trigger[data-info="speed"]::after {
-      max-width: 200px;
-      white-space: normal;
-      width: max-content;
-      padding: 5px 8px;
-      font-size: 11px;
-      line-height: 1.3;
-      bottom: calc(100% + 6px);
-      text-align: center;
-    }
-
-    /* Force log header tooltips downward to avoid overflow clipping */
-    .hha-log-header [data-tooltip]::after {
-      bottom: auto;
-      top: calc(100% + 6px);
-      transform: translateX(-50%) translateY(-3px);
-    }
-    .hha-log-header [data-tooltip]:hover::after {
-      transform: translateX(-50%) translateY(0);
     }
 
     .hha-popover {
@@ -3062,7 +3023,8 @@
       this._activeTab = 'settings'; // 'settings' | 'logs'
       this._logFilterMode = 'queue'; // 'queue' | 'events'
       this._pillPos = { x: 100, y: 100 };
-      this._collapsedPillWidth = 270;
+      this._collapsedPillWidth = 166;
+      this._isAnimating = false;
       this._liveFeed = []; // strictly max 3 items
       this._stats = { attempts: 0, success: 0, manual: 0, skipped: 0 };
       this._queue = [];
@@ -3379,7 +3341,7 @@
         const input = this._shadow.querySelector('[data-el="setting-limit"]');
         if (input) input.value = val;
         const limitEl = this._shadow.querySelector('.hha-pill-limit-val') || this._shadow.querySelector('[data-el="pill-limit-val"]');
-        if (limitEl && !this._isEditingLimit) {
+        if (limitEl) {
           limitEl.textContent = String(val);
         }
       }
@@ -3387,118 +3349,13 @@
       return val;
     }
 
-    _startEditingLimit(limitEl) {
-      if (this._isEditingLimit || !limitEl) return;
-      this._isEditingLimit = true;
-      const currentVal = parseInt(limitEl.textContent, 10) || this._config.limit || 50;
-
-      const doc = (limitEl && limitEl.ownerDocument) || (typeof document !== 'undefined' ? document : null);
-      if (!doc || !doc.createElement) {
-        this._isEditingLimit = false;
-        return;
-      }
-
-      const input = doc.createElement('input');
-      input.type = 'number';
-      input.min = '1';
-      input.max = '200';
-      input.step = '1';
-      input.value = String(currentVal);
-      input.className = 'hha-pill-limit-input';
-      input.setAttribute('aria-label', 'Новый лимит откликов');
-
-      const finishEdit = (commit, restoreFocus = true) => {
-        if (!this._isEditingLimit) return;
-        this._isEditingLimit = false;
-        const valStr = input.value;
-        if (input.parentNode) {
-          input.parentNode.removeChild(input);
-        }
-        const raw = parseInt(valStr, 10);
-        const next = isNaN(raw) ? currentVal : Math.max(1, Math.min(200, raw));
-        const finalVal = commit ? next : currentVal;
-        limitEl.textContent = String(finalVal);
-        limitEl.setAttribute('aria-valuenow', String(finalVal));
-        this.setTargetLimit(finalVal);
-        if (restoreFocus && typeof limitEl.focus === 'function') {
-          try { limitEl.focus(); } catch (_) {}
-        }
-      };
-
-      input.addEventListener('blur', () => finishEdit(true, false));
-      input.addEventListener('keydown', (e) => {
-        e.stopPropagation();
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          finishEdit(true, true);
-        } else if (e.key === 'Escape') {
-          e.preventDefault();
-          finishEdit(false, true);
-        } else if (e.key === 'Tab') {
-          finishEdit(true, false);
-          return;
-        } else if (e.key === 'Home') {
-          e.preventDefault();
-          input.value = '1';
-          this.setTargetLimit(1);
-        } else if (e.key === 'End') {
-          e.preventDefault();
-          input.value = '200';
-          this.setTargetLimit(200);
-        } else if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          const raw = parseInt(input.value, 10);
-          const cur = isNaN(raw) ? currentVal : raw;
-          const next = Math.min(200, cur + 1);
-          input.value = String(next);
-          this.setTargetLimit(next);
-        } else if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          const raw = parseInt(input.value, 10);
-          const cur = isNaN(raw) ? currentVal : raw;
-          const next = Math.max(1, cur - 1);
-          input.value = String(next);
-          this.setTargetLimit(next);
-        } else if (e.key === ' ' || e.key === 'Spacebar') {
-          e.preventDefault();
-        } else if (!/^[0-9]$/.test(e.key) && !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab', 'Home', 'End'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
-          e.preventDefault();
-        }
-      });
-
-      input.addEventListener('wheel', (e) => {
-        e.stopPropagation();
-        if (typeof e.preventDefault === 'function') e.preventDefault();
-        if (e.deltaY === 0) return;
-        const raw = parseInt(input.value, 10);
-        const cur = isNaN(raw) ? currentVal : raw;
-        const delta = (e.deltaY !== undefined && e.deltaY < 0) ? 1 : -1;
-        const next = Math.max(1, Math.min(200, cur + delta));
-        input.value = String(next);
-        this.setTargetLimit(next);
-      }, { passive: false });
-
-      input.addEventListener('pointerdown', (e) => e.stopPropagation());
-      input.addEventListener('pointermove', (e) => e.stopPropagation());
-      input.addEventListener('pointerup', (e) => e.stopPropagation());
-      input.addEventListener('mousedown', (e) => e.stopPropagation());
-      input.addEventListener('mouseup', (e) => e.stopPropagation());
-      input.addEventListener('click', (e) => e.stopPropagation());
-      input.addEventListener('dblclick', (e) => e.stopPropagation());
-      input.addEventListener('touchstart', (e) => e.stopPropagation());
-      input.addEventListener('touchend', (e) => e.stopPropagation());
-
-      limitEl.textContent = '';
-      limitEl.appendChild(input);
-      if (typeof input.focus === 'function') input.focus();
-      if (typeof input.select === 'function') input.select();
-    }
-
     toggleExpand(force) {
       const next = typeof force === 'boolean' ? force : !this._isExpanded;
       if (this._isExpanded === next) return;
       this._isExpanded = next;
+      this._isAnimating = true;
 
+      this._hideTooltip();
       if (!this._isExpanded) {
         this._hidePopover();
       }
@@ -3522,10 +3379,20 @@
 
         if (this._animTimer) clearTimeout(this._animTimer);
         this._animTimer = setTimeout(() => {
+          this._isAnimating = false;
           if (root) root.classList.remove('is-animating');
           if (flyout) flyout.classList.remove('is-animating');
           this._animTimer = null;
+          if (!this._isExpanded && this._shadow) {
+            const pill = this._shadow.querySelector('[data-el="pill"]');
+            if (pill && typeof pill.offsetWidth === 'number' && pill.offsetWidth > 0 && pill.offsetWidth < 300) {
+              this._collapsedPillWidth = pill.offsetWidth;
+            }
+            this._updatePosition();
+          }
         }, 240);
+      } else {
+        this._isAnimating = false;
       }
     }
 
@@ -3544,6 +3411,7 @@
       if (!['settings', 'logs'].includes(tabName)) return;
       this._activeTab = tabName;
       this._hidePopover();
+      this._hideTooltip();
 
       if (!this._shadow) return;
       const tabs = this._shadow.querySelectorAll('.hha-tab-btn');
@@ -3556,6 +3424,7 @@
     _switchLogMode(mode) {
       if (!['queue', 'events'].includes(mode)) return;
       this._logFilterMode = mode;
+      this._hideTooltip();
 
       if (this._shadow) {
         const segBtns = this._shadow.querySelectorAll('.hha-log-seg-btn');
@@ -3605,12 +3474,14 @@
     }
 
     _getPillWidth() {
-      const pill = this._shadow ? this._shadow.querySelector('[data-el="pill"]') : null;
-      if (pill && typeof pill.offsetWidth === 'number' && pill.offsetWidth > 0) {
-        this._collapsedPillWidth = pill.offsetWidth;
-        return pill.offsetWidth;
+      if (!this._isExpanded && !this._isAnimating && this._shadow) {
+        const pill = this._shadow.querySelector('[data-el="pill"]');
+        if (pill && typeof pill.offsetWidth === 'number' && pill.offsetWidth > 0 && pill.offsetWidth < 300) {
+          this._collapsedPillWidth = pill.offsetWidth;
+          return pill.offsetWidth;
+        }
       }
-      return this._collapsedPillWidth || 180;
+      return this._collapsedPillWidth || 166;
     }
 
     _clampPillCoordinates(x, y, winW, winH) {
@@ -3636,10 +3507,10 @@
             <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и журнал">
               <div class="hha-pill-progress-fill" data-el="pill-progress-fill"></div>
               <div class="hha-pill-status">
-                <span class="hha-pill-progress" data-el="pill-progress"><span class="hha-current-count" data-el="pill-current-count">0</span> / <span class="hha-pill-limit-val" data-el="pill-limit-val" data-tooltip="Клик для изменения лимита" tabindex="0" role="spinbutton" aria-label="Дневной лимит откликов" aria-valuenow="50" aria-valuemin="1" aria-valuemax="200">50</span></span>
+                <span class="hha-pill-progress" data-el="pill-progress"><span class="hha-current-count" data-el="pill-current-count">0</span> / <span class="hha-pill-limit-val" data-el="pill-limit-val">50</span></span>
               </div>
             </div>
-            <span class="hha-pill-queue-badge" data-action="open-queue-tab" data-el="pill-queue-badge" data-tooltip="Вакансии с анкетами в очереди" tabindex="0" role="button" aria-label="Очередь вакансий" style="display: none;"></span>
+            <span class="hha-pill-queue-badge" data-action="open-queue-tab" data-el="pill-queue-badge" data-tooltip="Вакансии с анкетами в очереди" tabindex="0" role="button" aria-label="Очередь вакансий"></span>
             <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="pill-quick-btn">
               ${ICONS.play}
               <span data-el="pill-quick-label">Старт</span>
@@ -3653,6 +3524,9 @@
               ${ICONS.check}
               <span>Сохранено</span>
             </div>
+
+            <!-- Floating Tooltip -->
+            <div class="hha-tooltip" data-el="tooltip"></div>
 
             <!-- Popover for interactive help -->
             <div class="hha-popover" data-el="popover" style="display: none;"></div>
@@ -3745,75 +3619,30 @@
       // Event delegation for clicks inside Shadow Root
       root.addEventListener('click', (e) => this._handleRootClick(e));
 
-      // Interactive Limit in Pill
-      const limitValEl = this._shadow.querySelector('.hha-pill-limit-val') || this._shadow.querySelector('[data-el="pill-limit-val"]');
-      if (limitValEl) {
-        limitValEl.addEventListener('pointerdown', (e) => e.stopPropagation());
-        limitValEl.addEventListener('pointermove', (e) => e.stopPropagation());
-        limitValEl.addEventListener('pointerup', (e) => e.stopPropagation());
-        limitValEl.addEventListener('mousedown', (e) => e.stopPropagation());
-        limitValEl.addEventListener('mouseup', (e) => e.stopPropagation());
-        limitValEl.addEventListener('touchstart', (e) => e.stopPropagation());
-        limitValEl.addEventListener('touchend', (e) => e.stopPropagation());
-        limitValEl.addEventListener('click', (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          this._startEditingLimit(limitValEl);
-        });
+      // Floating Tooltip Event Delegation
+      root.addEventListener('pointerover', (e) => {
+        const target = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-tooltip]') : null;
+        if (target && target.getAttribute('data-tooltip')) {
+          this._showTooltip(target);
+        }
+      });
 
-        limitValEl.addEventListener('wheel', (e) => {
-          e.stopPropagation();
-          if (typeof e.preventDefault === 'function') e.preventDefault();
-          if (e.deltaY === 0) return;
-          const cur = parseInt(limitValEl.textContent, 10) || this._config.limit || 50;
-          const delta = (e.deltaY !== undefined && e.deltaY < 0) ? 1 : -1;
-          const next = Math.max(1, Math.min(200, cur + delta));
-          this.setTargetLimit(next);
-        }, { passive: false });
+      root.addEventListener('pointerout', (e) => {
+        const fromTarget = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-tooltip]') : null;
+        const toTarget = e.relatedTarget && typeof e.relatedTarget.closest === 'function' ? e.relatedTarget.closest('[data-tooltip]') : null;
+        if (fromTarget && fromTarget !== toTarget) {
+          this._hideTooltip();
+        }
+      });
 
-        limitValEl.addEventListener('keydown', (e) => {
-          if (this._isEditingLimit) return;
-          if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
-            e.preventDefault();
-            e.stopPropagation();
-            this._startEditingLimit(limitValEl);
-          } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            e.stopPropagation();
-            const cur = parseInt(limitValEl.textContent, 10) || this._config.limit || 50;
-            this.setTargetLimit(Math.min(200, cur + 1));
-          } else if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            e.stopPropagation();
-            const cur = parseInt(limitValEl.textContent, 10) || this._config.limit || 50;
-            this.setTargetLimit(Math.max(1, cur - 1));
-          } else if (e.key === 'PageUp') {
-            e.preventDefault();
-            e.stopPropagation();
-            const cur = parseInt(limitValEl.textContent, 10) || this._config.limit || 50;
-            this.setTargetLimit(Math.min(200, cur + 10));
-          } else if (e.key === 'PageDown') {
-            e.preventDefault();
-            e.stopPropagation();
-            const cur = parseInt(limitValEl.textContent, 10) || this._config.limit || 50;
-            this.setTargetLimit(Math.max(1, cur - 10));
-          } else if (e.key === 'Home') {
-            e.preventDefault();
-            e.stopPropagation();
-            this.setTargetLimit(1);
-          } else if (e.key === 'End') {
-            e.preventDefault();
-            e.stopPropagation();
-            this.setTargetLimit(200);
-          }
-        });
-      }
+      root.addEventListener('scroll', () => {
+        this._hideTooltip();
+      }, { capture: true, passive: true });
 
       // Keyboard support for status group
       const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
       if (statusGroup) {
         statusGroup.addEventListener('keydown', (e) => {
-          if (e.target && e.target.closest('.hha-pill-limit-val')) return;
           if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
             e.preventDefault();
             e.stopPropagation();
@@ -3977,11 +3806,11 @@
       if (this._activePopoverKey) {
         this._hidePopover();
       }
+      this._hideTooltip();
 
       const pillTarget = e.target.closest('[data-el="pill"]');
-      const isInteractive = e.target.closest('button, input, textarea, a, select, .hha-pill-limit-val') || (e.target.closest('[data-action]') && e.target.closest('[data-action]').dataset.action !== 'toggle-expand');
+      const isInteractive = e.target.closest('button, input, textarea, a, select') || (e.target.closest('[data-action]') && e.target.closest('[data-action]').dataset.action !== 'toggle-expand');
       const actionTarget = e.target.closest('[data-action]');
-      const limitValTarget = e.target.closest('.hha-pill-limit-val') || e.target.closest('[data-el="pill-limit-val"]');
 
       // Click on pill free surface via event delegation
       if (pillTarget && !isInteractive && !actionTarget && !this._dragMoved) {
@@ -4247,6 +4076,7 @@
     }
 
     _showPopover(key, trigger) {
+      this._hideTooltip();
       const popover = this._shadow ? this._shadow.querySelector('[data-el="popover"]') : null;
       if (!popover) return;
 
@@ -4331,13 +4161,58 @@
       if (this._shadow) {
         this._shadow.querySelectorAll('[data-info]').forEach(btn => btn.classList.remove('active'));
       }
+      this._hideTooltip();
+    }
+
+    _showTooltip(target) {
+      if (!this._shadow || !target || this._activePopoverKey || !this._isExpanded) return;
+      if (target.dataset && target.dataset.info) return;
+      const text = target.getAttribute('data-tooltip');
+      if (!text) return;
+      const tooltip = this._shadow.querySelector('[data-el="tooltip"]');
+      const flyout = this._shadow.querySelector('[data-el="flyout"]');
+      if (!tooltip || !flyout) return;
+
+      tooltip.textContent = text;
+      tooltip.classList.add('is-visible');
+
+      const flyoutRect = flyout.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const tipW = tooltip.offsetWidth;
+      const tipH = tooltip.offsetHeight;
+
+      const targetCenterX = (targetRect.left + targetRect.width / 2) - flyoutRect.left;
+      const minX = 8;
+      const maxX = Math.max(minX, flyoutRect.width - tipW - 8);
+      const x = clamp(targetCenterX - tipW / 2, minX, maxX);
+
+      const spaceAbove = targetRect.top - flyoutRect.top;
+      let y;
+      if (spaceAbove >= tipH + 8) {
+        y = (targetRect.top - flyoutRect.top) - tipH - 5;
+      } else {
+        y = (targetRect.bottom - flyoutRect.top) + 5;
+      }
+      const maxY = Math.max(8, flyoutRect.height - tipH - 8);
+      y = clamp(y, 8, maxY);
+
+      tooltip.style.left = `${Math.round(x)}px`;
+      tooltip.style.top = `${Math.round(y)}px`;
+    }
+
+    _hideTooltip() {
+      if (!this._shadow) return;
+      const tooltip = this._shadow.querySelector('[data-el="tooltip"]');
+      if (tooltip) {
+        tooltip.classList.remove('is-visible');
+      }
     }
 
     // --- Drag & Drop with Pointer Capture API ---
 
     _onPointerDown(e, handleType) {
       if (e.target && typeof e.target.closest === 'function') {
-        if (e.target.closest('button, input, textarea, a, select, .hha-pill-limit-val, .hha-pill-queue-badge')) {
+        if (e.target.closest('button, input, textarea, a, select, .hha-pill-queue-badge')) {
           return; // Let interactive controls handle their own events
         }
       }
@@ -4558,7 +4433,8 @@
         this._pillPos = this._clampPillCoordinates(pos.x, pos.y, winW, winH);
       } else {
         // Default position: Bottom-Right with 24px margin
-        const defX = Math.max(8, winW - maxW - 24);
+        const offset = (maxW - pillW) / 2;
+        const defX = Math.max(8, winW - maxW - 24 + offset);
         const defY = Math.max(8, winH - 36 - 24);
         this._pillPos = this._clampPillCoordinates(defX, defY, winW, winH);
       }
@@ -4627,10 +4503,7 @@
 
       if (currentEl && limitEl) {
         currentEl.textContent = String(cur);
-        if (!this._isEditingLimit) {
-          limitEl.textContent = String(limitCount);
-          limitEl.setAttribute('aria-valuenow', String(limitCount));
-        }
+        limitEl.textContent = String(limitCount);
       } else if (pillProg) {
         pillProg.textContent = text;
       }
@@ -4646,20 +4519,52 @@
 
     _syncLogs() {
       if (!this._shadow) return;
+      this._hideTooltip();
       const count = this._queue ? this._queue.length : 0;
 
-      // Update contextual queue badge in pill
+      // Update contextual queue badge in pill with Dynamic Island spring animation
       const queueBadge = this._shadow.querySelector('[data-el="pill-queue-badge"]');
       if (queueBadge) {
+        const prevCount = this._prevQueueBadgeCount !== undefined ? this._prevQueueBadgeCount : 0;
+        this._prevQueueBadgeCount = count;
+
         if (count > 0) {
+          if (this._badgeClearTimer) {
+            clearTimeout(this._badgeClearTimer);
+            this._badgeClearTimer = null;
+          }
+          const countChanged = prevCount > 0 && prevCount !== count;
           queueBadge.textContent = String(count);
-          queueBadge.style.display = 'inline-flex';
+          queueBadge.style.display = '';
+          const wasVisible = queueBadge.classList.contains('is-visible');
           queueBadge.classList.add('is-visible', 'visible');
+
+          if (countChanged && wasVisible) {
+            queueBadge.classList.remove('is-popping');
+            void queueBadge.offsetWidth; // force reflow
+            queueBadge.classList.add('is-popping');
+          }
         } else {
-          queueBadge.textContent = '';
-          queueBadge.style.display = 'none';
-          queueBadge.classList.remove('is-visible', 'visible');
+          queueBadge.style.display = '';
+          queueBadge.classList.remove('is-visible', 'visible', 'is-popping');
+          if (this._badgeClearTimer) clearTimeout(this._badgeClearTimer);
+          this._badgeClearTimer = setTimeout(() => {
+            if (this._queue && this._queue.length === 0 && queueBadge) {
+              queueBadge.textContent = '';
+            }
+          }, 300);
         }
+
+        // Refresh pill width cache after animation settles
+        if (this._badgeAnimTimer) clearTimeout(this._badgeAnimTimer);
+        this._badgeAnimTimer = setTimeout(() => {
+          if (!this._isExpanded && this._shadow) {
+            const pill = this._shadow.querySelector('[data-el="pill"]');
+            if (pill && typeof pill.offsetWidth === 'number' && pill.offsetWidth > 0 && pill.offsetWidth < 300) {
+              this._collapsedPillWidth = pill.offsetWidth;
+            }
+          }
+        }, 300);
       }
 
       // Update queue count in segmented control
@@ -4771,9 +4676,8 @@
         limitInput.value = lim;
       }
       const limitEl = this._shadow.querySelector('.hha-pill-limit-val') || this._shadow.querySelector('[data-el="pill-limit-val"]');
-      if (limitEl && lim !== undefined && !this._isEditingLimit) {
+      if (limitEl && lim !== undefined) {
         limitEl.textContent = String(lim);
-        limitEl.setAttribute('aria-valuenow', String(lim));
       }
 
       // Preset Segmented Buttons
