@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.0.5
+// @version      0.0.6
 // @author       Timur Geruzov
 // @description  HH Apply Assistant - Автоматизация откликов на вакансии hh.ru с эргономичным плавающим HUD интерфейсом
 // @license      GPL-3.0-only
@@ -1706,7 +1706,7 @@
     :host {
       all: initial;
       position: fixed;
-      z-index: 2147483647;
+      z-index: 2147483640;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       font-size: 12px;
       line-height: 1.4;
@@ -1724,7 +1724,7 @@
       --hha-radius-sm: 8px;     /* Interactive elements: stepper, textarea, active tab */
       --hha-radius-xs: 6px;     /* Segmented buttons, ghost action icons, log items */
       --hha-radius-micro: 4px;  /* Compact tags, inline inputs, link badges */
-      --hha-radius-full: 9999px;/* Dynamic island pill, status chips, badges, toast */
+      --hha-radius-full: 9999px;/* Dynamic island pill, status chips, badges */
 
       /* Control Dimensions */
       --hha-control-height: 28px;
@@ -1821,6 +1821,7 @@
       user-select: none;
       position: relative;
       overflow: hidden;
+      isolation: isolate;
       border-radius: var(--hha-radius-full, 9999px);
       height: var(--hha-control-height, 28px);
       min-height: var(--hha-control-height, 28px);
@@ -1859,7 +1860,7 @@
       height: 100%;
       width: 0%;
       background: #dcfce7;
-      border-radius: inherit;
+      border-radius: 0;
       z-index: 1;
       pointer-events: none;
       transition: width 260ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -1964,7 +1965,7 @@
     .hha-btn-start,
     .hha-btn-stop,
     .hha-btn-quick {
-      margin-left: 0;
+      margin-left: auto;
       width: 80px;
       min-width: 80px;
       padding: 0 8px;
@@ -2506,6 +2507,287 @@
       background: #fee2e2;
     }
 
+    /* DevTools Console & Filter Chips Styles */
+    .hha-log-chips {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 0 6px 0;
+      border-bottom: 1px solid #e2e8f0;
+      margin-bottom: 4px;
+      flex-shrink: 0;
+    }
+
+    .hha-log-chip {
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: var(--hha-radius-micro, 4px);
+      padding: 2px 7px;
+      font-size: 10px;
+      font-weight: 500;
+      color: #64748b;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 120ms ease;
+      font-family: inherit;
+      line-height: 1.3;
+    }
+
+    .hha-log-chip:hover {
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+
+    .hha-log-chip.is-active {
+      background: #0f172a;
+      color: #ffffff;
+      border-color: #0f172a;
+      font-weight: 600;
+    }
+
+    .hha-log-chip.chip-apply.is-active {
+      background: #059669;
+      border-color: #059669;
+      color: #ffffff;
+    }
+
+    .hha-log-chip.chip-filter.is-active {
+      background: #7c3aed;
+      border-color: #7c3aed;
+      color: #ffffff;
+    }
+
+    .hha-log-chip.chip-error.is-active {
+      background: #dc2626;
+      border-color: #dc2626;
+      color: #ffffff;
+    }
+
+    .hha-chip-count {
+      font-size: 9px;
+      padding: 0 4px;
+      border-radius: 9999px;
+      background: rgba(0, 0, 0, 0.08);
+      font-weight: 700;
+    }
+
+    .hha-log-chip.is-active .hha-chip-count {
+      background: rgba(255, 255, 255, 0.25);
+      color: #ffffff;
+    }
+
+    /* DevTools Compact Row Stream */
+    .hha-log-dev-row {
+      display: flex;
+      flex-direction: column;
+      border-bottom: 1px solid #f1f5f9;
+      background: #ffffff;
+      box-sizing: border-box;
+      transition: background-color 100ms ease;
+      cursor: pointer;
+      user-select: none;
+      border-radius: 3px;
+    }
+
+    .hha-log-dev-row:hover {
+      background: #f8fafc;
+    }
+
+    .hha-log-dev-row.is-expanded {
+      background: #f8fafc;
+      border-left: 2px solid #2563eb;
+    }
+
+    .hha-log-dev-main {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 6px;
+      min-height: 24px;
+      box-sizing: border-box;
+    }
+
+    .hha-log-dev-time {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 10px;
+      color: #94a3b8;
+      flex-shrink: 0;
+      width: 44px;
+      letter-spacing: -0.2px;
+    }
+
+    .hha-log-dev-tag {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 4px;
+      border-radius: var(--hha-radius-micro, 3px);
+      flex-shrink: 0;
+      letter-spacing: 0.2px;
+      line-height: 1.2;
+    }
+
+    .hha-log-dev-tag.tag-scan {
+      background: #eff6ff;
+      color: #2563eb;
+      border: 1px solid #bfdbfe;
+    }
+
+    .hha-log-dev-tag.tag-filter {
+      background: #f5f3ff;
+      color: #7c3aed;
+      border: 1px solid #ddd6fe;
+    }
+
+    .hha-log-dev-tag.tag-apply {
+      background: #ecfdf5;
+      color: #059669;
+      border: 1px solid #a7f3d0;
+    }
+
+    .hha-log-dev-tag.tag-cover {
+      background: #eef2ff;
+      color: #4f46e5;
+      border: 1px solid #c7d2fe;
+    }
+
+    .hha-log-dev-tag.tag-queue {
+      background: #fffbeb;
+      color: #d97706;
+      border: 1px solid #fde68a;
+    }
+
+    .hha-log-dev-tag.tag-delay {
+      background: #f1f5f9;
+      color: #64748b;
+      border: 1px solid #e2e8f0;
+    }
+
+    .hha-log-dev-tag.tag-error {
+      background: #fef2f2;
+      color: #dc2626;
+      border: 1px solid #fecaca;
+    }
+
+    .hha-log-dev-tag.tag-status {
+      background: #f0fdf4;
+      color: #16a34a;
+      border: 1px solid #bbf7d0;
+    }
+
+    .hha-log-dev-msg {
+      flex: 1;
+      min-width: 0;
+      color: #1e293b;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .hha-log-dev-badge {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+      font-size: 9px;
+      font-weight: 600;
+      padding: 1px 4px;
+      border-radius: 3px;
+      background: #f1f5f9;
+      color: #64748b;
+      flex-shrink: 0;
+    }
+
+    .hha-log-dev-badge.badge-apply {
+      background: #ecfdf5;
+      color: #059669;
+    }
+
+    .hha-log-dev-badge.badge-error {
+      background: #fef2f2;
+      color: #dc2626;
+    }
+
+    .hha-log-dev-arrow {
+      font-size: 10px;
+      color: #94a3b8;
+      transition: transform 150ms ease, color 150ms ease;
+      flex-shrink: 0;
+      transform: rotate(-90deg);
+      display: inline-block;
+      width: 10px;
+      text-align: center;
+    }
+
+    .hha-log-dev-row.is-expanded .hha-log-dev-arrow {
+      transform: rotate(0deg);
+      color: #2563eb;
+    }
+
+    /* Accordion Details Block */
+    .hha-log-dev-details {
+      display: none;
+      padding: 6px 8px 8px 46px;
+      background: #f8fafc;
+      border-top: 1px dashed #e2e8f0;
+      font-size: 10px;
+      box-sizing: border-box;
+      animation: hhaFadeIn 150ms ease;
+    }
+
+    .hha-log-dev-row.is-expanded .hha-log-dev-details {
+      display: block;
+    }
+
+    .hha-log-detail-grid {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 3px 8px;
+      align-items: baseline;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    }
+
+    .hha-log-detail-key {
+      color: #64748b;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .hha-log-detail-val {
+      color: #0f172a;
+      word-break: break-all;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .hha-log-detail-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      color: #2563eb;
+      text-decoration: none;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: rgba(37, 99, 235, 0.08);
+      font-size: 10px;
+      font-weight: 500;
+      border: 1px solid rgba(37, 99, 235, 0.18);
+      line-height: 1.2;
+    }
+
+    .hha-log-detail-link:hover {
+      background: rgba(37, 99, 235, 0.18);
+    }
+
+    .hha-log-detail-url {
+      color: #2563eb;
+      text-decoration: underline;
+      font-size: 10px;
+      word-break: break-all;
+    }
+
     .hha-btn-clear-queue {
       color: #64748b;
     }
@@ -2780,89 +3062,69 @@
       color: #0f172a;
     }
 
-    .hha-stepper-wrap {
+    .hha-stepper {
       display: inline-flex;
+      align-items: stretch;
+      border: 1px solid #e2e8f0;
+      border-radius: var(--hha-radius-sm, 8px);
+      background: #ffffff;
+      overflow: hidden;
+      height: var(--hha-control-height, 28px);
+      box-sizing: border-box;
+    }
+
+    .hha-stepper-btn {
+      width: 28px;
+      min-width: 28px;
+      height: var(--hha-control-height, 28px);
+      display: flex;
       align-items: center;
-      gap: 6px;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      color: #0f172a;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 0;
+      transition: background 140ms ease;
+      user-select: none;
+      box-sizing: border-box;
+    }
+
+    .hha-stepper-btn:hover {
+      background: #f1f5f9;
+    }
+
+    .hha-stepper-btn:active {
+      background: #e2e8f0;
     }
 
     .hha-stepper-input {
-      width: 38px;
-      height: 26px;
-      border: 1px solid transparent;
-      border-radius: 6px;
-      background: transparent;
-      text-align: right;
-      font-size: 13px;
+      width: 44px;
+      height: var(--hha-control-height, 28px);
+      border: none;
+      border-left: 1px solid #e2e8f0;
+      border-right: 1px solid #e2e8f0;
+      text-align: center;
+      font-size: 12px;
       font-weight: 600;
       color: #0f172a;
-      font-variant-numeric: tabular-nums;
-      padding: 0 4px;
+      padding: 0;
       outline: none;
       box-sizing: border-box;
       -moz-appearance: textfield;
-      transition: background-color 140ms ease, border-color 140ms ease;
-    }
-
-    .hha-stepper-input:hover {
-      background: #f8fafc;
-      border-color: #e2e8f0;
     }
 
     .hha-stepper-input:focus,
     .hha-stepper-input.is-focused {
-      background: #ffffff;
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+      background: #eff6ff;
     }
 
     .hha-stepper-input::-webkit-outer-spin-button,
     .hha-stepper-input::-webkit-inner-spin-button {
       -webkit-appearance: none;
       margin: 0;
-    }
-
-    .hha-stepper {
-      display: inline-flex;
-      align-items: center;
-      border: 1px solid #e2e8f0;
-      border-radius: var(--hha-radius-sm, 7px);
-      background: #f8fafc;
-      overflow: hidden;
-      height: 26px;
-      box-sizing: border-box;
-    }
-
-    .hha-stepper-btn {
-      width: 26px;
-      min-width: 26px;
-      height: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: transparent;
-      border: none;
-      color: #334155;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      padding: 0;
-      transition: background 120ms ease, color 120ms ease;
-      user-select: none;
-      box-sizing: border-box;
-    }
-
-    .hha-stepper-btn + .hha-stepper-btn {
-      border-left: 1px solid #e2e8f0;
-    }
-
-    .hha-stepper-btn:hover {
-      background: #e2e8f0;
-      color: #0f172a;
-    }
-
-    .hha-stepper-btn:active {
-      background: #cbd5e1;
     }
 
     .hha-segmented-control {
@@ -3100,36 +3362,6 @@
       border-color: rgba(244, 63, 94, 0.4);
       font-weight: 600;
     }
-
-    .hha-toast {
-      position: absolute;
-      top: 10px;
-      bottom: auto;
-      left: 50%;
-      right: auto;
-      transform: translateX(-50%) translateY(-6px);
-      background: #0f172a;
-      color: #ffffff;
-      padding: 5px 14px;
-      border-radius: var(--hha-radius-full, 9999px);
-      font-size: 11px;
-      font-weight: 500;
-      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.25);
-      z-index: 1000;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 5px;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 160ms ease, transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
-      white-space: nowrap;
-    }
-
-    .hha-toast.visible {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
-    }
   `;
 
   // --- 4. Web Component Implementation (Closed Shadow DOM) ---
@@ -3150,10 +3382,13 @@
       this._isExpanded = false;
       this._activeTab = 'settings'; // 'settings' | 'logs'
       this._logFilterMode = 'queue'; // 'queue' | 'events'
+      this._logCategoryFilter = 'all'; // 'all' | 'apply' | 'filter' | 'error'
+      this._expandedLogIds = new Set();
+      this._logCounter = 0;
       this._pillPos = { x: 100, y: 100 };
       this._collapsedPillWidth = 166;
       this._isAnimating = false;
-      this._liveFeed = []; // strictly max 3 items
+      this._liveFeed = [];
       this._stats = { attempts: 0, success: 0, manual: 0, skipped: 0 };
       this._queue = [];
       this._config = {
@@ -3176,7 +3411,6 @@
       this._dragStartPillPos = { x: 0, y: 0 };
       this._dragOpenDirection = null; // locked direction while dragging
       this._justDragged = false;
-      this._toastTimer = null;
       this._coverDebounceTimer = null;
       this._animTimer = null;
       this._domEventsBound = false;
@@ -3221,7 +3455,6 @@
         document.removeEventListener('click', this._onDocClick);
       }
       if (this._popoverCloseTimer) clearTimeout(this._popoverCloseTimer);
-      if (this._toastTimer) clearTimeout(this._toastTimer);
       if (this._coverDebounceTimer) clearTimeout(this._coverDebounceTimer);
       if (this._animTimer) clearTimeout(this._animTimer);
     }
@@ -3374,51 +3607,94 @@
         if (clean) this._notesByVid[clean] = event.note || event.reason;
       }
 
-      let badgeClass = 'badge-proc';
-      let badgeText = 'Обработка';
-
-      if (event.action === 'applied') {
-        badgeClass = 'badge-applied';
-        badgeText = 'Отклик';
-      } else if (event.action === 'skipped') {
-        badgeClass = 'badge-skipped';
-        badgeText = 'Пропуск';
-      } else if (event.action === 'manual') {
-        badgeClass = 'badge-manual';
-        badgeText = 'Очередь';
-      } else if (event.action === 'error') {
-        badgeClass = 'badge-error';
-        badgeText = 'Ошибка';
-      }
-
       const cleanVid = event.vid ? String(event.vid).replace(/^v_/, '') : '';
       const url = event.url || (cleanVid ? `https://hh.ru/vacancy/${cleanVid}` : '');
-      let title = event.title || '';
-      if (!title) {
-        if (event.action === 'manual') {
-          title = event.note ? formatQueueReason(event.note) : (event.reason || 'Обнаружен тест/анкета работодателя');
-        } else if (event.action === 'skipped') {
-          title = event.reason || 'Зарплата ниже фильтра';
-        } else if (event.action === 'error') {
-          title = event.reason || event.error || 'Капча / кнопка отклика заблокирована';
-        } else if (cleanVid) {
-          title = `Frontend Developer #${cleanVid}`;
-        } else {
-          title = 'Вакансия';
-        }
+      const time = event.time || formatTime(Date.now());
+      const logId = event.id || 'log_' + (++this._logCounter || (this._logCounter = 1)) + '_' + Date.now();
+
+      let tag = event.tag || 'EVENT';
+      let tagType = event.tagType || 'scan';
+      let msg = event.msg || event.title || 'Событие';
+      let sub = event.sub || '';
+      let metaBadge = event.metaBadge || '';
+      let category = 'all';
+
+      if (event.action === 'applied' || tagType === 'apply') {
+        tag = 'APPLY';
+        tagType = 'apply';
+        category = 'apply';
+        const emp = event.employer ? `${event.employer} • ` : '';
+        msg = `${emp}${event.title || (cleanVid ? `Вакансия #${cleanVid}` : 'Вакансия')}`;
+        sub = `ID: v_${cleanVid || 'N/A'}${event.employer ? ` • Компания: ${event.employer}` : ''} • HTTP 200 OK • Отклик успешно доставлен`;
+        metaBadge = '200 OK';
+      } else if (event.action === 'skipped' || tagType === 'filter') {
+        tag = 'FILTER';
+        tagType = 'filter';
+        category = 'filter';
+        msg = `${event.title || (cleanVid ? `Вакансия #${cleanVid}` : 'Вакансия')}`;
+        sub = `Причина отсева: ${event.reason || 'не соответствует фильтрам поиска'}`;
+        metaBadge = 'отсев';
+      } else if (event.action === 'manual' || tagType === 'queue') {
+        tag = 'QUEUE';
+        tagType = 'queue';
+        category = 'all';
+        msg = `В очередь: ${event.title || (cleanVid ? `Вакансия #${cleanVid}` : 'Вакансия')}`;
+        sub = `Причина: ${formatQueueReason(event.note || event.reason)}`;
+        metaBadge = 'очередь';
+      } else if (event.action === 'error' || tagType === 'error') {
+        tag = 'ERROR';
+        tagType = 'error';
+        category = 'error';
+        msg = `${event.reason || event.error || 'Сбой выполнения запроса'}`;
+        sub = `Ошибка API: требуется подтверждение или проверка суточных лимитов`;
+        metaBadge = 'ERR';
+      } else if (event.action === 'scan' || tagType === 'scan') {
+        tag = 'SCAN';
+        tagType = 'scan';
+        category = 'all';
+        msg = event.msg || `Поиск вакансий (страница ${event.page || 1})`;
+        sub = event.sub || `Найдено элементов в выдаче: ${event.found || 20}`;
+        metaBadge = `${event.found || 20} вак.`;
+      } else if (event.action === 'delay' || tagType === 'delay') {
+        tag = 'DELAY';
+        tagType = 'delay';
+        category = 'all';
+        msg = event.msg || `Анти-спам задержка`;
+        sub = event.sub || `Пауза безопасности перед следующим действием`;
+        metaBadge = event.delay ? `${event.delay}s` : '1.6s';
+      } else if (event.action === 'cover' || tagType === 'cover') {
+        tag = 'COVER';
+        tagType = 'cover';
+        category = 'all';
+        msg = event.msg || `Сопроводительное письмо`;
+        sub = event.sub || `Сгенерировано письмо (${event.chars || 178} симв.)`;
+        metaBadge = `${event.chars || 178} с.`;
+      } else if (event.action === 'status' || tagType === 'status') {
+        tag = 'STATUS';
+        tagType = 'status';
+        category = 'all';
+        msg = event.msg || `Статус цикла: ${event.status || 'активен'}`;
+        sub = event.sub || '';
+        metaBadge = event.status ? String(event.status).toUpperCase() : 'OK';
       }
 
       const item = {
-        time: formatTime(Date.now()),
-        badgeClass,
-        badgeText,
-        title,
+        id: logId,
+        time,
+        tag,
+        tagType,
+        category,
+        msg,
+        sub,
+        employer: event.employer || '',
+        metaBadge,
         vid: cleanVid,
-        url
+        url,
+        isDevLog: true
       };
 
       this._liveFeed.unshift(item);
-      if (this._liveFeed.length > 3) this._liveFeed.length = 3;
+      if (this._liveFeed.length > 50) this._liveFeed.length = 50;
       this._syncLogs();
     }
 
@@ -3587,6 +3863,31 @@
       const copyBtn = this._shadow.querySelector('[data-action="copy-logs"]') || this._shadow.querySelector('[data-el="copy-logs-btn"]');
       if (resetBtn) resetBtn.style.display = isQueue ? 'none' : 'inline-flex';
       if (copyBtn) copyBtn.style.display = isQueue ? 'none' : 'inline-flex';
+
+      // Quick filter chips: visible only in events mode
+      const chipsEl = this._shadow.querySelector('[data-el="log-chips"]');
+      if (chipsEl) chipsEl.style.display = isQueue ? 'none' : 'flex';
+    }
+
+    _setLogCategoryFilter(category) {
+      if (!['all', 'apply', 'filter', 'error'].includes(category)) return;
+      this._logCategoryFilter = category;
+      if (this._shadow) {
+        const chipBtns = this._shadow.querySelectorAll('.hha-log-chip');
+        chipBtns.forEach(btn => btn.classList.toggle('is-active', btn.dataset.filter === category));
+      }
+      this._syncLogs();
+    }
+
+    _toggleLogDetail(logId, rowEl) {
+      if (!logId) return;
+      if (this._expandedLogIds.has(logId)) {
+        this._expandedLogIds.delete(logId);
+        if (rowEl) rowEl.classList.remove('is-expanded');
+      } else {
+        this._expandedLogIds.add(logId);
+        if (rowEl) rowEl.classList.add('is-expanded');
+      }
     }
 
     getPosition() {
@@ -3647,12 +3948,6 @@
 
           <!-- Flyout Overlay (360px wide, fixed 350px height) -->
           <div class="hha-flyout" data-el="flyout">
-            <!-- Toast notification -->
-            <div class="hha-toast" data-el="saved-toast">
-              ${ICONS.check}
-              <span></span>
-            </div>
-
             <!-- Floating Tooltip -->
             <div class="hha-tooltip" data-el="tooltip"></div>
 
@@ -3672,12 +3967,10 @@
                 <div class="hha-card hha-group">
                   <div class="hha-row hha-group-row">
                     <span class="hha-row-label hha-setting-label">Лимит откликов</span>
-                    <div class="hha-stepper-wrap">
+                    <div class="hha-stepper">
+                      <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="-5" aria-label="Уменьшить лимит">−</button>
                       <input type="number" class="hha-stepper-input" data-el="setting-limit" min="1" max="200" step="5" value="50">
-                      <div class="hha-stepper">
-                        <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="-5" aria-label="Уменьшить лимит">−</button>
-                        <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="5" aria-label="Увеличить лимит">+</button>
-                      </div>
+                      <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="5" aria-label="Увеличить лимит">+</button>
                     </div>
                   </div>
                   <div class="hha-speed-row hha-group-row">
@@ -3720,6 +4013,12 @@
                       <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-reset-session" data-action="reset-history" data-el="reset-session-btn" data-tooltip="Сбросить счетчик" style="display: none;">${ICONS.reset}</button>
                       <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-copy-log" data-action="copy-logs" data-el="copy-logs-btn" data-tooltip="Скопировать журнал" style="display: none;">${ICONS.copy}</button>
                     </div>
+                  </div>
+                  <div class="hha-log-chips" data-el="log-chips" style="display: none;">
+                    <button type="button" class="hha-log-chip is-active" data-action="set-log-filter" data-filter="all">Все <span class="hha-chip-count" data-el="chip-all-count">0</span></button>
+                    <button type="button" class="hha-log-chip chip-apply" data-action="set-log-filter" data-filter="apply">Отклики <span class="hha-chip-count" data-el="chip-apply-count">0</span></button>
+                    <button type="button" class="hha-log-chip chip-filter" data-action="set-log-filter" data-filter="filter">Отсев <span class="hha-chip-count" data-el="chip-filter-count">0</span></button>
+                    <button type="button" class="hha-log-chip chip-error" data-action="set-log-filter" data-filter="error">Ошибки <span class="hha-chip-count" data-el="chip-error-count">0</span></button>
                   </div>
                   <div class="hha-log-stream" data-el="log-stream">
                     <div class="hha-log-empty">
@@ -3975,13 +4274,20 @@
       } else if (action === 'copy-logs') {
         e.stopPropagation();
         this._copyLogsToClipboard();
+      } else if (action === 'set-log-filter') {
+        e.stopPropagation();
+        this._setLogCategoryFilter(actionTarget.dataset.filter);
+      } else if (action === 'toggle-log-detail') {
+        e.stopPropagation();
+        const logId = actionTarget.dataset.logId;
+        this._toggleLogDetail(logId, actionTarget);
       } else if (action === 'reset-history') {
         e.stopPropagation();
         this._liveFeed = [];
+        this._expandedLogIds.clear();
         this._syncLogs();
         if (this._assistant && typeof this._assistant.resetHistory === 'function') {
           this._assistant.resetHistory();
-          this._showToast('Сброшено');
         }
       } else if (action === 'clear-queue') {
         e.stopPropagation();
@@ -3994,7 +4300,6 @@
           this._queue = [];
           this._syncLogs();
         }
-        this._showToast('Очищено');
       } else if (action === 'delete-queue-item') {
         e.stopPropagation();
         const vid = actionTarget.dataset.vid || actionTarget.dataset.cleanVid;
@@ -4009,7 +4314,6 @@
             });
             this._syncLogs();
           }
-          this._showToast('Удалено');
         }
       } else if (action === 'step-limit') {
         e.stopPropagation();
@@ -4057,29 +4361,38 @@
       let textToCopy = '';
       const lines = [];
 
-      if (this._queue && this._queue.length > 0) {
-        for (const item of this._queue) {
-          const cleanVid = item.vid ? String(item.vid).replace(/^v_/, '') : '';
-          const url = item.url || (cleanVid ? `https://hh.ru/vacancy/${cleanVid}` : '');
-          const idUrl = cleanVid && url ? `${cleanVid} / ${url}` : (cleanVid || url || '');
-          const suffix = idUrl ? ` (${idUrl})` : '';
-          const time = item.time ? (String(item.time).startsWith('[') ? item.time : `[${item.time}]`) : `[${formatTime()}]`;
-          const badge = 'В очередь';
-          const title = item.title || 'Вакансия';
-          lines.push(`${time} [${badge}] ${title}${suffix}`);
+      if (this._logFilterMode === 'queue') {
+        if (this._queue && this._queue.length > 0) {
+          for (const item of this._queue) {
+            const cleanVid = item.vid ? String(item.vid).replace(/^v_/, '') : '';
+            const url = item.url || (cleanVid ? `https://hh.ru/vacancy/${cleanVid}` : '');
+            const idUrl = cleanVid && url ? `${cleanVid} / ${url}` : (cleanVid || url || '');
+            const suffix = idUrl ? ` (${idUrl})` : '';
+            const time = item.time ? (String(item.time).startsWith('[') ? item.time : `[${item.time}]`) : `[${formatTime()}]`;
+            const badge = 'В очередь';
+            const title = item.title || 'Вакансия';
+            lines.push(`${time} [${badge}] ${title}${suffix}`);
+          }
         }
-      }
+      } else {
+        if (this._liveFeed && this._liveFeed.length > 0) {
+          const activeCat = this._logCategoryFilter || 'all';
+          const filtered = this._liveFeed.filter(item => {
+            if (activeCat === 'all') return true;
+            if (activeCat === 'apply') return item.category === 'apply' || item.tagType === 'apply';
+            if (activeCat === 'filter') return item.category === 'filter' || item.tagType === 'filter';
+            if (activeCat === 'error') return item.category === 'error' || item.tagType === 'error';
+            return true;
+          });
 
-      if (this._liveFeed && this._liveFeed.length > 0) {
-        for (const item of this._liveFeed) {
-          const cleanVid = item.vid ? String(item.vid).replace(/^v_/, '') : '';
-          const url = item.url || (cleanVid ? `https://hh.ru/vacancy/${cleanVid}` : '');
-          const idUrl = cleanVid && url ? `${cleanVid} / ${url}` : (cleanVid || url || '');
-          const suffix = idUrl ? ` (${idUrl})` : '';
-          const time = String(item.time || '').startsWith('[') ? item.time : `[${item.time || formatTime()}]`;
-          const badge = item.badgeText || 'Отклик';
-          const title = item.title || 'Вакансия';
-          lines.push(`${time} [${badge}] ${title}${suffix}`);
+          for (const item of filtered) {
+            const time = String(item.time || '').startsWith('[') ? item.time : `[${item.time || formatTime()}]`;
+            const tag = item.tag ? `[${item.tag}]` : `[${item.badgeText || 'EVENT'}]`;
+            const msg = item.msg || item.title || '';
+            const idPart = item.vid ? ` (v_${item.vid}${item.url ? ' / ' + item.url : ''})` : '';
+            const sub = item.sub ? ` • ${item.sub}` : '';
+            lines.push(`${time} ${tag} ${msg}${idPart}${sub}`);
+          }
         }
       }
 
@@ -4150,7 +4463,6 @@
         } else {
           this.open();
           this.setActiveTab('settings');
-          this._showToast('Увеличьте лимит для продолжения');
         }
       } else if (this._status.status === 'error') {
         if (typeof this._assistant.resetState === 'function') {
@@ -4159,12 +4471,10 @@
           this._assistant.setStatus('idle', 'IDLE');
         }
         this.updateStatus('idle', 'IDLE');
-        this._showToast('Ошибка сброшена');
       } else {
         const lim = this._progress ? this._progress.limit : (this._config.limit || 50);
         const sent = this._progress ? this._progress.sent : 0;
         if (sent >= lim && lim > 0) {
-          this._showToast('Лимит достигнут');
           this.updateStatus('done', 'COMPLETED');
           return;
         }
@@ -4190,19 +4500,7 @@
       this._syncConfig();
     }
 
-    _showToast(msg) {
-      if (!this._shadow || !msg) return;
-      const toast = this._shadow.querySelector('[data-el="saved-toast"]');
-      if (!toast) return;
-      const span = toast.querySelector('span');
-      if (span) span.textContent = msg;
-      toast.classList.add('visible');
-      if (this._toastTimer) clearTimeout(this._toastTimer);
-      this._toastTimer = setTimeout(() => {
-        if (toast) toast.classList.remove('visible');
-        this._toastTimer = null;
-      }, 1500);
-    }
+    _showToast(msg) {}
 
     _showPopover(key, trigger) {
       this._hideTooltip();
@@ -4734,34 +5032,54 @@
           });
         }
       } else {
-        // Events mode: show only live feed items
+        // Compute category counts for chips
+        let countAll = 0;
+        let countApply = 0;
+        let countFilter = 0;
+        let countError = 0;
+
         if (this._liveFeed && this._liveFeed.length > 0) {
-          this._liveFeed.forEach(item => {
-            let tagClass = 'is-applied';
-            if (item.badgeClass && item.badgeClass.includes('error')) tagClass = 'is-error';
-            else if (item.badgeClass && item.badgeClass.includes('skip')) tagClass = 'is-skipped';
-            else if (item.badgeClass && item.badgeClass.includes('manual')) tagClass = 'is-queue';
-            else if (item.status === 'skipped') tagClass = 'is-skipped';
-            else if (item.status === 'error') tagClass = 'is-error';
-
-            const cleanVid = item.vid ? String(item.vid).replace(/^v_/, '') : '';
-            const targetUrl = item.url || (cleanVid ? `https://hh.ru/vacancy/${cleanVid}` : '');
-
-            items.push({
-              time: item.time || formatTime(),
-              tagClass,
-              tagText: item.badgeText || (tagClass === 'is-applied' ? 'Отклик' : tagClass === 'is-skipped' ? 'Пропуск' : 'Событие'),
-              title: item.title || 'Вакансия',
-              url: targetUrl,
-              vid: cleanVid,
-              isQueue: false
-            });
-          });
+          countAll = this._liveFeed.length;
+          for (const it of this._liveFeed) {
+            if (it.category === 'apply' || it.tagType === 'apply') countApply++;
+            else if (it.category === 'filter' || it.tagType === 'filter') countFilter++;
+            else if (it.category === 'error' || it.tagType === 'error') countError++;
+          }
         }
+
+        const chipAll = this._shadow.querySelector('[data-el="chip-all-count"]');
+        const chipApply = this._shadow.querySelector('[data-el="chip-apply-count"]');
+        const chipFilter = this._shadow.querySelector('[data-el="chip-filter-count"]');
+        const chipError = this._shadow.querySelector('[data-el="chip-error-count"]');
+
+        if (chipAll) chipAll.textContent = String(countAll);
+        if (chipApply) chipApply.textContent = String(countApply);
+        if (chipFilter) chipFilter.textContent = String(countFilter);
+        if (chipError) chipError.textContent = String(countError);
+
+        // Events mode: filter by active category chip
+        const activeCat = this._logCategoryFilter || 'all';
+        const filtered = (this._liveFeed || []).filter(item => {
+          if (activeCat === 'all') return true;
+          if (activeCat === 'apply') return item.category === 'apply' || item.tagType === 'apply';
+          if (activeCat === 'filter') return item.category === 'filter' || item.tagType === 'filter';
+          if (activeCat === 'error') return item.category === 'error' || item.tagType === 'error';
+          return true;
+        });
+
+        filtered.forEach(item => {
+          items.push(item);
+        });
       }
 
       if (items.length === 0) {
-        const emptyText = isQueueMode ? 'Очередь пуста' : 'Нет недавних событий';
+        let emptyText = isQueueMode ? 'Очередь пуста' : 'Нет записей в журнале';
+        if (!isQueueMode) {
+          const activeCat = this._logCategoryFilter || 'all';
+          if (activeCat === 'error') emptyText = 'Ошибок не обнаружено ✓';
+          else if (activeCat === 'apply') emptyText = 'Нет отправленных откликов';
+          else if (activeCat === 'filter') emptyText = 'Нет отфильтрованных вакансий';
+        }
         list.innerHTML = `
           <div class="hha-log-empty">
             <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
@@ -4771,25 +5089,68 @@
         return;
       }
 
-      list.innerHTML = items.map(item => `
-        <div class="hha-log-item ${item.isQueue ? 'is-queue' : 'is-activity'}">
-          <div class="hha-log-item-left">
-            ${!item.isQueue && item.time ? `<span class="hha-log-time">${escapeHtml(item.time)}</span>` : ''}
-            <span class="hha-log-tag ${escapeHtml(item.tagClass)}">${escapeHtml(item.tagText)}</span>
-            <span class="hha-log-title" data-tooltip="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
-          </div>
-          <div class="hha-log-item-right">
-            ${item.url ? `
-              <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="hha-log-link-btn hha-btn-open" data-tooltip="Открыть в новой вкладке">
-                ${ICONS.open} <span>Открыть</span>
-              </a>
-            ` : ''}
-            ${item.isQueue ? `
+      if (isQueueMode) {
+        list.innerHTML = items.map(item => `
+          <div class="hha-log-item is-queue">
+            <div class="hha-log-item-left">
+              <span class="hha-log-tag ${escapeHtml(item.tagClass)}">${escapeHtml(item.tagText)}</span>
+              <span class="hha-log-title" data-tooltip="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
+            </div>
+            <div class="hha-log-item-right">
+              ${item.url ? `
+                <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="hha-log-link-btn hha-btn-open" data-tooltip="Открыть в новой вкладке">
+                  ${ICONS.open} <span>Открыть</span>
+                </a>
+              ` : ''}
               <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(item.rawVid || item.vid)}" data-clean-vid="${escapeHtml(item.vid)}" data-tooltip="Удалить из очереди" aria-label="Удалить">${ICONS.trash}</button>
-            ` : ''}
+            </div>
           </div>
-        </div>
-      `).join('');
+        `).join('');
+      } else {
+        list.innerHTML = items.map(item => {
+          const isExpanded = this._expandedLogIds && this._expandedLogIds.has(item.id);
+          return `
+            <div class="hha-log-dev-row ${isExpanded ? 'is-expanded' : ''}" data-action="toggle-log-detail" data-log-id="${escapeHtml(item.id)}">
+              <div class="hha-log-dev-main">
+                <span class="hha-log-dev-time">${escapeHtml(item.time)}</span>
+                <span class="hha-log-dev-tag tag-${escapeHtml(item.tagType)}">[${escapeHtml(item.tag)}]</span>
+                <span class="hha-log-dev-msg" title="${escapeHtml(item.msg)}">${escapeHtml(item.msg)}</span>
+                ${item.metaBadge ? `<span class="hha-log-dev-badge badge-${escapeHtml(item.tagType)}">${escapeHtml(item.metaBadge)}</span>` : ''}
+                <span class="hha-log-dev-arrow">▾</span>
+              </div>
+              <div class="hha-log-dev-details">
+                <div class="hha-log-detail-grid">
+                  ${item.vid ? `
+                    <div class="hha-log-detail-key">ID:</div>
+                    <div class="hha-log-detail-val">
+                      <code>v_${escapeHtml(item.vid)}</code>
+                      ${item.url ? `
+                        <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="hha-log-detail-link" onclick="event.stopPropagation();" title="Открыть вакансию в новой вкладке">
+                          ${ICONS.open} <span>Открыть</span>
+                        </a>
+                      ` : ''}
+                    </div>
+                  ` : ''}
+                  ${item.employer ? `
+                    <div class="hha-log-detail-key">Компания:</div>
+                    <div class="hha-log-detail-val">${escapeHtml(item.employer)}</div>
+                  ` : ''}
+                  ${item.sub ? `
+                    <div class="hha-log-detail-key">Инфо:</div>
+                    <div class="hha-log-detail-val">${escapeHtml(item.sub)}</div>
+                  ` : ''}
+                  ${item.url ? `
+                    <div class="hha-log-detail-key">URL:</div>
+                    <div class="hha-log-detail-val">
+                      <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="hha-log-detail-url" onclick="event.stopPropagation();">${escapeHtml(item.url)}</a>
+                    </div>
+                  ` : ''}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
     }
 
 
