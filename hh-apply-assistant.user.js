@@ -1785,10 +1785,10 @@
       white-space: nowrap;
       position: relative;
       transition: 
-        width 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
-        border-color 260ms ease,
-        box-shadow 260ms ease,
-        padding 260ms ease;
+        width 240ms cubic-bezier(0.16, 1, 0.3, 1),
+        border-color 240ms ease,
+        box-shadow 240ms ease,
+        padding 240ms ease;
     }
 
     .hha-pill:active {
@@ -1853,12 +1853,13 @@
 
     .hha-pill-progress-fill {
       position: absolute;
+      top: 0;
       bottom: 0;
       left: 0;
-      height: 2px;
+      height: 100%;
       width: 0%;
-      background: #22c55e;
-      border-radius: 0 0 9999px 9999px;
+      background: #dcfce7;
+      border-radius: inherit;
       z-index: 1;
       pointer-events: none;
       transition: width 260ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -1908,12 +1909,12 @@
       pointer-events: none;
       will-change: max-width, opacity, transform, padding, margin;
       transition: 
-        max-width 280ms cubic-bezier(0.34, 1.3, 0.64, 1),
-        padding 280ms cubic-bezier(0.34, 1.3, 0.64, 1),
-        margin 280ms cubic-bezier(0.34, 1.3, 0.64, 1),
-        transform 280ms cubic-bezier(0.34, 1.3, 0.64, 1),
-        opacity 220ms ease,
-        visibility 280ms;
+        max-width 240ms cubic-bezier(0.16, 1, 0.3, 1),
+        padding 240ms cubic-bezier(0.16, 1, 0.3, 1),
+        margin 240ms cubic-bezier(0.16, 1, 0.3, 1),
+        transform 240ms cubic-bezier(0.16, 1, 0.3, 1),
+        opacity 200ms ease,
+        visibility 240ms;
     }
 
     .hha-pill-queue-badge.is-visible,
@@ -1926,6 +1927,13 @@
       transform: scale(1);
       visibility: visible;
       pointer-events: auto;
+      transition: 
+        max-width 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
+        padding 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
+        margin 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
+        transform 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
+        opacity 220ms ease,
+        visibility 280ms;
     }
 
     .hha-pill-queue-badge:hover {
@@ -1937,15 +1945,15 @@
     }
 
     .hha-pill-queue-badge.is-popping {
-      animation: hhaBadgePop 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+      animation: hhaBadgePop 200ms cubic-bezier(0.25, 1, 0.5, 1);
     }
 
     @keyframes hhaBadgePop {
       0% {
         transform: scale(1);
       }
-      45% {
-        transform: scale(1.18);
+      40% {
+        transform: scale(1.06);
       }
       100% {
         transform: scale(1);
@@ -2882,94 +2890,192 @@
       color: #0f172a !important;
     }
 
-    .hha-checkbox-label {
+    /* Apple HIG iOS Switch Toggle & Seamless Cover Letter Card */
+    .hha-card-cover {
+      flex: 1;
+      min-height: 0;
       display: flex;
-      align-items: flex-start;
-      gap: 8px;
-      font-size: 11.5px;
-      line-height: 1.35;
-      color: #0f172a;
-      cursor: pointer;
-      width: 100%;
+      flex-direction: column;
+      margin-bottom: 0;
+      overflow: hidden;
+      transition: border-color 140ms ease, box-shadow 140ms ease;
     }
 
-    .hha-checkbox {
-      width: 14px;
-      height: 14px;
-      margin-top: 1px;
+    .hha-card-cover:focus-within {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+    }
+
+    .hha-switch-row {
+      display: flex;
+      align-items: center;
+      padding: 7px 10px 7px 10px;
+      box-sizing: border-box;
+      border-bottom: 1px solid #f1f5f9;
+      width: 100%;
       flex-shrink: 0;
-      accent-color: #2563eb;
+      background: #ffffff;
+    }
+
+    .hha-switch-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
       cursor: pointer;
+      user-select: none;
+      gap: 12px;
+    }
+
+    .hha-switch-label .hha-row-label {
+      font-size: 12px;
+      line-height: 1.35;
+      font-weight: 500;
+      color: #0f172a;
+    }
+
+    .hha-switch {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .hha-switch-input {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+      margin: 0;
+      pointer-events: none;
+    }
+
+    .hha-switch-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #cbd5e1;
+      border-radius: 9999px;
+      transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .hha-switch-slider::before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 2px;
+      bottom: 2px;
+      background-color: #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 0 1px rgba(0, 0, 0, 0.1);
+      transition: transform 200ms cubic-bezier(0.34, 1.3, 0.64, 1);
+    }
+
+    .hha-switch-input:checked + .hha-switch-slider {
+      background-color: #22c55e;
+    }
+
+    .hha-switch-input:checked + .hha-switch-slider::before {
+      transform: translateX(16px);
+    }
+
+    .hha-switch-input:focus-visible + .hha-switch-slider {
+      box-shadow: 0 0 0 2px #3b82f6;
     }
 
     .hha-cover-container {
+      flex: 1;
+      min-height: 0;
       display: flex;
       flex-direction: column;
-      gap: 2px;
-      transition: opacity 150ms ease;
-    }
-
-    .hha-cover-container.is-hidden {
-      display: none !important;
+      padding: 0;
+      box-sizing: border-box;
+      position: relative;
+      background: #ffffff;
     }
 
     .hha-cover-textarea,
     .hha-textarea {
       width: 100%;
-      height: 76px;
-      min-height: 60px;
-      max-height: 140px;
-      background: #ffffff;
-      border: 1px solid #cbd5e1;
-      border-radius: var(--hha-radius-sm, 8px);
+      flex: 1;
+      height: 100%;
+      min-height: 105px;
+      background: transparent;
+      border: none;
+      border-radius: 0;
       color: #0f172a;
-      font-size: 11.5px;
-      line-height: 1.4;
+      font-size: 12px;
+      line-height: 1.45;
       font-family: inherit;
-      padding: 6px 8px;
-      margin-top: 4px;
-      resize: vertical;
+      padding: 8px 10px 28px 10px;
+      margin: 0;
+      resize: none;
       outline: none;
       box-sizing: border-box;
+      box-shadow: none !important;
       scrollbar-width: thin;
       scrollbar-color: #cbd5e1 transparent;
-      transition: border-color 120ms ease, box-shadow 120ms ease;
+      transition: 
+        opacity 180ms ease,
+        background-color 180ms ease,
+        color 180ms ease;
     }
 
     .hha-cover-textarea:focus,
-    .hha-textarea:focus {
-      border-color: #2563eb;
-      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
-    }
-
     .hha-cover-textarea:focus-visible,
     .hha-cover-textarea.is-focus-visible,
+    .hha-textarea:focus,
     .hha-textarea:focus-visible,
     .hha-textarea.is-focus-visible {
       outline: none;
-      box-shadow: 0 0 0 2px #3b82f6 !important;
+      border: none;
+      box-shadow: none !important;
     }
 
     .hha-cover-textarea:disabled,
+    .hha-cover-textarea.is-disabled,
     .hha-textarea:disabled {
-      opacity: 0.45;
+      opacity: 0.55;
       background: #f8fafc;
+      color: #64748b;
       cursor: not-allowed;
     }
 
     .hha-char-counter {
-      font-size: 11px;
-      line-height: 1.3;
-      color: #64748b;
+      position: absolute;
+      bottom: 7px;
+      right: 9px;
+      z-index: 2;
+      pointer-events: none;
+      font-size: 10.5px;
+      line-height: 1;
+      color: #94a3b8;
       font-weight: 500;
       font-variant-numeric: tabular-nums;
-      text-align: right;
-      padding-top: 2px;
-      transition: color 120ms ease;
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      padding: 3px 6px;
+      border-radius: 6px;
+      border: 1px solid rgba(226, 232, 240, 0.7);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      transition: color 120ms ease, border-color 120ms ease, opacity 180ms ease;
+    }
+
+    .hha-cover-textarea:disabled ~ .hha-char-counter,
+    .hha-cover-textarea.is-disabled ~ .hha-char-counter {
+      opacity: 0.55;
+      background: rgba(248, 250, 252, 0.85);
     }
 
     .hha-char-counter.is-limit {
       color: #e11d48;
+      border-color: rgba(244, 63, 94, 0.4);
       font-weight: 600;
     }
 
@@ -3522,7 +3628,7 @@
             <!-- Toast notification -->
             <div class="hha-toast" data-el="saved-toast">
               ${ICONS.check}
-              <span>Сохранено</span>
+              <span></span>
             </div>
 
             <!-- Floating Tooltip -->
@@ -3560,16 +3666,19 @@
                   </div>
                 </div>
 
-                <div class="hha-card hha-group">
-                  <div class="hha-row-vertical">
-                    <label class="hha-checkbox-label">
-                      <input type="checkbox" class="hha-checkbox" data-el="setting-use-cover" checked>
+                <div class="hha-card hha-group hha-card-cover">
+                  <div class="hha-switch-row">
+                    <label class="hha-switch-label" for="hha-use-cover-input">
                       <span class="hha-row-label">Отправлять сопроводительное письмо</span>
+                      <span class="hha-switch">
+                        <input type="checkbox" id="hha-use-cover-input" class="hha-switch-input" data-el="setting-use-cover" checked>
+                        <span class="hha-switch-slider"></span>
+                      </span>
                     </label>
-                    <div class="hha-cover-container" data-el="setting-cover-container">
-                      <textarea class="hha-cover-textarea hha-textarea" data-el="setting-cover-text" maxlength="5000" placeholder="Текст сопроводительного письма..."></textarea>
-                      <div class="hha-char-counter" data-el="setting-cover-counter">0 / 5000</div>
-                    </div>
+                  </div>
+                  <div class="hha-cover-container" data-el="setting-cover-container">
+                    <textarea class="hha-cover-textarea hha-textarea" data-el="setting-cover-text" maxlength="5000" placeholder="Текст сопроводительного письма..."></textarea>
+                    <div class="hha-char-counter" data-el="setting-cover-counter">0 / 5000</div>
                   </div>
                 </div>
               </div>
@@ -3694,13 +3803,10 @@
       if (useCoverCb) {
         useCoverCb.addEventListener('change', () => {
           const checked = useCoverCb.checked;
-          if (coverContainer) {
-            coverContainer.style.display = checked ? 'flex' : 'none';
-            coverContainer.classList.toggle('is-hidden', !checked);
-          } else if (coverTextarea) {
-            coverTextarea.style.display = checked ? 'block' : 'none';
+          if (coverTextarea) {
+            coverTextarea.disabled = !checked;
+            coverTextarea.classList.toggle('is-disabled', !checked);
           }
-          if (coverTextarea) coverTextarea.disabled = !checked;
           this._applyConfig({ useCover: checked });
         });
       }
@@ -4056,13 +4162,12 @@
       }
       if (this._assistant && typeof this._assistant.setConfig === 'function') {
         this._assistant.setConfig(partial);
-        this._showToast('Сохранено');
       }
       this._syncConfig();
     }
 
-    _showToast(msg = 'Сохранено') {
-      if (!this._shadow) return;
+    _showToast(msg) {
+      if (!this._shadow || !msg) return;
       const toast = this._shadow.querySelector('[data-el="saved-toast"]');
       if (!toast) return;
       const span = toast.querySelector('span');
@@ -4694,20 +4799,15 @@
 
       const isCoverActive = Boolean(c.useCover);
       if (useCoverCb) useCoverCb.checked = isCoverActive;
-      if (coverContainer) {
-        coverContainer.style.display = isCoverActive ? 'flex' : 'none';
-        coverContainer.classList.toggle('is-hidden', !isCoverActive);
-      }
       if (coverTextarea) {
-        coverTextarea.style.display = isCoverActive ? 'block' : 'none';
         coverTextarea.disabled = !isCoverActive;
+        coverTextarea.classList.toggle('is-disabled', !isCoverActive);
         const isFocused = this._shadow.activeElement === coverTextarea;
         if (!isFocused && coverTextarea.value !== (c.coverText || '')) {
           coverTextarea.value = c.coverText || '';
         }
       }
       if (coverCounter) {
-        coverCounter.style.display = isCoverActive ? 'block' : 'none';
         const len = coverTextarea ? coverTextarea.value.length : (c.coverText || '').length;
         coverCounter.textContent = `${len} / 5000`;
         coverCounter.classList.toggle('is-limit', len >= 5000);
