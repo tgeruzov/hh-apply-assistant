@@ -2780,63 +2780,40 @@
       color: #0f172a;
     }
 
-    .hha-stepper {
+    .hha-stepper-wrap {
       display: inline-flex;
-      align-items: stretch;
-      border: 1px solid #e2e8f0;
-      border-radius: var(--hha-radius-sm, 8px);
-      background: #ffffff;
-      overflow: hidden;
-      height: var(--hha-control-height, 28px);
-      box-sizing: border-box;
-    }
-
-    .hha-stepper-btn {
-      width: 28px;
-      min-width: 28px;
-      height: var(--hha-control-height, 28px);
-      display: flex;
       align-items: center;
-      justify-content: center;
-      background: transparent;
-      border: none;
-      color: #0f172a;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      padding: 0;
-      transition: background 140ms ease;
-      user-select: none;
-      box-sizing: border-box;
-    }
-
-    .hha-stepper-btn:hover {
-      background: #f1f5f9;
-    }
-
-    .hha-stepper-btn:active {
-      background: #e2e8f0;
+      gap: 6px;
     }
 
     .hha-stepper-input {
-      width: 44px;
-      height: var(--hha-control-height, 28px);
-      border: none;
-      border-left: 1px solid #e2e8f0;
-      border-right: 1px solid #e2e8f0;
-      text-align: center;
-      font-size: 12px;
+      width: 38px;
+      height: 26px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      text-align: right;
+      font-size: 13px;
       font-weight: 600;
       color: #0f172a;
-      padding: 0;
+      font-variant-numeric: tabular-nums;
+      padding: 0 4px;
       outline: none;
       box-sizing: border-box;
       -moz-appearance: textfield;
+      transition: background-color 140ms ease, border-color 140ms ease;
+    }
+
+    .hha-stepper-input:hover {
+      background: #f8fafc;
+      border-color: #e2e8f0;
     }
 
     .hha-stepper-input:focus,
     .hha-stepper-input.is-focused {
-      background: #eff6ff;
+      background: #ffffff;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
     }
 
     .hha-stepper-input::-webkit-outer-spin-button,
@@ -2845,11 +2822,54 @@
       margin: 0;
     }
 
+    .hha-stepper {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #e2e8f0;
+      border-radius: var(--hha-radius-sm, 7px);
+      background: #f8fafc;
+      overflow: hidden;
+      height: 26px;
+      box-sizing: border-box;
+    }
+
+    .hha-stepper-btn {
+      width: 26px;
+      min-width: 26px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      color: #334155;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 0;
+      transition: background 120ms ease, color 120ms ease;
+      user-select: none;
+      box-sizing: border-box;
+    }
+
+    .hha-stepper-btn + .hha-stepper-btn {
+      border-left: 1px solid #e2e8f0;
+    }
+
+    .hha-stepper-btn:hover {
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+
+    .hha-stepper-btn:active {
+      background: #cbd5e1;
+    }
+
     .hha-segmented-control {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      max-width: 176px;
-      min-width: 130px;
+      max-width: 204px;
+      min-width: 170px;
       width: 100%;
       height: 28px;
       padding: 2px;
@@ -2863,7 +2883,7 @@
       width: 100%;
       height: 100%;
       min-width: 0;
-      padding: 0;
+      padding: 0 4px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -2874,9 +2894,10 @@
       border: none;
       border-radius: var(--hha-radius-xs, 6px);
       background: transparent;
+      color: #64748b;
       cursor: pointer;
       box-sizing: border-box;
-      transition: background-color 100ms ease, color 100ms ease;
+      transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
     }
 
     .hha-segmented-btn:hover {
@@ -2886,8 +2907,9 @@
     .hha-segmented-btn.is-active,
     .hha-segmented-btn.active {
       background: #ffffff !important;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06) !important;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06) !important;
       color: #0f172a !important;
+      font-weight: 600 !important;
     }
 
     /* Apple HIG iOS Switch Toggle & Seamless Cover Letter Card */
@@ -3650,18 +3672,20 @@
                 <div class="hha-card hha-group">
                   <div class="hha-row hha-group-row">
                     <span class="hha-row-label hha-setting-label">Лимит откликов</span>
-                    <div class="hha-stepper">
-                      <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="-5" aria-label="Уменьшить лимит">−</button>
+                    <div class="hha-stepper-wrap">
                       <input type="number" class="hha-stepper-input" data-el="setting-limit" min="1" max="200" step="5" value="50">
-                      <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="5" aria-label="Увеличить лимит">+</button>
+                      <div class="hha-stepper">
+                        <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="-5" aria-label="Уменьшить лимит">−</button>
+                        <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="5" aria-label="Увеличить лимит">+</button>
+                      </div>
                     </div>
                   </div>
                   <div class="hha-speed-row hha-group-row">
-                    <span class="hha-row-label">Скорость <button type="button" class="hha-info-trigger hha-tooltip-target" data-info="speed" data-tooltip="Safe: 4–8с · Balanced: 2–5с · Fast: 1.5–3с">${ICONS.info}</button></span>
+                    <span class="hha-row-label">Скорость</span>
                     <div class="hha-segmented-control">
-                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="safe">Safe</button>
-                      <button type="button" class="hha-segmented-btn is-active" data-action="set-preset" data-preset="balanced">Balanced</button>
-                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="fast">Fast</button>
+                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="safe" data-tooltip="Безопасно: интервал 4–8 с">Безопасно</button>
+                      <button type="button" class="hha-segmented-btn is-active" data-action="set-preset" data-preset="balanced" data-tooltip="Баланс: интервал 2–5 с">Баланс</button>
+                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="fast" data-tooltip="Быстро: интервал 1.5–3 с">Быстро</button>
                     </div>
                   </div>
                 </div>
