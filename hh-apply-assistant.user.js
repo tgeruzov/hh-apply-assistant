@@ -1810,7 +1810,7 @@
       height: 34px;
       width: fit-content;
       min-width: auto;
-      max-width: min(360px, calc(100vw - 16px));
+      max-width: min(390px, calc(100vw - 16px));
       padding: 3px;
       gap: 4px;
       border-radius: var(--hha-radius-full, 9999px);
@@ -1835,8 +1835,8 @@
     }
 
     .hha-root.is-expanded .hha-pill {
-      width: min(360px, calc(100vw - 16px));
-      max-width: min(360px, calc(100vw - 16px));
+      width: min(390px, calc(100vw - 16px));
+      max-width: min(390px, calc(100vw - 16px));
       box-sizing: border-box;
       justify-content: flex-start;
       background: #ffffff;
@@ -2088,16 +2088,16 @@
     }
 
 
-    /* --- 2. Flyout Overlay Panel (360px, Fixed Height) --- */
+    /* --- 2. Flyout Overlay Panel (390px, Fixed Height) --- */
     .hha-flyout {
       font-size: 12px;
       line-height: 1.4;
       pointer-events: auto;
-      width: min(360px, calc(100vw - 16px));
+      width: min(390px, calc(100vw - 16px));
       max-width: calc(100vw - 16px);
-      height: 366px;
+      height: 420px;
       min-height: 160px;
-      max-height: min(366px, calc(100vh - 56px));
+      max-height: min(420px, calc(100vh - 56px));
       box-sizing: border-box;
       background: #ffffff;
       border: 1px solid #e2e8f0;
@@ -2166,7 +2166,7 @@
       display: grid;
       grid-template-columns: 1fr 1fr;
       background: #f1f5f9;
-      margin: 6px 12px 5px 12px;
+      margin: 10px 12px 8px 12px;
       padding: 2px;
       border: 1px solid #e2e8f0;
       border-radius: var(--hha-radius-md, 10px);
@@ -2242,7 +2242,7 @@
       flex-direction: column;
       overflow: hidden;
       overflow-x: hidden;
-      padding: 0 12px 12px 12px;
+      padding: 0 12px 10px 12px;
       box-sizing: border-box;
       position: relative;
     }
@@ -2258,7 +2258,7 @@
       box-sizing: border-box;
       overflow-x: hidden;
       overflow-y: auto;
-      padding: 0 0 4px 0;
+      padding: 0;
       scrollbar-width: thin;
       scrollbar-color: #cbd5e1 transparent;
       position: relative;
@@ -2739,7 +2739,7 @@
     /* Accordion Details Block */
     .hha-log-dev-details {
       display: none;
-      padding: 6px 8px 8px 46px;
+      padding: 8px 10px 10px 10px;
       background: #f8fafc;
       border-top: 1px dashed #e2e8f0;
       font-size: 10px;
@@ -2753,8 +2753,8 @@
 
     .hha-log-detail-grid {
       display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 3px 8px;
+      grid-template-columns: minmax(65px, auto) 1fr;
+      gap: 4px 8px;
       align-items: baseline;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
     }
@@ -2763,14 +2763,41 @@
       color: #64748b;
       font-weight: 600;
       white-space: nowrap;
+      font-size: 10px;
     }
 
     .hha-log-detail-val {
       color: #0f172a;
-      word-break: break-all;
+      overflow-wrap: break-word;
+      word-break: normal;
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
+      font-size: 10px;
+      min-width: 0;
+    }
+
+    .hha-log-detail-note {
+      color: #475569;
+      font-size: 9.5px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      word-break: normal;
+      overflow-wrap: break-word;
+    }
+
+    .hha-log-detail-block {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      margin-top: 2px;
+    }
+
+    .hha-log-detail-block-title {
+      color: #64748b;
+      font-weight: 600;
+      font-size: 10px;
     }
 
     .hha-log-detail-link {
@@ -2796,29 +2823,58 @@
       color: #2563eb;
       text-decoration: underline;
       font-size: 10px;
+      overflow-wrap: break-word;
       word-break: break-all;
     }
 
     .hha-code-highlight {
       color: #b91c1c;
       background: rgba(239, 68, 68, 0.08);
-      padding: 1px 4px;
-      border-radius: 3px;
+      padding: 4px 6px;
+      border-radius: 4px;
       border: 1px solid rgba(239, 68, 68, 0.2);
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+      word-break: break-all;
+      font-size: 9.5px;
+      line-height: 1.35;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    }
+
+    .hha-code-heuristic {
+      color: #1e293b;
+      background: #e2e8f0;
+      padding: 4px 6px;
+      border-radius: 4px;
+      border: 1px solid #cbd5e1;
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+      word-break: break-all;
+      font-size: 9.5px;
+      line-height: 1.35;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
     }
 
     .hha-dom-snippet {
-      margin: 2px 0 0 0;
-      padding: 4px 6px;
+      margin: 0;
+      padding: 6px 8px;
       background: #0f172a;
       color: #f1f5f9;
       border-radius: 4px;
       font-size: 9px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
       white-space: pre-wrap;
-      word-break: break-all;
-      max-height: 80px;
+      overflow-wrap: break-word;
+      word-break: normal;
+      max-height: 90px;
       overflow-y: auto;
+      line-height: 1.35;
     }
 
     .hha-btn-clear-queue {
@@ -3816,6 +3872,12 @@
         this._expandedLogIds.delete(logId);
         if (rowEl) rowEl.classList.remove('is-expanded');
       } else {
+        if (this._shadow) {
+          this._shadow.querySelectorAll('.hha-log-dev-row.is-expanded').forEach(r => {
+            r.classList.remove('is-expanded');
+          });
+        }
+        this._expandedLogIds.clear();
         this._expandedLogIds.add(logId);
         if (rowEl) rowEl.classList.add('is-expanded');
       }
@@ -3846,7 +3908,7 @@
 
     _clampPillCoordinates(x, y, winW, winH) {
       const pillW = this._getPillWidth();
-      const targetW = Math.min(360, Math.max(100, winW - 16));
+      const targetW = Math.min(390, Math.max(100, winW - 16));
       const maxW = Math.max(targetW, pillW);
       const offset = (maxW - pillW) / 2;
       const clamped = clampCoordinates(x - offset, y, maxW, 36, winW, winH, 8);
@@ -4557,7 +4619,7 @@
       const pillW = this._getPillWidth();
 
       // Determine open direction dynamically based on available screen space
-      const flyoutH = 366;
+      const flyoutH = 420;
       const spaceBelow = winH - (this._pillPos.y + 36 + 8);
       const spaceAbove = this._pillPos.y - 8;
 
@@ -4578,7 +4640,7 @@
       // Strict center alignment positioning (Center Anchor)
       const padding = 8;
       const centerX = Math.round(this._pillPos.x + pillW / 2);
-      const targetW = Math.min(360, Math.max(100, winW - padding * 2));
+      const targetW = Math.min(390, Math.max(100, winW - padding * 2));
       const maxW = Math.max(targetW, pillW);
       const halfW = maxW / 2;
       const minX = padding + halfW;
@@ -4606,7 +4668,7 @@
       if (flyout) {
         const availSpace = Math.floor(opensUp ? spaceAbove : spaceBelow);
         const maxAvail = Math.max(100, Math.min(availSpace, winH - 44));
-        const finalH = Math.min(366, maxAvail);
+        const finalH = Math.min(420, maxAvail);
         flyout.style.maxHeight = `${finalH}px`;
         flyout.style.height = `${finalH}px`;
       }
@@ -4616,7 +4678,7 @@
       const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
       const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
       const pillW = this._getPillWidth();
-      const targetW = Math.min(360, Math.max(100, winW - 16));
+      const targetW = Math.min(390, Math.max(100, winW - 16));
       const maxW = Math.max(targetW, pillW);
 
       let pos = null;
@@ -4893,19 +4955,25 @@
                 <div class="hha-log-detail-grid">
                   ${item.selector ? `
                     <div class="hha-log-detail-key">Селектор:</div>
-                    <div class="hha-log-detail-val"><code>${escapeHtml(item.selector)}</code> ${item.selectorName ? `(${escapeHtml(item.selectorName)})` : ''}</div>
+                    <div class="hha-log-detail-val"><code>${escapeHtml(item.selector)}</code> ${item.selectorName ? `<span class="hha-log-detail-note">(${escapeHtml(item.selectorName)})</span>` : ''}</div>
                   ` : ''}
                   ${item.expectedCss ? `
-                    <div class="hha-log-detail-key">Ожидался CSS:</div>
-                    <div class="hha-log-detail-val"><code class="hha-code-highlight">${escapeHtml(item.expectedCss)}</code></div>
+                    <div class="hha-log-detail-block">
+                      <div class="hha-log-detail-block-title">Ожидался CSS:</div>
+                      <code class="hha-code-highlight">${escapeHtml(item.expectedCss)}</code>
+                    </div>
                   ` : ''}
                   ${item.heuristic ? `
-                    <div class="hha-log-detail-key">Эвристика:</div>
-                    <div class="hha-log-detail-val"><code>${escapeHtml(item.heuristic)}</code></div>
+                    <div class="hha-log-detail-block">
+                      <div class="hha-log-detail-block-title">Эвристика:</div>
+                      <code class="hha-code-heuristic">${escapeHtml(item.heuristic)}</code>
+                    </div>
                   ` : ''}
                   ${item.contextSnippet ? `
-                    <div class="hha-log-detail-key">HTML родителя:</div>
-                    <div class="hha-log-detail-val"><pre class="hha-dom-snippet">${escapeHtml(item.contextSnippet)}</pre></div>
+                    <div class="hha-log-detail-block">
+                      <div class="hha-log-detail-block-title">HTML родителя:</div>
+                      <pre class="hha-dom-snippet">${escapeHtml(item.contextSnippet)}</pre>
+                    </div>
                   ` : ''}
                   ${item.vid ? `
                     <div class="hha-log-detail-key">ID:</div>
