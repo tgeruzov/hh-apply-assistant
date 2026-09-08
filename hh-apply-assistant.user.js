@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.0.6
+// @version      0.0.7
 // @author       Timur Geruzov
 // @description  HH Apply Assistant - Автоматизация откликов на вакансии hh.ru с эргономичным плавающим HUD интерфейсом
 // @license      GPL-3.0-only
@@ -41,7 +41,8 @@
     relocationBtn: '[data-qa="relocation-warning-confirm"]',
     rejectWarning: '[data-qa="response-reject-warning"]',
     vacancyLink: 'a[data-qa="serp-item__title"], a[data-qa="vacancy-serp__vacancy-title"]',
-    vacancyCard: 'div[data-qa="vacancy-serp__vacancy"], .vacancy-serp-item'
+    vacancyCard: 'div[data-qa="vacancy-serp__vacancy"], .vacancy-serp-item',
+    pagerNext: '[data-qa="pager-next"], a[data-qa="pager-next"]'
   };
 
   const SELECTOR_METADATA = {
@@ -76,6 +77,10 @@
     vacancyCard: {
       name: 'Карточка вакансии в выдаче',
       heuristic: 'div, article с одиночной ссылкой на /vacancy/'
+    },
+    pagerNext: {
+      name: 'Кнопка «Дальше» (пагинация поиска)',
+      heuristic: 'a[data-qa="pager-next"], a /дальше|вперёд|следующая/i'
     }
   };
 
@@ -85,7 +90,6 @@
     isRunning: STORAGE_PREFIX + 'is_active',
     returnUrl: STORAGE_PREFIX + 'return_url',
     history: STORAGE_PREFIX + 'processed_ids',
-    needF5: STORAGE_PREFIX + 'reload_flag',
     trapLock: STORAGE_PREFIX + 'trap_lock',
     instanceLock: STORAGE_PREFIX + 'instance_lock',
     lastAttempt: STORAGE_PREFIX + 'last_attempt_id',
@@ -105,6 +109,7 @@
   const DEFAULTS = {
     coverText: DEFAULT_COVER_TEXT,
     useCover: true,
+    openVacancy: true,
     skipHidden: true,
     preset: 'balanced',
     limit: 50
@@ -264,6 +269,7 @@
     return {
       coverText: String(m.coverText ?? DEFAULT_COVER_TEXT).slice(0, 5000),
       useCover: m.useCover !== false,
+      openVacancy: m.openVacancy !== false,
       skipHidden: m.skipHidden !== false,
       preset: PRESETS[m.preset] ? m.preset : 'balanced',
       limit: clamp(Math.round(toNum(m.limit, DEFAULTS.limit)), 1, 500)
@@ -439,9 +445,6 @@
   const getLastAttemptID = () => storage.sessionGet(KEYS.lastAttempt) || null;
   const setLastAttemptID = (id) => (id ? storage.sessionSet(KEYS.lastAttempt, id) : storage.sessionRemove(KEYS.lastAttempt));
   const clearLastAttemptID = () => storage.sessionRemove(KEYS.lastAttempt);
-
-  const isF5Needed = () => storage.sessionGet(KEYS.needF5) === '1';
-  const clearF5Flag = () => storage.sessionRemove(KEYS.needF5);
 
   function getActiveTrapLock() {
     const val = storage.sessionGet(KEYS.trapLock);
@@ -703,7 +706,7 @@
     relocationBtn: (r) => findPatternElement(r, 'button, [role="button"]', /вс[её] равно|подтвер|переезд|confirm|relocation/i),
     rejectWarning: (r) => findPatternElement(r, 'div, p, span, section', /не соответствует|отказ|не подходит|warning|reject/i, 250),
     responseChat: (r) => findPatternElement(r, 'a, button', /чат|перейти в чат|сообщения|chat/i),
-    vacancyCard: (r) => Array.from((r || globalThis.document)?.querySelectorAll?.('div, article, section') || []).find(el => qa('a[href*="/vacancy/"]', el).length === 1 && isVisible(el)) || null
+    pagerNext: (r) => findPatternElement(r, 'a, button', /дальше|впер[её]д|следующая|next/i)
   };
 
   function queryExact(key, root) {
@@ -817,7 +820,7 @@
       } else {
         el.value = value;
       }
-      const wrapper = el.closest?.(SELECTORS.nativeWrapper) || el.closest?.('[data-qa="textarea-native-wrapper"]') || el.parentElement;
+      const wrapper = el.closest?.(SELECTORS.nativeWrapper) || el.parentElement;
       const clone = wrapper ? q('pre', wrapper) : null;
       if (clone) clone.textContent = value || '\u200B';
 
@@ -908,7 +911,8 @@
     const direct = collapseSpaces(linkEl.innerText || linkEl.textContent);
     if (direct) return direct;
     const card = getVacancyCard(linkEl);
-    return card ? collapseSpaces(query('vacancyLink', card)?.innerText || query('vacancyLink', card)?.textContent) : '';
+    const link = card ? query('vacancyLink', card) : null;
+    return link ? collapseSpaces(link.innerText || link.textContent) : '';
   }
 
   function detectCaptcha() {
@@ -941,7 +945,10 @@
 
   const detectAlreadyApplied = () => {
     const doc = globalThis.document;
-    return Boolean(doc && /(?:вы уже откликались|отклик уже отправлен|already applied)/i.test(((doc.body || doc.documentElement)?.textContent || '').slice(0, 3000)));
+    if (!doc) return false;
+    if (query('responseChat')) return true;
+    const bodyText = ((doc.body || doc.documentElement)?.textContent || '').slice(0, 3000);
+    return /(?:вы уже откликались|отклик уже отправлен|already applied)/i.test(bodyText);
   };
 
   const getResponseDetectionScope = () => q('[data-qa*="modal" i], [class*="modal" i], [role="dialog"]') || globalThis.document?.body || globalThis.document?.documentElement;
@@ -949,7 +956,7 @@
   const hasResponseTextConfirmation = (root) => /(?:отклик отправлен|вы откликнулись|резюме доставлено|резюме отправлено|response sent|applied successfully)/i.test(((root || getResponseDetectionScope())?.textContent || '').slice(0, 4000));
   const hasExactResponseConfirmation = (root) => {
     const scope = root || getResponseDetectionScope();
-    return Boolean(scope && (query('responseChat', scope) || query('attachCoverBtn', scope) || q('[data-qa="vacancy-response-popup-close"]', scope)));
+    return Boolean(scope && (query('responseChat', scope) || (!config.useCover && query('attachCoverBtn', scope)) || q('[data-qa="vacancy-response-popup-close"]', scope)));
   };
 
   function isResponseConfirmed({ allowDocumentStrongText = false } = {}) {
@@ -976,7 +983,9 @@
     if (detectRateLimit()) return 'RATE_LIMIT';
     if (hasReliableRejectWarning()) return 'REJECT_WARNING';
     if (query('relocationBtn', root)) return 'RELOCATION_WARNING';
-    if (query('letterTextarea', root)) return 'MODAL_OPEN';
+    if (query('letterTextarea', root) || query('attachCoverInModal', root) || query('letterSubmit', root) || q('[data-qa="vacancy-response-popup-form"]', root)) {
+      return 'MODAL_OPEN';
+    }
     if (includeExactSelectors && (query('attachCoverBtn', root) || query('responseChat', root) || hasResponseTextConfirmation(root))) {
       return 'ATTACH_COVER';
     }
@@ -988,6 +997,10 @@
     if (modal) {
       const outcome = detectResponseOutcomeInRoot(modal, true);
       if (outcome) return outcome;
+    }
+    const attachBtn = query('attachCoverBtn');
+    if (config.useCover && attachBtn && isVisible(attachBtn)) {
+      return 'ATTACH_COVER';
     }
     if (hasExactResponseConfirmation() || isResponseConfirmed({ allowDocumentStrongText })) return 'SUCCESS';
     const docRoot = globalThis.document?.body || globalThis.document?.documentElement;
@@ -1061,7 +1074,7 @@
       await actionPause();
       if (!isRunCurrent(runId)) return false;
     }
-    const submit = query('letterSubmit', scope) || findPatternElement(scope, 'button, input[type="submit"], [role="button"]', /отправить|сохранить|откликнуться|send|submit/i);
+    const submit = query('letterSubmit', scope);
     if (!submit) return false;
     await clickElement(submit);
     await actionPause();
@@ -1199,19 +1212,22 @@
         returnToList(vid, { markProcessed: true, runId });
         return 'OK';
       }
-      const applyBtn = query('vacancyApply') || findPatternElement(globalThis.document?.body, 'button, a, [role="button"]', /откликнуться|отклик без резюме|перейти к отклику|apply|respond/i);
+      const applyBtn = await waitForCondition(() => query('vacancyApply'), 4000, activeAbortController?.signal);
       if (!applyBtn) {
         notifySelectorFailure('vacancyApply', globalThis.document?.body);
         if (vid) saveCurrentForManual(vid, 'no-apply-button', runId);
         returnToList(vid, { markProcessed: true, runId });
         return 'FAIL';
       }
+      await actionPause();
+      if (!isRunCurrent(runId)) return 'STOPPED';
       await clickElement(applyBtn);
       await actionPause();
       if (!isRunCurrent(runId)) return 'STOPPED';
       const outcome = await waitForCondition(() => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()), 8000, activeAbortController?.signal);
       const res = await dispatchOutcome(outcome, vid, runId);
       if (['OK', 'SKIP', 'TEST_REQUIRED', 'RESUME_HIDDEN'].includes(res)) {
+        await actionPause();
         returnToList(vid, { markProcessed: true, runId });
       }
       return res;
@@ -1235,7 +1251,7 @@
         saveCurrentForManual(vid, 'test-questionnaire', runId);
         return returnToList(vid, { markProcessed: true, runId });
       }
-      const submitBtn = await waitForCondition(() => query('letterSubmit') || findPatternElement(null, 'button, input[type="submit"], [role="button"]', /отправить|сохранить|откликнуться|send|submit/i), 4000, activeAbortController?.signal);
+      const submitBtn = await waitForCondition(() => query('letterSubmit'), 4000, activeAbortController?.signal);
       if (!isRunCurrent(runId)) return;
       if (!submitBtn) {
         notifySelectorFailure('letterSubmit', globalThis.document?.body);
@@ -1264,12 +1280,8 @@
   }
 
   function getStableVacancyId(btn) {
-    const loc = globalThis.location;
-    if (Page.isVacancy() && loc) {
-      const direct = getVacancyIDFromHref(loc.href);
-      if (direct) return 'v_' + direct;
-    }
     if (btn) return getVacancyID(btn);
+    const loc = globalThis.location;
     if (loc) {
       const direct = getVacancyIDFromHref(loc.href);
       if (direct) return 'v_' + direct;
@@ -1370,8 +1382,23 @@
       if (stopSignal || runId !== currentRunId) return;
 
       if (Page.isSearch() && !allBtns.length) {
-        const cards = qa(SELECTORS.vacancyCard) || qa('.vacancy-serp-item, [data-qa="vacancy-serp__vacancy"]');
+        const cards = qa(SELECTORS.vacancyCard);
         if (cards.length > 0) {
+          const anyAlreadyApplied = cards.some(c => /(?:вы откликнулись|резюме доставлено|отклик отправлен)/i.test(c.textContent || ''));
+          const nextBtn = query('pagerNext');
+          if (anyAlreadyApplied && nextBtn) {
+            log('Все вакансии на странице уже имеют отклики. Переход на следующую страницу...', false, 'PAGINATION_ALL_APPLIED');
+            await actionPause();
+            if (!isRunCurrent(runId)) return;
+            const href = nextBtn.getAttribute?.('href') || nextBtn.href;
+            if (href && globalThis.location) {
+              setReturnUrl(href);
+              try { globalThis.location.assign(href); } catch (_) { globalThis.location.href = href; }
+            } else {
+              clickElement(nextBtn);
+            }
+            return;
+          }
           notifySelectorFailure('applyBtn', cards[0], { cardsCount: cards.length });
           return finalizeRun(runId, 'error', 'Селектор applyBtn не найден на странице поиска');
         }
@@ -1382,6 +1409,54 @@
       log(`Search page scanned: ${allBtns.length} buttons, ${targets.length} pending, ${initialSent}/${config.limit} sent`, false, 'VACANCIES_SCANNED', {
         total: allBtns.length, pending: targets.length, sent: initialSent, limit: config.limit
       });
+
+      if (!targets.length) {
+        const nextBtn = query('pagerNext');
+        if (nextBtn) {
+          log('Все вакансии на странице обработаны. Переход на следующую страницу...', false, 'PAGINATION_NEXT');
+          await actionPause();
+          if (!isRunCurrent(runId)) return;
+          const href = nextBtn.getAttribute?.('href') || nextBtn.href;
+          if (href && globalThis.location) {
+            setReturnUrl(href);
+            try { globalThis.location.assign(href); } catch (_) { globalThis.location.href = href; }
+          } else {
+            clickElement(nextBtn);
+          }
+          return;
+        }
+        const finalSent = getSentCount();
+        return finalizeRun(runId, 'done', `Все вакансии в выдаче обработаны. Всего отправлено: ${finalSent}`);
+      }
+
+      if (config.openVacancy) {
+        const btn = targets[0];
+        const card = getVacancyCard(btn);
+        const link = card ? query('vacancyLink', card) : null;
+        const vid = getStableVacancyId(btn);
+        const title = card ? readSerpCardTitle(link) : '';
+        const targetUrl = link?.href || (vid && String(vid).startsWith('v_') ? `https://hh.ru/vacancy/${String(vid).slice(2)}` : null);
+
+        if (!targetUrl) {
+          log(`Не удалось определить URL для вакансии #${vid}`, true, 'VACANCY_URL_NOT_FOUND');
+          skipVacancy(vid, 'no_url', runId);
+          return;
+        }
+
+        setLastAttemptID(vid);
+        if (globalThis.location) setReturnUrl(globalThis.location.href);
+        events.emit('entity', { vid, title, url: targetUrl, action: 'viewing' });
+        log(`Открытие вакансии #${vid}: ${title}`, false, 'OPEN_VACANCY', { vid, url: targetUrl });
+        await vacancyPause();
+        if (stopSignal || runId !== currentRunId) return;
+
+        try {
+          globalThis.location.assign(targetUrl);
+        } catch (_) {
+          globalThis.location.href = targetUrl;
+        }
+        return;
+      }
 
       let rescanCount = 0;
       while (targets.length > 0) {
@@ -1474,7 +1549,6 @@
     } else {
       clearTrapLock();
       handlingResponsePage = false;
-      if (isF5Needed()) { clearF5Flag(); }
     }
   }
 
@@ -1524,7 +1598,6 @@
       sentCount: getSentCount(),
       limit: config.limit,
       hasInstanceLock: instanceLeaseVerified,
-      isF5Needed: isF5Needed(),
       hasTrapLock: Boolean(getActiveTrapLock()),
       lastAttemptId: getLastAttemptID(),
       returnUrl: getReturnUrl()
@@ -1540,7 +1613,6 @@
       releaseInstanceLock(TAB_ID);
       clearLastAttemptID();
       clearTrapLock();
-      clearF5Flag();
       clearReturnUrl();
       setStatus('idle', 'IDLE');
       return true;
@@ -3486,7 +3558,19 @@
       let sub = event.sub || '';
       let metaBadge = event.metaBadge || '';
 
-      if (event.action === 'applied' || tagType === 'apply') {
+      if (event.action === 'viewing') {
+        tag = 'VIEW';
+        tagType = 'scan';
+        msg = event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия');
+        sub = `Открытие карточки вакансии для просмотра и отклика`;
+        metaBadge = 'просмотр';
+      } else if (event.action === 'processing') {
+        tag = 'APPLY';
+        tagType = 'apply';
+        msg = event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия');
+        sub = `Подготовка к отклику на вакансию #${cVid || 'N/A'}`;
+        metaBadge = 'отклик';
+      } else if (event.action === 'applied' || tagType === 'apply') {
         tag = 'APPLY';
         tagType = 'apply';
         const emp = event.employer ? `${event.employer} • ` : '';
@@ -3710,10 +3794,7 @@
       }
 
       // Clear logs and Copy buttons
-      const resetBtn = this._shadow.querySelector('[data-action="clear-logs"]') || this._shadow.querySelector('[data-el="clear-logs-btn"]');
-      const copyBtn = this._shadow.querySelector('[data-action="copy-logs"]') || this._shadow.querySelector('[data-el="copy-logs-btn"]');
-      if (resetBtn) resetBtn.style.display = 'inline-flex';
-      if (copyBtn) copyBtn.style.display = 'inline-flex';
+      // Handled natively by panel visibility and .hha-btn-icon styles
     }
 
     _toggleLogDetail(logId, rowEl) {
@@ -3866,7 +3947,7 @@
               <div class="hha-panel" data-panel="logs">
                 <div class="hha-log-card">
                   <div class="hha-log-header">
-                    <span class="hha-log-header-title" data-el="log-status-text">События и отклики</span>
+                    <span class="hha-log-header-title">События и отклики</span>
                     <div class="hha-log-actions">
                       <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-clear-logs" data-action="clear-logs" data-el="clear-logs-btn" data-tooltip="Очистить логи">${ICONS.reset}</button>
                       <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-copy-log" data-action="copy-logs" data-el="copy-logs-btn" data-tooltip="Скопировать логи">${ICONS.copy}</button>
@@ -3973,7 +4054,6 @@
       }
 
       const useCoverCb = this._shadow.querySelector('[data-el="setting-use-cover"]');
-      const coverContainer = this._shadow.querySelector('[data-el="setting-cover-container"]');
       const coverTextarea = this._shadow.querySelector('[data-el="setting-cover-text"]');
       const coverCounter = this._shadow.querySelector('[data-el="setting-cover-counter"]');
 
@@ -4596,8 +4676,6 @@
       }
 
       const wasDragging = this._dragMoved;
-      const handleType = this._dragHandleType;
-
       this._isPointerDown = false;
       this._pointerId = null;
       this._dragHandleType = null;
@@ -4911,7 +4989,6 @@
             const rawVid = item.vid ? String(item.vid) : '';
             const cVid = cleanVid(rawVid);
             const targetUrl = toVacancyUrl(cVid, item.url);
-            const reasonText = formatQueueReason(item.reason || item.note);
 
             return `
               <div class="hha-log-item">
@@ -5047,7 +5124,6 @@
 
       // Cover Letter
       const useCoverCb = this._shadow.querySelector('[data-el="setting-use-cover"]');
-      const coverContainer = this._shadow.querySelector('[data-el="setting-cover-container"]');
       const coverTextarea = this._shadow.querySelector('[data-el="setting-cover-text"]');
       const coverCounter = this._shadow.querySelector('[data-el="setting-cover-counter"]');
 
