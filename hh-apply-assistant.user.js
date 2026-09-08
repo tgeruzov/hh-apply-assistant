@@ -1789,8 +1789,8 @@
 
     .hha-root {
       position: fixed;
-      left: var(--center-x, var(--hud-center-x, 0px));
-      bottom: var(--hud-bottom, 24px);
+      left: var(--center-x, 0px);
+      bottom: 24px;
       top: auto;
       display: flex;
       flex-direction: column-reverse;
@@ -1809,9 +1809,6 @@
       flex-direction: column-reverse;
     }
 
-    .hha-root.is-dragging {
-      transition: none;
-    }
 
     /* --- 1. Compact Pill (Glass Bevel Border 2px, Height: 36px) --- */
     .hha-pill {
@@ -1979,8 +1976,7 @@
         visibility 240ms;
     }
 
-    .hha-pill-queue-badge.is-visible,
-    .hha-pill-queue-badge.visible {
+    .hha-pill-queue-badge.is-visible {
       width: 28px;
       min-width: 0;
       padding: 0;
@@ -2050,34 +2046,28 @@
       transition: background-color 100ms ease, border-color 100ms ease;
     }
 
-    .hha-btn-quick.btn-start,
     .hha-btn-start {
       background: #dcfce7;
       color: #15803d;
       border: 1px solid #bbf7d0;
     }
 
-    .hha-btn-quick.btn-start:hover,
     .hha-btn-start:hover {
       background: #bbf7d0;
       border-color: #86efac;
     }
 
-    .hha-btn-quick.btn-stop,
     .hha-btn-stop {
       background: #fee2e2;
       color: #b91c1c;
       border: 1px solid #fecaca;
     }
 
-    .hha-btn-quick.btn-stop:hover,
     .hha-btn-stop:hover {
       background: #fecaca;
       border-color: #fca5a5;
     }
 
-    .hha-btn-quick.btn-stop:active,
-    .hha-btn-quick.btn-stop:focus-visible,
     .hha-btn-stop:active,
     .hha-btn-stop:focus-visible {
       background: #fecaca;
@@ -2162,8 +2152,6 @@
       transform: scale(0.96) translateY(-6px);
     }
 
-    .hha-flyout.is-animating,
-    .hha-root.is-animating .hha-flyout,
     .hha-root.is-animating .hha-panel,
     .hha-root:not(.is-expanded) .hha-panel {
       overflow: hidden;
@@ -2191,11 +2179,33 @@
       box-sizing: border-box;
     }
 
-    .hha-tab-count {
-      font-size: 10px;
-      font-weight: 600;
-      color: #ea580c;
-      margin-left: 2px;
+    /* Segmented Tab Badges */
+    .hha-tab-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 15px;
+      height: 15px;
+      padding: 0 4px;
+      border-radius: var(--hha-radius-full, 9999px);
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+      box-sizing: border-box;
+      margin-left: 3px;
+    }
+
+    .hha-tab-badge.is-queue {
+      background: #ffedd5;
+      color: #c2410c;
+      border: 1px solid #fed7aa;
+    }
+
+    .hha-tab-badge.is-error {
+      background: #fee2e2;
+      color: #b91c1c;
+      border: 1px solid #fca5a5;
+      animation: hhaBadgePop 180ms cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .hha-tab-btn {
@@ -2222,9 +2232,6 @@
       color: #0f172a;
     }
 
-    .hha-tab-btn:focus {
-      outline: none;
-    }
 
     .hha-pill-status-group:focus-visible,
     .hha-pill-queue-badge:focus-visible,
@@ -2235,9 +2242,7 @@
     .hha-btn-quick:focus-visible,
     .hha-queue-title-link:focus-visible,
     .hha-btn-icon:focus-visible,
-    .hha-log-item-delete:focus-visible,
-    .hha-cover-textarea:focus-visible,
-    .hha-textarea:focus-visible {
+    .hha-log-item-delete:focus-visible {
       outline: none;
       box-shadow: 0 0 0 2px #3b82f6;
     }
@@ -2505,24 +2510,9 @@
       flex: 1;
     }
 
-    .hha-log-tag {
-      padding: 1px 5px;
-      border-radius: var(--hha-radius-micro, 4px);
-      font-size: 10px;
-      font-weight: 600;
-      flex-shrink: 0;
-      line-height: 1.2;
-    }
-
-    .hha-log-tag.is-queue {
-      background: #ffedd5;
-      color: #c2410c;
-    }
-
     .hha-queue-title-link {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
       min-width: 0;
       flex: 1;
       color: #0f172a;
@@ -2542,19 +2532,6 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-    }
-
-    .hha-queue-ext-icon {
-      display: inline-flex;
-      align-items: center;
-      opacity: 0.35;
-      flex-shrink: 0;
-      transition: opacity 100ms ease;
-    }
-
-    .hha-queue-title-link:hover .hha-queue-ext-icon {
-      opacity: 1;
-      color: #2563eb;
     }
 
     .hha-log-item-right {
@@ -2586,25 +2563,6 @@
       background: #fee2e2;
     }
 
-    /* Segmented Tab Error Badge */
-    .hha-seg-badge-error {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 15px;
-      height: 15px;
-      padding: 0 4px;
-      border-radius: var(--hha-radius-full, 9999px);
-      background: #fee2e2;
-      color: #b91c1c;
-      border: 1px solid #fca5a5;
-      font-size: 9px;
-      font-weight: 700;
-      line-height: 1;
-      box-sizing: border-box;
-      margin-left: 2px;
-      animation: hhaPopIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
-    }
 
     /* DevTools Compact Row Stream */
     .hha-log-dev-row {
@@ -2625,7 +2583,6 @@
 
     .hha-log-dev-row.is-expanded {
       background: #f8fafc;
-      border-left: 2px solid #2563eb;
     }
 
     .hha-log-dev-main {
@@ -2716,38 +2673,6 @@
       text-overflow: ellipsis;
     }
 
-    .hha-log-dev-badge {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-      font-size: 9px;
-      font-weight: 600;
-      padding: 1px 4px;
-      border-radius: 3px;
-      background: #f1f5f9;
-      color: #64748b;
-      flex-shrink: 0;
-    }
-
-    .hha-log-dev-badge.badge-apply {
-      background: #ecfdf5;
-      color: #059669;
-    }
-
-    .hha-log-dev-badge.badge-queue {
-      background: #fffbeb;
-      color: #d97706;
-      border: 1px solid #fde68a;
-    }
-
-    .hha-log-dev-badge.badge-error {
-      background: #fef2f2;
-      color: #dc2626;
-    }
-
-    .hha-log-dev-badge.badge-dom_err {
-      background: #fef2f2;
-      color: #b91c1c;
-      border: 1px solid #fca5a5;
-    }
 
     .hha-log-dev-arrow {
       font-size: 10px;
@@ -2957,10 +2882,6 @@
 
     .hha-btn-clear-queue:disabled,
     .hha-btn-clear-queue[disabled] {
-      color: #64748b;
-      opacity: 0.35;
-      pointer-events: none;
-      cursor: default;
       display: none !important;
     }
 
@@ -3149,8 +3070,7 @@
       color: #0f172a;
     }
 
-    .hha-segmented-btn.is-active,
-    .hha-segmented-btn.active {
+    .hha-segmented-btn.is-active {
       background: #ffffff !important;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06) !important;
       color: #0f172a !important;
@@ -3165,12 +3085,6 @@
       flex-direction: column;
       margin-bottom: 0;
       overflow: hidden;
-      transition: border-color 140ms ease, box-shadow 140ms ease;
-    }
-
-    .hha-card-cover:focus-within {
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
     }
 
     .hha-switch-row {
@@ -3225,9 +3139,14 @@
       left: 0;
       right: 0;
       bottom: 0;
-      background-color: #cbd5e1;
+      background-color: #e2e8f0;
       border-radius: 9999px;
-      transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: inset 0 0 0 1px #cbd5e1;
+      transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .hha-switch-slider:hover {
+      box-shadow: inset 0 0 0 1px #94a3b8;
     }
 
     .hha-switch-slider::before {
@@ -3239,12 +3158,18 @@
       bottom: 2px;
       background-color: #ffffff;
       border-radius: 50%;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 0 1px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.16), 0 0 1px rgba(15, 23, 42, 0.1);
       transition: transform 200ms cubic-bezier(0.34, 1.3, 0.64, 1);
     }
 
     .hha-switch-input:checked + .hha-switch-slider {
-      background-color: #22c55e;
+      background-color: #bbf7d0;
+      box-shadow: inset 0 0 0 1px #86efac;
+    }
+
+    .hha-switch-input:checked + .hha-switch-slider:hover {
+      background-color: #a7f3d0;
+      box-shadow: inset 0 0 0 1px #4ade80;
     }
 
     .hha-switch-input:checked + .hha-switch-slider::before {
@@ -3252,7 +3177,7 @@
     }
 
     .hha-switch-input:focus-visible + .hha-switch-slider {
-      box-shadow: 0 0 0 2px #3b82f6;
+      box-shadow: 0 0 0 2px #86efac;
     }
 
     .hha-cover-container {
@@ -3293,14 +3218,6 @@
         color 180ms ease;
     }
 
-    .hha-cover-textarea:focus,
-    .hha-cover-textarea:focus-visible,
-    .hha-textarea:focus,
-    .hha-textarea:focus-visible {
-      outline: none;
-      border: none;
-      box-shadow: none !important;
-    }
 
     .hha-cover-textarea:disabled,
     .hha-cover-textarea.is-disabled,
@@ -3608,13 +3525,13 @@
         msg = event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия');
         const rReason = formatQueueReason(event.note || event.reason);
         sub = `Причина: ${rReason}`;
-        metaBadge = rReason ? rReason.toLowerCase() : '';
+        metaBadge = '';
       } else if (event.action === 'error' || tagType === 'error') {
         tag = event.tag || 'ERROR';
         tagType = 'error';
         msg = event.msg || event.reason || event.error || 'Сбой выполнения запроса';
         sub = event.sub || 'Ошибка API: требуется подтверждение или проверка суточных лимитов';
-        metaBadge = event.metaBadge || 'ERR';
+        metaBadge = '';
       } else if (event.action === 'scan' || tagType === 'scan') {
         tag = 'SCAN';
         tagType = 'scan';
@@ -3908,8 +3825,8 @@
             <!-- Segmented Control Tabs (3 columns) -->
             <div class="hha-tabs">
               <button type="button" class="hha-tab-btn active" data-action="switch-tab" data-tab="settings">Настройки</button>
-              <button type="button" class="hha-tab-btn" data-action="switch-tab" data-tab="queue"><span>Очередь</span> <span class="hha-tab-count" data-el="queue-tab-count" style="display: none;">(0)</span></button>
-              <button type="button" class="hha-tab-btn" data-action="switch-tab" data-tab="logs"><span>Журнал</span><span class="hha-seg-badge-error" data-el="log-error-badge" style="display: none;">0</span></button>
+              <button type="button" class="hha-tab-btn" data-action="switch-tab" data-tab="queue"><span>Очередь</span> <span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
+              <button type="button" class="hha-tab-btn" data-action="switch-tab" data-tab="logs"><span>Логи</span><span class="hha-tab-badge is-error" data-el="log-error-badge" style="display: none;">0</span></button>
             </div>
 
             <!-- Panels -->
@@ -3979,14 +3896,14 @@
                   <div class="hha-log-header">
                     <span class="hha-log-header-title" data-el="log-status-text">События и отклики</span>
                     <div class="hha-log-actions">
-                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-clear-logs" data-action="clear-logs" data-el="clear-logs-btn" data-tooltip="Очистить журнал">${ICONS.reset}</button>
-                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-copy-log" data-action="copy-logs" data-el="copy-logs-btn" data-tooltip="Скопировать журнал">${ICONS.copy}</button>
+                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-clear-logs" data-action="clear-logs" data-el="clear-logs-btn" data-tooltip="Очистить логи">${ICONS.reset}</button>
+                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-copy-log" data-action="copy-logs" data-el="copy-logs-btn" data-tooltip="Скопировать логи">${ICONS.copy}</button>
                     </div>
                   </div>
                   <div class="hha-log-stream" data-el="log-stream">
                     <div class="hha-log-empty">
                       <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
-                      <div class="hha-log-empty-text">Нет записей в журнале</div>
+                      <div class="hha-log-empty-text">Нет записей в логах</div>
                     </div>
                   </div>
                   <div class="hha-overlay-scrollbar" data-el="log-scrollbar">
@@ -4946,7 +4863,7 @@
           queueBadge.classList.toggle('is-wide', count >= 10);
           queueBadge.style.display = '';
           const wasVisible = queueBadge.classList.contains('is-visible');
-          queueBadge.classList.add('is-visible', 'visible');
+          queueBadge.classList.add('is-visible');
 
           if (countChanged && wasVisible) {
             queueBadge.classList.remove('is-popping');
@@ -4955,7 +4872,7 @@
           }
         } else {
           queueBadge.style.display = '';
-          queueBadge.classList.remove('is-visible', 'visible', 'is-popping', 'is-wide');
+          queueBadge.classList.remove('is-visible', 'is-popping', 'is-wide');
           if (this._badgeClearTimer) clearTimeout(this._badgeClearTimer);
           this._badgeClearTimer = setTimeout(() => {
             if (this._queue && this._queue.length === 0 && queueBadge) {
@@ -4980,8 +4897,8 @@
       const queueTabCount = this._shadow.querySelector('[data-el="queue-tab-count"]');
       if (queueTabCount) {
         if (count > 0) {
-          queueTabCount.textContent = `(${count})`;
-          queueTabCount.style.display = 'inline';
+          queueTabCount.textContent = String(count);
+          queueTabCount.style.display = 'inline-flex';
         } else {
           queueTabCount.textContent = '';
           queueTabCount.style.display = 'none';
@@ -5025,12 +4942,10 @@
             const reasonText = formatQueueReason(item.reason || item.note);
 
             return `
-              <div class="hha-log-item is-queue">
+              <div class="hha-log-item">
                 <div class="hha-log-item-left">
-                  <span class="hha-log-tag is-queue hha-reason-badge">${escapeHtml(reasonText)}</span>
                   <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-tooltip="${escapeHtml(item.title || 'Вакансия')}" onclick="event.stopPropagation();">
                     <span class="hha-queue-title-text">${escapeHtml(item.title || 'Вакансия')}</span>
-                    <span class="hha-queue-ext-icon">${ICONS.open}</span>
                   </a>
                 </div>
                 <div class="hha-log-item-right">
@@ -5062,7 +4977,6 @@
                   <span class="hha-log-dev-time">${escapeHtml(item.time)}</span>
                   <span class="hha-log-dev-tag tag-${escapeHtml(item.tagType)}">[${escapeHtml(item.tag)}]</span>
                   <span class="hha-log-dev-msg" title="${escapeHtml(item.msg)}">${escapeHtml(item.msg)}</span>
-                  ${item.metaBadge ? `<span class="hha-log-dev-badge badge-${escapeHtml(String(item.metaBadge).toLowerCase())} badge-${escapeHtml(item.tagType)}">${escapeHtml(item.metaBadge)}</span>` : ''}
                   <span class="hha-log-dev-arrow">▾</span>
                 </div>
                 <div class="hha-log-dev-details">
@@ -5127,7 +5041,7 @@
           logStream.innerHTML = `
             <div class="hha-log-empty">
               <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
-              <div class="hha-log-empty-text">Нет записей в журнале</div>
+              <div class="hha-log-empty-text">Нет записей в логах</div>
             </div>
           `;
         }
