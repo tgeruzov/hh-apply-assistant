@@ -284,6 +284,15 @@
     }
   }
 
+  function flushTelemetryBeforeNav() {
+    try {
+      const hudEl = globalThis.document?.querySelector('hha-hud');
+      if (hudEl && typeof hudEl._flushLogs === 'function') {
+        hudEl._flushLogs();
+      }
+    } catch (_) {}
+  }
+
   // --- 6. Configuration ---
   function normalizeConfig(raw) {
     const m = { ...DEFAULTS, ...(raw || {}) };
@@ -417,12 +426,34 @@
 
   // --- 9. State Accessors ---
   const TAB_ID = (() => {
-    let id = storage.sessionGet(KEYS.tabId);
-    if (!id) {
-      id = Math.random().toString(36).slice(2, 9);
-      storage.sessionSet(KEYS.tabId, id);
+    const win = globalThis.window;
+    const sessionTabId = storage.sessionGet(KEYS.tabId);
+    const winName = (win && typeof win.name === 'string') ? win.name : '';
+
+    // Check if this window was navigated or refreshed in the SAME tab
+    // In browsers, window.name persists across navigations in the same tab,
+    // but is empty or unlinked when a new tab is cloned via target="_blank" or window.open.
+    const isSameTab = Boolean(sessionTabId && winName && winName === sessionTabId && winName.startsWith('hha_'));
+
+    if (isSameTab) {
+      return sessionTabId;
     }
-    return id;
+
+    // New or cloned tab: generate a fresh unique Tab ID
+    const newTabId = 'hha_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 9);
+    try {
+      if (win) win.name = newTabId;
+    } catch (_) {}
+    storage.sessionSet(KEYS.tabId, newTabId);
+
+    // If this tab inherited cloned sessionStorage from a parent tab, disarm the cloned state
+    if (sessionTabId && sessionTabId !== newTabId) {
+      storage.sessionRemove(KEYS.isRunning);
+      storage.sessionRemove(KEYS.trapLock);
+      storage.sessionRemove(KEYS.lastAttempt);
+    }
+
+    return newTabId;
   })();
 
   const isRunning = () => storage.sessionGet(KEYS.isRunning) === '1';
@@ -853,7 +884,11 @@
       const clone = wrapper ? q('pre', wrapper) : null;
       if (clone) clone.textContent = value || '\u200B';
 
-      el.dispatchEvent(new Event('input', { bubbles: true, composed: true, cancelable: true }));
+      try {
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, cancelable: true, data: value, inputType: 'insertText' }));
+      } catch (_) {
+        el.dispatchEvent(new Event('input', { bubbles: true, composed: true, cancelable: true }));
+      }
       el.dispatchEvent(new Event('change', { bubbles: true, composed: true, cancelable: true }));
       if (typeof el.blur === 'function') el.blur();
     } catch (_) {
@@ -864,6 +899,9 @@
   // --- Direct element click ---
   function clickElement(el) {
     if (!el || stopSignal) return false;
+    if (el.tagName === 'A' && el.target && el.target.toLowerCase() === '_blank') {
+      try { el.target = '_self'; } catch (_) {}
+    }
     try { el.scrollIntoView?.({ block: 'center', behavior: 'auto' }); } catch (_) {}
     try { el.focus?.(); } catch (_) {}
     if (typeof el.click === 'function') {
@@ -991,7 +1029,7 @@
   function isResponseConfirmed({ allowDocumentStrongText = false } = {}) {
     if (hasExactResponseConfirmation() || hasResponseTextConfirmation()) return true;
     const doc = globalThis.document;
-    return Boolean(allowDocumentStrongText && doc && /(?:отклик отправлен|вы уже откликались|вы откликнулись)/i.test((doc.body?.innerText || doc.body?.textContent || '').slice(0, 4000)));
+    return Boolean((allowDocumentStrongText || Page.isVacancy()) && doc && /(?:отклик отправлен|вы уже откликались|вы откликнулись|резюме доставлено)/i.test((doc.body?.innerText || doc.body?.textContent || '').slice(0, 4000)));
   }
 
   function detectModalBlockReason() {
@@ -1089,8 +1127,9 @@
   function saveCurrentForManual(vid, note = '', runId = currentRunId) {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
     let url = globalThis.location?.href || '';
+    const origin = globalThis.location?.origin || 'https://hh.ru';
     if ((!url || url.includes('/search/vacancy')) && vid && String(vid).startsWith('v_')) {
-      url = `https://hh.ru/vacancy/${String(vid).slice(2)}`;
+      url = `${origin}/vacancy/${String(vid).slice(2)}`;
     }
     const entry = {
       vid: vid || ('v_' + Math.random().toString(36).slice(2, 10)),
@@ -1115,8 +1154,10 @@
     if (markProcessed && vid) markVacancyProcessed(vid, runId);
     clearLastAttemptID();
     const rawReturn = getReturnUrl();
-    const returnUrl = (rawReturn && (rawReturn.includes('/search/vacancy') || rawReturn.startsWith('http') || rawReturn.startsWith('/'))) ? rawReturn : '/search/vacancy';
+    const origin = globalThis.location?.origin || 'https://hh.ru';
+    const returnUrl = (rawReturn && (rawReturn.includes('/search/vacancy') || rawReturn.startsWith('http') || rawReturn.startsWith('/'))) ? rawReturn : `${origin}/search/vacancy`;
     log(`Возврат к поисковой выдаче: ${returnUrl}`, false, 'RETURN_TO_LIST', { vid, returnUrl });
+    flushTelemetryBeforeNav();
     const loc = globalThis.location;
     if (loc && !Page.isSearchList() && loc.href !== returnUrl) {
       try { loc.assign(returnUrl); } catch (_) { loc.href = returnUrl; }
@@ -1140,9 +1181,28 @@
       log('Кнопка отправки формы сопроводительного письма не найдена', true, 'SUBMIT_BTN_NOT_FOUND');
       return false;
     }
-    const submitQa = submit.getAttribute?.('data-qa') || 'button[submit]';
+
+    if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
+      log('Кнопка отправки письма отключена (disabled), ожидаем активации...', false, 'SUBMIT_DISABLED_WAIT');
+      await waitForCondition(() => !submit.disabled && submit.getAttribute?.('aria-disabled') !== 'true', 1500, activeAbortController?.signal);
+    }
+
+    const submitQa = submit.getAttribute?.('data-qa') || submit.className || 'button[submit]';
     log(`Нажатие кнопки отправки письма (${submitQa})...`, false, 'SUBMIT_LETTER_CLICK', { selector: submitQa });
-    await clickElement(submit);
+
+    const formId = submit.getAttribute?.('form');
+    const form = (formId && globalThis.document?.getElementById(formId)) || submit.form || submit.closest?.('form');
+    let submitted = false;
+    if (form && typeof form.requestSubmit === 'function') {
+      try {
+        form.requestSubmit(submit);
+        submitted = true;
+      } catch (_) {}
+    }
+    if (!submitted) {
+      await clickElement(submit);
+    }
+
     await actionPause();
     return isRunCurrent(runId);
   }
@@ -1184,7 +1244,12 @@
     if (!isRunCurrent(runId)) return 'STOPPED';
 
     log('Ожидание закрытия шторки письма и подтверждения доставки...', false, 'WAIT_COVER_DELIVERED');
-    await waitForCondition(() => !q('[data-qa="bottom-sheet-content"], textarea[data-qa="vacancy-response-popup-form-letter-input"]') || isResponseConfirmed(), 5000, activeAbortController?.signal);
+    await waitForCondition(() => {
+      const sheet = q('[data-qa="bottom-sheet-content"]');
+      const isSheetClosed = !sheet || !isVisible(sheet);
+      return isSheetClosed || isResponseConfirmed({ allowDocumentStrongText: true });
+    }, 5000, activeAbortController?.signal);
+
     log('Сопроводительное письмо успешно прикреплено и отправлено!', false, 'COVER_ATTACH_SUCCESS');
     return isRunCurrent(runId) ? 'OK' : 'STOPPED';
   }
@@ -1406,6 +1471,11 @@
       if (['OK', 'SKIP', 'TEST_REQUIRED', 'RESUME_HIDDEN'].includes(res)) {
         await actionPause();
         returnToList(vid, { markProcessed: true, runId });
+      } else if (res === 'FAIL') {
+        log(`Не удалось завершить отклик на вакансию #${vid} (FAIL), сохраняем в ручную очередь и возвращаемся к поиску...`, true, 'VACANCY_FAILED', { vid });
+        if (vid) saveCurrentForManual(vid, 'apply_failed', runId);
+        await actionPause();
+        returnToList(vid, { markProcessed: true, runId });
       }
       return res;
     } catch (e) {
@@ -1503,7 +1573,14 @@
     if (!acquired) {
       if (runId === currentRunId) {
         const isBlocked = storage.isLocalBlocked();
-        terminateRun(isBlocked ? 'STORAGE_BLOCKED' : 'TAB_BUSY', isBlocked ? 'Storage access is blocked.' : 'Another tab is active.', {}, true);
+        currentRunId++;
+        stopSignal = true;
+        isLoopActive = false;
+        setRunning(false);
+        setStatus('idle', isBlocked ? 'STORAGE_BLOCKED' : 'TAB_BUSY', {
+          message: isBlocked ? 'Доступ к хранилищу заблокирован.' : 'Другая вкладка уже активна. Остановите её перед запуском здесь.'
+        });
+        log(isBlocked ? 'Доступ к хранилищу заблокирован.' : 'Другая вкладка уже выполняет отклики. Запуск в текущей вкладке отменен.', true, isBlocked ? 'STORAGE_BLOCKED' : 'TAB_BUSY');
       }
       return;
     }
@@ -1546,6 +1623,11 @@
         }
         isLoopActive = false;
         setStatus('running', res === 'OK' ? 'RETURNING_TO_LIST' : 'WAITING_TO_RETURN');
+        if (res !== 'OK' && res !== 'RESPONSE_PAGE' && !Page.isResponseForm()) {
+          resumeTimer = setTimeout(() => {
+            if (isRunning()) returnToList(vid || getLastAttemptID(), { markProcessed: true, runId });
+          }, 2500);
+        }
         return;
       }
 
@@ -1570,6 +1652,7 @@
             const href = nextBtn.getAttribute?.('href') || nextBtn.href;
             if (href && globalThis.location) {
               setReturnUrl(href);
+              flushTelemetryBeforeNav();
               try { globalThis.location.assign(href); } catch (_) { globalThis.location.href = href; }
             } else {
               clickElement(nextBtn);
@@ -1596,6 +1679,7 @@
           const href = nextBtn.getAttribute?.('href') || nextBtn.href;
           if (href && globalThis.location) {
             setReturnUrl(href);
+            flushTelemetryBeforeNav();
             try { globalThis.location.assign(href); } catch (_) { globalThis.location.href = href; }
           } else {
             clickElement(nextBtn);
@@ -1612,7 +1696,8 @@
         const link = card ? query('vacancyLink', card) : null;
         const vid = getStableVacancyId(btn);
         const title = card ? readSerpCardTitle(link) : '';
-        const targetUrl = link?.href || (vid && String(vid).startsWith('v_') ? `https://hh.ru/vacancy/${String(vid).slice(2)}` : null);
+        const origin = globalThis.location?.origin || 'https://hh.ru';
+        const targetUrl = link?.href ? (new URL(link.href, origin)).href : (vid && String(vid).startsWith('v_') ? `${origin}/vacancy/${String(vid).slice(2)}` : null);
 
         if (!targetUrl) {
           log(`Не удалось определить URL для вакансии #${vid}`, true, 'VACANCY_URL_NOT_FOUND', { vid });
@@ -1627,6 +1712,7 @@
         await vacancyPause();
         if (stopSignal || runId !== currentRunId) return;
 
+        flushTelemetryBeforeNav();
         try {
           globalThis.location.assign(targetUrl);
         } catch (_) {
@@ -1836,11 +1922,19 @@
     });
 
     if (isRunning()) {
-      setStatus('running', 'AUTO_STARTING');
-      resumeTimer = setTimeout(() => {
-        resumeTimer = null;
-        if (isRunning()) startLoop();
-      }, 1500);
+      const lock = readInstanceLock();
+      const now = Date.now();
+      if (lock && isLiveLock(lock, now) && lock.tabId !== TAB_ID) {
+        setRunning(false);
+        setStatus('idle', 'TAB_BUSY', { message: 'Другая вкладка уже активна' });
+        log('Обнаружена активная сессия в другой вкладке. Авто-старт в текущей вкладке отменен.', false, 'TAB_BUSY');
+      } else {
+        setStatus('running', 'AUTO_STARTING');
+        resumeTimer = setTimeout(() => {
+          resumeTimer = null;
+          if (isRunning()) startLoop();
+        }, 1500);
+      }
     }
     if (!Page.isResponseForm()) clearTrapLock();
 
@@ -1879,7 +1973,11 @@
       try { watchdogTick(); } catch (_) {}
     });
     addGlobalListener(win, 'beforeunload', () => {
+      flushTelemetryBeforeNav();
       if (!isRunning()) releaseInstanceLock(TAB_ID);
+    });
+    addGlobalListener(win, 'pagehide', () => {
+      flushTelemetryBeforeNav();
     });
   }
 
@@ -1970,7 +2068,8 @@
   function toVacancyUrl(vid, url) {
     if (url) return url;
     const clean = cleanVid(vid);
-    return clean ? `https://hh.ru/vacancy/${clean}` : '';
+    const origin = (typeof globalThis !== 'undefined' && globalThis.location?.origin) || 'https://hh.ru';
+    return clean ? `${origin}/vacancy/${clean}` : '';
   }
   // --- 2. SVG Icons ---
 
@@ -3573,6 +3672,9 @@
 
       if (typeof window !== 'undefined') {
         window.addEventListener('resize', this._onResize, { passive: true });
+        this._onWindowUnload = () => this._flushLogs();
+        window.addEventListener('beforeunload', this._onWindowUnload);
+        window.addEventListener('pagehide', this._onWindowUnload);
       }
 
       // Auto-bind to global assistant if present
@@ -3582,26 +3684,34 @@
       }
     }
 
+    _flushLogs() {
+      if (this._persistLogsTimer) {
+        clearTimeout(this._persistLogsTimer);
+        this._persistLogsTimer = null;
+      }
+      try {
+        if (this._liveFeed && this._liveFeed.length > 0) {
+          storage.localSet(KEYS.logHistory, JSON.stringify(this._liveFeed.slice(0, 2000)));
+        }
+      } catch (_) {}
+    }
+
     disconnectedCallback() {
       this._domEventsBound = false;
       this.unbindAssistant();
       if (typeof window !== 'undefined') {
         window.removeEventListener('resize', this._onResize);
+        if (this._onWindowUnload) {
+          window.removeEventListener('beforeunload', this._onWindowUnload);
+          window.removeEventListener('pagehide', this._onWindowUnload);
+        }
       }
       if (this._onDocClick && typeof document !== 'undefined') {
         document.removeEventListener('click', this._onDocClick);
       }
       if (this._coverDebounceTimer) clearTimeout(this._coverDebounceTimer);
       if (this._animTimer) clearTimeout(this._animTimer);
-      if (this._persistLogsTimer) {
-        clearTimeout(this._persistLogsTimer);
-        this._persistLogsTimer = null;
-        try {
-          if (this._liveFeed) {
-            storage.localSet(KEYS.logHistory, JSON.stringify(this._liveFeed.slice(0, 2000)));
-          }
-        } catch (_) {}
-      }
+      this._flushLogs();
     }
 
     // --- Public API ---
@@ -4085,7 +4195,7 @@
       }
 
       // Log header title with rolling count
-      const logHeaderTitle = this._shadow.querySelector('.hha-log-header-title');
+      const logHeaderTitle = this._shadow.querySelector('[data-el="log-header-title"]') || this._shadow.querySelector('[data-panel="logs"] .hha-log-header-title');
       if (logHeaderTitle) {
         const logCount = this._liveFeed ? this._liveFeed.length : 0;
         logHeaderTitle.textContent = logCount > 0 ? `События и отклики (${logCount} / 2000)` : 'События и отклики';
@@ -4242,7 +4352,7 @@
               <div class="hha-panel" data-panel="logs">
                 <div class="hha-log-card">
                   <div class="hha-log-header">
-                    <span class="hha-log-header-title">События и отклики</span>
+                    <span class="hha-log-header-title" data-el="log-header-title">События и отклики</span>
                     <div class="hha-log-actions">
                       <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-clear-logs" data-action="clear-logs" data-el="clear-logs-btn" data-tooltip="Очистить логи">${ICONS.reset}</button>
                       <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-copy-log" data-action="copy-logs" data-el="copy-logs-btn" data-tooltip="Скопировать логи">${ICONS.copy}</button>
