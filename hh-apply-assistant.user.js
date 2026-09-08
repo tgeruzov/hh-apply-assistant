@@ -35,7 +35,7 @@
     attachCoverBtn: '[data-qa="responded-success-attach-cover-letter"], button[data-qa="responded-success-attach-cover-letter"]',
     attachCoverInModal: '[data-qa="responded-success-attach-cover-letter"], [data-qa="add-cover-letter"], button[data-qa="add-cover-letter"], [data-qa="vacancy-response-letter-toggle"]',
     letterTextarea: 'textarea[data-qa="vacancy-response-popup-form-letter-input"], textarea[name="text"], textarea[name="coverLetter"]',
-    letterSubmit: 'button[data-qa="vacancy-response-letter-submit"], [data-qa="vacancy-response-letter-submit"], button[data-qa="vacancy-response-submit-popup"]',
+    letterSubmit: 'button[data-qa="vacancy-response-letter-submit"], [data-qa="vacancy-response-letter-submit"], button[data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit"], button[data-qa*="response-submit" i], [data-qa*="response-submit" i]',
     responseChat: '[data-qa="vacancy-response-link-view-topic"]',
     nativeWrapper: '[data-qa="textarea-native-wrapper"]',
     relocationBtn: '[data-qa="relocation-warning-confirm"]',
@@ -788,8 +788,9 @@
     attachCoverBtn: coverBtnHeuristic,
     attachCoverInModal: coverBtnHeuristic,
     letterSubmit: (r) => {
-      const el = findPatternElement(r, 'button, input[type="submit"]', /^(отправить|сохранить|отправить отклик|send|submit)$/i, 50)
-        || findPatternElement(r, 'button, input[type="submit"]', /отправить|сохранить|send|submit/i, 50);
+      const el = findPatternElement(r, 'button, [role="button"], input[type="submit"]', /^(отправить|сохранить|отправить отклик|откликнуться|продолжить|выбрать|send|submit|apply)$/i, 50)
+        || findPatternElement(r, 'button, [role="button"], input[type="submit"]', /отправить|сохранить|откликнуться|send|submit|apply/i, 50)
+        || q('button[type="submit"], [data-qa*="response-submit" i], [data-qa="vacancy-response-submit"]', r);
       if (el && !el.closest?.('[data-qa*="vacancy-response-link"]')) return el;
       return null;
     },
@@ -963,11 +964,39 @@
     try { el.focus?.(); } catch (_) {}
 
     const win = globalThis.window || undefined;
-    const mouseOpts = { bubbles: true, cancelable: true, composed: true, view: win };
-    try { el.dispatchEvent(new PointerEvent('pointerdown', mouseOpts)); } catch (_) {}
-    try { el.dispatchEvent(new MouseEvent('mousedown', mouseOpts)); } catch (_) {}
-    try { el.dispatchEvent(new PointerEvent('pointerup', mouseOpts)); } catch (_) {}
-    try { el.dispatchEvent(new MouseEvent('mouseup', mouseOpts)); } catch (_) {}
+    const downOpts = { bubbles: true, cancelable: true, composed: true, view: win, button: 0, buttons: 1 };
+    const upOpts = { bubbles: true, cancelable: true, composed: true, view: win, button: 0, buttons: 0 };
+    const pointerDownOpts = { ...downOpts, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+    const pointerUpOpts = { ...upOpts, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+
+    const innerTarget = el.querySelector?.('span, [class*="label" i], [class*="text" i], [class*="content" i]');
+    if (innerTarget && innerTarget !== el) {
+      if (typeof PointerEvent !== 'undefined') {
+        try { innerTarget.dispatchEvent(new PointerEvent('pointerdown', pointerDownOpts)); } catch (_) {}
+      }
+      if (typeof MouseEvent !== 'undefined') {
+        try { innerTarget.dispatchEvent(new MouseEvent('mousedown', downOpts)); } catch (_) {}
+      }
+      if (typeof PointerEvent !== 'undefined') {
+        try { innerTarget.dispatchEvent(new PointerEvent('pointerup', pointerUpOpts)); } catch (_) {}
+      }
+      if (typeof MouseEvent !== 'undefined') {
+        try { innerTarget.dispatchEvent(new MouseEvent('mouseup', upOpts)); } catch (_) {}
+      }
+    }
+
+    if (typeof PointerEvent !== 'undefined') {
+      try { el.dispatchEvent(new PointerEvent('pointerdown', pointerDownOpts)); } catch (_) {}
+    }
+    if (typeof MouseEvent !== 'undefined') {
+      try { el.dispatchEvent(new MouseEvent('mousedown', downOpts)); } catch (_) {}
+    }
+    if (typeof PointerEvent !== 'undefined') {
+      try { el.dispatchEvent(new PointerEvent('pointerup', pointerUpOpts)); } catch (_) {}
+    }
+    if (typeof MouseEvent !== 'undefined') {
+      try { el.dispatchEvent(new MouseEvent('mouseup', upOpts)); } catch (_) {}
+    }
 
     let clickDispatched = false;
     if (typeof el.click === 'function') {
@@ -976,8 +1005,8 @@
         clickDispatched = true;
       } catch (_) {}
     }
-    if (!clickDispatched) {
-      clickDispatched = Boolean(el.dispatchEvent(new MouseEvent('click', mouseOpts)));
+    if (!clickDispatched && typeof MouseEvent !== 'undefined') {
+      clickDispatched = Boolean(el.dispatchEvent(new MouseEvent('click', upOpts)));
     }
     return clickDispatched;
   }
@@ -1096,7 +1125,13 @@
 
   const pageLooksLikeTest = () => {
     const doc = globalThis.document;
-    return Boolean(doc && /(?:тестирован|тест|вопрос|анкет|опрос|задани|questionnaire|test|assessment)/i.test(((doc.body || doc.documentElement)?.textContent || '').slice(0, 4000)));
+    if (!doc) return false;
+    if (q('[data-qa*="question" i], [data-qa*="test-task" i], [data-qa*="questionnaire" i], [class*="questionnaire" i], [class*="response-test" i]')) {
+      return true;
+    }
+    const form = q('[data-qa*="response-form" i], [data-qa*="vacancy-response" i], form');
+    const text = ((form || doc.body || doc.documentElement)?.textContent || '').slice(0, 4000);
+    return /(?:необходимо\s+пройти\s+тест|ответьте\s+на\s+(?:следующие\s+)?вопрос|тестовое\s+задание\s*работодателя|анкета\s+работодателя|пройти\s+опрос)/i.test(text);
   };
 
   const detectAlreadyApplied = () => {
@@ -1107,16 +1142,19 @@
     return /(?:вы уже откликались|отклик уже отправлен|already applied)/i.test(bodyText);
   };
 
-  const getResponseDetectionScope = () => q('[data-qa*="modal" i], [class*="modal" i], [role="dialog"]') || globalThis.document?.body || globalThis.document?.documentElement;
+  const getResponseDetectionScope = () => q('[data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]') || globalThis.document?.body || globalThis.document?.documentElement;
   const hasReliableRejectWarning = () => Boolean(query('rejectWarning') && isVisible(query('rejectWarning')));
   const hasResponseTextConfirmation = (root) => /(?:отклик отправлен|вы откликнулись|резюме доставлено|резюме отправлено|response sent|applied successfully)/i.test(((root || getResponseDetectionScope())?.textContent || '').slice(0, 4000));
   const hasExactResponseConfirmation = (root) => {
     const scope = root || getResponseDetectionScope();
-    return Boolean(scope && (query('responseChat', scope) || (!config.useCover && query('attachCoverBtn', scope)) || q('[data-qa="vacancy-response-popup-close"]', scope)));
+    return Boolean(scope && (query('responseChat', scope) || (!config.useCover && query('attachCoverBtn', scope))));
   };
 
   function isResponseConfirmed({ allowDocumentStrongText = false } = {}) {
     if (hasExactResponseConfirmation() || hasResponseTextConfirmation()) return true;
+    const loc = globalThis.location;
+    if (loc && (/\/success/i.test(loc.pathname) || /[?&]success\b/i.test(loc.search))) return true;
+    if (detectAlreadyApplied()) return true;
     const doc = globalThis.document;
     return Boolean((allowDocumentStrongText || Page.isVacancy()) && doc && /(?:отклик отправлен|вы уже откликались|вы откликнулись|резюме доставлено)/i.test((doc.body?.innerText || doc.body?.textContent || '').slice(0, 4000)));
   }
@@ -1147,7 +1185,7 @@
   }
 
   function detectModalBlockReason(modalScope = null) {
-    const modal = modalScope || qa('[data-qa*="modal" i], [class*="modal" i], [role="dialog"]').find(m => isVisible(m) && !isReviewOrFeedbackElement(m)) || null;
+    const modal = modalScope || qa('[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]').find(m => isVisible(m) && !isReviewOrFeedbackElement(m)) || null;
     if (!modal) return null;
     const text = (modal.textContent || modal.innerText || '').slice(0, 3000);
     if (/резюме\s*скрыто|resume\s*is\s*hidden/i.test(text)) return 'RESUME_HIDDEN';
@@ -1199,8 +1237,8 @@
     );
     const hasResponseSubmit = Boolean(
       query('letterSubmit', root) ||
-      q('button[data-qa*="submit" i], button[type="submit"], [data-qa*="response-submit" i], [data-qa="vacancy-response-submit-popup"]', root) ||
-      findPatternElement(root, 'button, [role="button"]', /^(?:откликнуться|выбрать|продолжить|отправить(?:\s*отклик)?)$/i, 35)
+      q('button[data-qa*="submit" i], button[type="submit"], [data-qa*="response-submit" i], [data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit"]', root) ||
+      findPatternElement(root, 'button, [role="button"], a, input[type="submit"]', /^(?:откликнуться|выбрать|продолжить|отправить(?:\s*отклик)?)$/i, 35)
     );
 
     if (query('letterTextarea', root) || query('attachCoverInModal', root) || query('letterSubmit', root) || q('[data-qa="vacancy-response-popup-form"]', root) || (isResumeModal && hasResponseSubmit) || isResumeModal) {
@@ -1223,7 +1261,7 @@
     }
 
     // 3. Modals and bottom sheets (iterate through all visible dialogs)
-    const modals = qa('[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [role="dialog"]');
+    const modals = qa('[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]');
     for (const modal of modals) {
       if (isVisible(modal) && !isReviewOrFeedbackElement(modal)) {
         const outcome = detectResponseOutcomeInRoot(modal, true);
@@ -1314,8 +1352,8 @@
       if (!isRunCurrent(runId)) return false;
     }
     const submit = query('letterSubmit', scope)
-      || q('button[data-qa*="submit" i], button[type="submit"], [data-qa*="response-submit" i], [data-qa="vacancy-response-submit-popup"]', scope)
-      || findPatternElement(scope, 'button, [role="button"]', /^(?:откликнуться|отправить(?:\s*отклик)?|продолжить|сохранить)$/i, 40);
+      || q('button[data-qa*="submit" i], button[type="submit"], [data-qa*="response-submit" i], [data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit"]', scope)
+      || findPatternElement(scope, 'button, [role="button"], a, input[type="submit"]', /^(?:откликнуться|отправить(?:\s*отклик)?|продолжить|сохранить|выбрать|send|submit|apply)$/i, 40);
     if (!submit) {
       log('Кнопка отправки формы сопроводительного письма не найдена', true, 'SUBMIT_BTN_NOT_FOUND');
       return false;
@@ -1331,16 +1369,11 @@
 
     const formId = submit.getAttribute?.('form');
     const form = (formId && globalThis.document?.getElementById(formId)) || submit.form || submit.closest?.('form');
-    let submitted = false;
+    await clickElement(submit);
     if (form && typeof form.requestSubmit === 'function') {
       try {
         form.requestSubmit(submit);
-        submitted = true;
       } catch (_) {}
-    }
-    if (!submitted) {
-      await clickElement(submit);
-      submitted = true;
     }
 
     await actionPause();
@@ -1467,7 +1500,7 @@
     }
 
     if (outcome === 'MODAL_OPEN') {
-      const modals = qa('[data-qa*="modal" i], [class*="modal" i], [role="dialog"]');
+      const modals = qa('[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]');
       const modal = modals.find(m => isVisible(m) && !isReviewOrFeedbackElement(m)) || modals[0] || null;
       const res = await handleScenarioB(modal, runId);
       if (res === 'OK' && vid) {
@@ -1725,16 +1758,60 @@
   async function submitResponsePage(vid, runId = currentRunId) {
     if (!isRunCurrent(runId)) return;
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
-    log('Handling dedicated vacancy response page', false, 'RESPONSE_PAGE');
+    log('Handling dedicated vacancy response page', false, 'RESPONSE_PAGE', { vid, url: globalThis.location?.href });
     setStatus('running', 'SUBMITTING_RESPONSE_PAGE');
     handlingResponsePage = true;
     try {
       if (pageLooksLikeTest()) {
-        log('Test or questionnaire detected on response page. Routing to manual queue.', false, 'QUESTIONS_DETECTED');
+        log('Обнаружен тест или анкета на странице отклика. Перенаправляем в ручную очередь.', false, 'QUESTIONS_DETECTED', { vid });
         saveCurrentForManual(vid, 'test-questionnaire', runId);
         return returnToList(vid, { markProcessed: true, runId });
       }
-      const submitBtn = await waitForCondition(() => query('letterSubmit'), 4000, activeAbortController?.signal);
+
+      // Resume selection support (for multi-resume profiles)
+      const radios = qa('input[type="radio"][name*="resume" i], [data-qa*="resume" i] input[type="radio"], input[type="radio"]');
+      if (radios.length > 0) {
+        const isChecked = radios.some(r => r.checked || r.getAttribute('aria-checked') === 'true');
+        if (!isChecked) {
+          log(`На странице отклика обнаружен выбор резюме (${radios.length} вариантов). Выбираем первое доступное...`, false, 'RESUME_SELECT', { vid, optionsCount: radios.length });
+          const firstRadio = radios[0];
+          const clickable = firstRadio.closest?.('label') || firstRadio;
+          await clickElement(clickable);
+          await actionPause();
+          if (!isRunCurrent(runId)) return;
+        } else {
+          log('На странице отклика резюме уже выбрано по умолчанию', false, 'RESUME_ALREADY_SELECTED', { vid });
+        }
+      } else {
+        const resumeCards = qa('[data-qa*="resume-item" i], [data-qa*="resume-card" i], [class*="resume-item" i]');
+        if (resumeCards.length > 0) {
+          const isSelected = resumeCards.some(c => c.getAttribute('aria-selected') === 'true' || /selected|active/i.test(c.className || ''));
+          if (!isSelected) {
+            log(`На странице отклика обнаружены карточки резюме (${resumeCards.length}). Выбираем первое доступное...`, false, 'RESUME_CARD_SELECT', { vid, cardsCount: resumeCards.length });
+            await clickElement(resumeCards[0]);
+            await actionPause();
+            if (!isRunCurrent(runId)) return;
+          }
+        }
+      }
+
+      // Cover letter toggle support
+      const coverToggle = query('attachCoverInModal')
+        || findPatternElement(globalThis.document?.body, 'button, [role="button"], a', /добавить\s+сопроводительное|написать\s+письмо/i, 35);
+      if (coverToggle && config.useCover) {
+        log('Нажатие на переключатель сопроводительного письма...', false, 'COVER_TOGGLE_CLICK', { vid });
+        await clickElement(coverToggle);
+        await actionPause();
+        if (!isRunCurrent(runId)) return;
+      }
+
+      const submitBtn = await waitForCondition(
+        () => query('letterSubmit')
+          || q('button[data-qa*="submit" i], button[type="submit"], [data-qa*="response-submit" i], [data-qa="vacancy-response-submit"]'),
+        4000,
+        activeAbortController?.signal,
+        `поиск кнопки отправки отклика #${vid}`
+      );
       if (!isRunCurrent(runId)) return;
       if (!submitBtn) {
         notifySelectorFailure('letterSubmit', globalThis.document?.body);
@@ -1744,16 +1821,21 @@
       const submitted = await submitCoverLetterForm(null, runId);
       if (!isRunCurrent(runId)) return;
       if (!submitted) {
-        log('Failed submitting cover letter form on response page', true, 'SUBMIT_FAILED');
+        log('Не удалось нажать кнопку отправки формы отклика', true, 'SUBMIT_FAILED', { vid });
         saveCurrentForManual(vid, 'submit-form-failed', runId);
         return returnToList(vid, { markProcessed: true, runId });
       }
-      const confirmed = await waitForCondition(() => isResponseConfirmed({ allowDocumentStrongText: true }), 6000, activeAbortController?.signal);
-      log(confirmed ? 'Application confirmed on response page' : 'Could not confirm response submission', !confirmed, confirmed ? 'APPLICATION_CONFIRMED' : 'SUBMIT_UNCONFIRMED');
+      const confirmed = await waitForCondition(
+        () => isResponseConfirmed({ allowDocumentStrongText: true }),
+        6000,
+        activeAbortController?.signal,
+        `подтверждение отправки отклика #${vid}`
+      );
+      log(confirmed ? `Отклик подтвержден на странице вакансии #${vid}` : `Не удалось подтвердить отправку отклика #${vid}`, !confirmed, confirmed ? 'APPLICATION_CONFIRMED' : 'SUBMIT_UNCONFIRMED', { vid });
       if (confirmed) commitSuccess(vid, runId); else saveCurrentForManual(vid, 'unconfirmed', runId);
       returnToList(vid, { markProcessed: true, runId });
     } catch (e) {
-      log(`Error handling response page: ${(e && e.message) || e}`, true, 'RESPONSE_PAGE_ERROR');
+      log(`Ошибка при обработке страницы отклика #${vid}: ${(e && e.message) || e}`, true, 'RESPONSE_PAGE_ERROR', { vid, error: String(e) });
       if (vid) saveCurrentForManual(vid, 'response-page-error', runId);
       returnToList(vid, { markProcessed: true, runId });
     } finally {
@@ -1835,6 +1917,7 @@
       if (initialSent >= config.limit) return finalizeRun(runId, 'done', `Application limit reached: ${config.limit}`);
 
       if (Page.isResponseForm()) {
+        if (handlingResponsePage) return;
         const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href) && ('v_' + getVacancyIDFromHref(globalThis.location.href)));
         await submitResponsePage(vid, runId);
         return;
@@ -4284,8 +4367,14 @@
         if (ctx.result !== undefined) parts.push(`Результат: ${ctx.result}`);
         if (ctx.reason !== undefined) parts.push(`Причина: ${ctx.reason}`);
         if (ctx.selector !== undefined) parts.push(`Селектор: ${ctx.selector}`);
-        if (ctx.elapsedMs !== undefined) parts.push(`Прошло: ${(ctx.elapsedMs / 1000).toFixed(1)}с`);
+        if (ctx.qa !== undefined) parts.push(`data-qa: ${ctx.qa}`);
+        if (ctx.tag !== undefined) parts.push(`<${ctx.tag}>`);
+        if (ctx.text !== undefined) parts.push(`«${ctx.text}»`);
+        if (ctx.optionsCount !== undefined) parts.push(`Вариантов: ${ctx.optionsCount}`);
+        if (ctx.cardsCount !== undefined) parts.push(`Карточек: ${ctx.cardsCount}`);
+        if (ctx.elapsedMs !== undefined) parts.push(`Прошло: ${(ctx.elapsedMs / 1000).toFixed(1)}с${ctx.timeoutMs ? ` / ${(ctx.timeoutMs / 1000).toFixed(1)}с` : ''}`);
         if (ctx.visibleModalsCount !== undefined) parts.push(`Модалок: ${ctx.visibleModalsCount}`);
+        if (ctx.href && ctx.href !== url) parts.push(`href: ${ctx.href}`);
         if (ctx.error !== undefined) parts.push(`Ошибка: ${ctx.error}`);
         sub = parts.join(' • ');
       }
@@ -5074,7 +5163,10 @@
       const hasMultiLineDetails = Boolean(
         item.selector || item.expectedCss || item.heuristic || item.contextSnippet ||
         ctx.error || ctx.stack || (Array.isArray(ctx.modals) && ctx.modals.length > 0) ||
-        (ctx.href && ctx.href !== item.url) || ctx.tag || ctx.snippet || ctx.details
+        (ctx.href && ctx.href !== item.url) || ctx.tag || ctx.qa || ctx.text || ctx.rect ||
+        ctx.optionsCount !== undefined || ctx.cardsCount !== undefined ||
+        ctx.elapsedMs !== undefined || ctx.visibleModalsCount !== undefined ||
+        ctx.snippet || ctx.details || ctx.outcome !== undefined || ctx.result !== undefined || ctx.reason !== undefined
       );
 
       if (hasMultiLineDetails) {
@@ -5082,20 +5174,28 @@
         if (item.url) parts.push(`  URL: ${item.url}`);
         if (item.vid) parts.push(`  ID вакансии: v_${item.vid}`);
         if (item.selector) parts.push(`  Селектор: ${item.selector}${item.selectorName ? ` (${item.selectorName})` : ''}`);
+        if (ctx.qa && ctx.qa !== item.selector) parts.push(`  data-qa: ${ctx.qa}`);
+        if (ctx.tag) parts.push(`  Элемент: <${ctx.tag}>`);
+        if (ctx.text) parts.push(`  Текст: "${ctx.text}"`);
+        if (ctx.class) parts.push(`  CSS-класс: ${ctx.class}`);
+        if (ctx.rect && ctx.rect !== 'unknown') parts.push(`  Координаты: ${ctx.rect}`);
+        if (ctx.disabled !== undefined) parts.push(`  Отключен (disabled): ${ctx.disabled}`);
         if (item.expectedCss) parts.push(`  Ожидался CSS: ${item.expectedCss}`);
         if (item.heuristic) parts.push(`  Эвристика: ${item.heuristic}`);
         if (item.employer) parts.push(`  Компания: ${item.employer}`);
         if (ctx.href && ctx.href !== item.url) parts.push(`  Ссылка (href): ${ctx.href}`);
-        if (ctx.tag) parts.push(`  Элемент: <${ctx.tag}>`);
-        if (ctx.class) parts.push(`  CSS-класс: ${ctx.class}`);
         if (ctx.outcome !== undefined) parts.push(`  Исход: ${ctx.outcome}`);
         if (ctx.result !== undefined) parts.push(`  Результат: ${ctx.result}`);
         if (ctx.reason !== undefined) parts.push(`  Причина: ${ctx.reason}`);
+        if (ctx.optionsCount !== undefined) parts.push(`  Вариантов резюме: ${ctx.optionsCount}`);
+        if (ctx.cardsCount !== undefined) parts.push(`  Карточек резюме: ${ctx.cardsCount}`);
+        if (ctx.elapsedMs !== undefined) parts.push(`  Время ожидания: ${(ctx.elapsedMs / 1000).toFixed(1)}с${ctx.timeoutMs ? ` из ${(ctx.timeoutMs / 1000).toFixed(1)}с` : ''}`);
         if (ctx.visibleModalsCount !== undefined) parts.push(`  Видимых модалок: ${ctx.visibleModalsCount}`);
         if (Array.isArray(ctx.modals) && ctx.modals.length > 0) {
           parts.push('  Обнаруженные модальные окна:');
           ctx.modals.forEach(m => parts.push(`    • ${m}`));
         }
+        if (ctx.filename) parts.push(`  Файл: ${ctx.filename}${ctx.lineno ? `:${ctx.lineno}:${ctx.colno || 0}` : ''}`);
         if (ctx.error) parts.push(`  Ошибка: ${ctx.error}`);
         if (ctx.stack) {
           parts.push('  Стек вызовов:');
