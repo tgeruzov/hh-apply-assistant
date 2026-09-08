@@ -2140,11 +2140,16 @@
         visibility 180ms;
     }
 
-    .hha-root .hha-flyout,
     .hha-root.dir-up .hha-flyout {
       margin: 0;
       transform-origin: center bottom;
       transform: scale(0.96) translateY(6px);
+    }
+
+    .hha-root:not(.dir-up) .hha-flyout {
+      margin: 0;
+      transform-origin: center top;
+      transform: scale(0.96) translateY(-6px);
     }
 
     .hha-flyout.is-animating,
@@ -3882,11 +3887,10 @@
       const targetW = Math.min(390, Math.max(100, winW - 16));
       const maxW = Math.max(targetW, pillW);
       const offset = (maxW - pillW) / 2;
-      const bottomY = Math.max(8, winH - 36 - 24);
-      const clamped = clampCoordinates(x - offset, bottomY, maxW, 36, winW, winH, 8);
+      const clamped = clampCoordinates(x - offset, y, maxW, 36, winW, winH, 8);
       return {
         x: Math.round(clamped.x + offset),
-        y: bottomY
+        y: clamped.y
       };
     }
 
@@ -4757,7 +4761,23 @@
       const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
       const pillW = this._getPillWidth();
 
-      root.classList.add('dir-up');
+      // Determine open direction dynamically based on available screen space
+      const flyoutH = 420;
+      const spaceBelow = Math.max(0, winH - (this._pillPos.y + 36) - 8);
+      const spaceAbove = Math.max(0, this._pillPos.y - 8);
+
+      let opensUp = false;
+      if (this._isPointerDown && this._dragOpenDirection !== null) {
+        opensUp = this._dragOpenDirection;
+      } else if (spaceBelow < flyoutH && spaceAbove >= flyoutH) {
+        opensUp = true;
+      } else if (spaceAbove < flyoutH && spaceBelow >= flyoutH) {
+        opensUp = false;
+      } else {
+        opensUp = spaceAbove > spaceBelow;
+      }
+
+      root.classList.toggle('dir-up', opensUp);
       root.classList.toggle('is-expanded', this._isExpanded);
 
       // Strict center alignment positioning (Center Anchor)
@@ -4776,15 +4796,21 @@
         root.style.setProperty('--center-x', `${clampedCenterX}px`);
       }
 
-      // Vertical positioning: permanently locked to bottom dock (24px)
-      root.style.top = 'auto';
-      root.style.bottom = '24px';
+      // Vertical positioning
+      if (opensUp) {
+        const bottomDist = Math.max(8, winH - (this._pillPos.y + 36));
+        root.style.top = 'auto';
+        root.style.bottom = `${bottomDist}px`;
+      } else {
+        root.style.top = `${this._pillPos.y}px`;
+        root.style.bottom = 'auto';
+      }
 
-      // Lock flyout height dynamically to available screen space above pill
+      // Lock flyout height dynamically to available screen space
       const flyout = this._shadow.querySelector('.hha-flyout');
       if (flyout) {
-        const spaceAbove = Math.max(0, winH - 68 - 8);
-        const maxAvail = Math.max(100, Math.min(spaceAbove, winH - 44));
+        const availSpace = Math.floor(opensUp ? spaceAbove : spaceBelow);
+        const maxAvail = Math.max(100, Math.min(availSpace, winH - 44));
         const finalH = Math.min(420, maxAvail);
         flyout.style.maxHeight = `${finalH}px`;
         flyout.style.height = `${finalH}px`;
@@ -4812,8 +4838,8 @@
         }
       } catch (_) {}
 
-      if (pos && typeof pos.x === 'number' && !isNaN(pos.x)) {
-        this._pillPos = this._clampPillCoordinates(pos.x, defY, winW, winH);
+      if (pos && typeof pos.x === 'number' && !isNaN(pos.x) && typeof pos.y === 'number' && !isNaN(pos.y)) {
+        this._pillPos = this._clampPillCoordinates(pos.x, pos.y, winW, winH);
       } else {
         this._pillPos = this._clampPillCoordinates(defX, defY, winW, winH);
       }
