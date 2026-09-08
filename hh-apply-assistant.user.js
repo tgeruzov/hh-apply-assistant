@@ -1857,6 +1857,16 @@
         0 2px 6px -1px rgba(15, 23, 42, 0.08);
     }
 
+    .hha-root.is-expanded .hha-pill-queue-badge {
+      width: 0 !important;
+      margin-left: 0 !important;
+      padding: 0 !important;
+      opacity: 0 !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+      transform: scale(0.85);
+    }
+
     .hha-pill-status-group:hover,
     .hha-root.is-expanded .hha-pill-status-group {
       background: #e2e8f0;
@@ -2170,7 +2180,7 @@
     /* --- Segmented Tabs (Apple HIG Inset Track) --- */
     .hha-tabs {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(3, 1fr);
       background: #e2e8f0;
       margin: 6px;
       padding: 2px;
@@ -2179,6 +2189,13 @@
       gap: 2px;
       flex-shrink: 0;
       box-sizing: border-box;
+    }
+
+    .hha-tab-count {
+      font-size: 10px;
+      font-weight: 600;
+      color: #ea580c;
+      margin-left: 2px;
     }
 
     .hha-tab-btn {
@@ -2216,10 +2233,9 @@
     .hha-stepper-btn:focus-visible,
     .hha-stepper-input:focus-visible,
     .hha-btn-quick:focus-visible,
-    .hha-btn-open:focus-visible,
+    .hha-queue-title-link:focus-visible,
     .hha-btn-icon:focus-visible,
     .hha-log-item-delete:focus-visible,
-    .hha-log-seg-btn:focus-visible,
     .hha-cover-textarea:focus-visible,
     .hha-textarea:focus-visible {
       outline: none;
@@ -2299,6 +2315,16 @@
       width: 100%;
       flex-shrink: 0;
       box-sizing: border-box;
+    }
+
+    .hha-log-header-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      letter-spacing: -0.1px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .hha-log-actions {
@@ -2493,41 +2519,42 @@
       color: #c2410c;
     }
 
-    .hha-log-title {
-      flex: 1;
+    .hha-queue-title-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
       min-width: 0;
+      flex: 1;
       color: #0f172a;
+      text-decoration: none;
       font-weight: 500;
-      text-transform: none;
-      letter-spacing: normal;
+      font-size: 11px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: color 100ms ease;
+    }
+
+    .hha-queue-title-link:hover {
+      color: #2563eb;
+    }
+
+    .hha-queue-title-text {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
-    .hha-log-link-btn,
-    .hha-btn-open {
+    .hha-queue-ext-icon {
       display: inline-flex;
       align-items: center;
-      gap: 2px;
-      padding: 2px 6px;
-      min-height: 24px;
-      box-sizing: border-box;
-      background: #e2e8f0;
-      color: #0f172a;
-      border-radius: var(--hha-radius-micro, 4px);
-      font-size: 10px;
-      font-weight: 600;
-      text-decoration: none;
+      opacity: 0.35;
       flex-shrink: 0;
-      cursor: pointer;
-      transition: background-color 100ms ease, color 100ms ease;
+      transition: opacity 100ms ease;
     }
 
-    .hha-log-link-btn:hover,
-    .hha-btn-open:hover {
-      background: #cbd5e1;
-      color: #0f172a;
+    .hha-queue-title-link:hover .hha-queue-ext-icon {
+      opacity: 1;
+      color: #2563eb;
     }
 
     .hha-log-item-right {
@@ -2703,6 +2730,12 @@
     .hha-log-dev-badge.badge-apply {
       background: #ecfdf5;
       color: #059669;
+    }
+
+    .hha-log-dev-badge.badge-queue {
+      background: #fffbeb;
+      color: #d97706;
+      border: 1px solid #fde68a;
     }
 
     .hha-log-dev-badge.badge-error {
@@ -2929,46 +2962,6 @@
       pointer-events: none;
       cursor: default;
       display: none !important;
-    }
-
-    /* Log Header Segmented Micro-Control (Queue / Events) */
-    .hha-log-segmented {
-      display: inline-flex;
-      align-items: stretch;
-      height: 22px;
-      background: #f1f5f9;
-      border-radius: var(--hha-radius-xs, 6px);
-      padding: 2px;
-      gap: 1px;
-      box-sizing: border-box;
-    }
-
-    .hha-log-seg-btn {
-      padding: 0 8px;
-      font-size: 10px;
-      font-weight: 500;
-      color: #64748b;
-      background: transparent;
-      border: none;
-      border-radius: var(--hha-radius-micro, 4px);
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background 100ms ease, color 100ms ease;
-      line-height: 1;
-      display: inline-flex;
-      align-items: center;
-      gap: 2px;
-    }
-
-    .hha-log-seg-btn:hover {
-      color: #0f172a;
-    }
-
-    .hha-log-seg-btn.is-active {
-      background: #ffffff;
-      color: #0f172a;
-      font-weight: 600;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
     }
 
     /* Custom Apple HIG Floating Tooltip (Dynamic Bounds-Clamped) */
@@ -3612,9 +3605,10 @@
       } else if (event.action === 'manual' || tagType === 'queue') {
         tag = 'QUEUE';
         tagType = 'queue';
-        msg = `В очередь: ${event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия')}`;
-        sub = `Причина: ${formatQueueReason(event.note || event.reason)}`;
-        metaBadge = 'очередь';
+        msg = event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия');
+        const rReason = formatQueueReason(event.note || event.reason);
+        sub = `Причина: ${rReason}`;
+        metaBadge = rReason ? rReason.toLowerCase() : '';
       } else if (event.action === 'error' || tagType === 'error') {
         tag = event.tag || 'ERROR';
         tagType = 'error';
@@ -3782,10 +3776,10 @@
     }
 
     setActiveTab(tabName) {
-      if (tabName === 'queue' || tabName === 'feed') {
+      if (tabName === 'feed') {
         tabName = 'logs';
       }
-      if (!['settings', 'logs'].includes(tabName)) return;
+      if (!['settings', 'queue', 'logs'].includes(tabName)) return;
       this._activeTab = tabName;
       this._hideTooltip();
 
@@ -3796,34 +3790,26 @@
       const panels = this._shadow.querySelectorAll('.hha-panel');
       panels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabName));
 
-      if (tabName === 'logs') {
-        requestAnimationFrame(() => this._updateOverlayScrollbar());
-      }
+      this._syncLogActions();
+      requestAnimationFrame(() => this._updateOverlayScrollbar());
     }
 
     _switchLogMode(mode) {
-      if (!['queue', 'events'].includes(mode)) return;
-      this._logFilterMode = mode;
-      this._hideTooltip();
-
-      if (this._shadow) {
-        const segBtns = this._shadow.querySelectorAll('.hha-log-seg-btn');
-        segBtns.forEach(btn => btn.classList.toggle('is-active', btn.dataset.logMode === mode));
+      if (mode === 'queue') {
+        this.setActiveTab('queue');
+      } else {
+        this.setActiveTab('logs');
       }
-
-      this._syncLogActions();
-      this._syncLogs();
     }
 
     _syncLogActions() {
       if (!this._shadow) return;
-      const isQueue = this._logFilterMode === 'queue';
       const count = this._queue ? this._queue.length : 0;
 
-      // Clear queue button: visible only in queue mode with items
-      const clearBtn = this._shadow.querySelector('[data-action="clear-queue"]');
+      // Clear queue button
+      const clearBtn = this._shadow.querySelector('[data-action="clear-queue"]') || this._shadow.querySelector('[data-el="clear-queue-btn"]');
       if (clearBtn) {
-        if (isQueue && count > 0) {
+        if (count > 0) {
           clearBtn.removeAttribute('disabled');
           clearBtn.disabled = false;
           clearBtn.style.display = 'inline-flex';
@@ -3834,11 +3820,11 @@
         }
       }
 
-      // Clear logs and Copy buttons: visible only in events mode
+      // Clear logs and Copy buttons
       const resetBtn = this._shadow.querySelector('[data-action="clear-logs"]') || this._shadow.querySelector('[data-el="clear-logs-btn"]');
       const copyBtn = this._shadow.querySelector('[data-action="copy-logs"]') || this._shadow.querySelector('[data-el="copy-logs-btn"]');
-      if (resetBtn) resetBtn.style.display = isQueue ? 'none' : 'inline-flex';
-      if (copyBtn) copyBtn.style.display = isQueue ? 'none' : 'inline-flex';
+      if (resetBtn) resetBtn.style.display = 'inline-flex';
+      if (copyBtn) copyBtn.style.display = 'inline-flex';
     }
 
     _toggleLogDetail(logId, rowEl) {
@@ -3919,10 +3905,11 @@
             <!-- Floating Tooltip -->
             <div class="hha-tooltip" data-el="tooltip"></div>
 
-            <!-- Segmented Control Tabs (50% / 50%) -->
+            <!-- Segmented Control Tabs (3 columns) -->
             <div class="hha-tabs">
               <button type="button" class="hha-tab-btn active" data-action="switch-tab" data-tab="settings">Настройки</button>
-              <button type="button" class="hha-tab-btn" data-action="switch-tab" data-tab="logs">Логи</button>
+              <button type="button" class="hha-tab-btn" data-action="switch-tab" data-tab="queue"><span>Очередь</span> <span class="hha-tab-count" data-el="queue-tab-count" style="display: none;">(0)</span></button>
+              <button type="button" class="hha-tab-btn" data-action="switch-tab" data-tab="logs"><span>Журнал</span><span class="hha-seg-badge-error" data-el="log-error-badge" style="display: none;">0</span></button>
             </div>
 
             <!-- Panels -->
@@ -3965,24 +3952,41 @@
                 </div>
               </div>
 
-              <!-- Tab 2: Logs (Логи) -->
+              <!-- Tab 2: Queue (Очередь) -->
+              <div class="hha-panel" data-panel="queue">
+                <div class="hha-log-card">
+                  <div class="hha-log-header">
+                    <span class="hha-log-header-title" data-el="queue-status-text">Очередь откликов</span>
+                    <div class="hha-log-actions">
+                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-clear-queue" data-action="clear-queue" data-el="clear-queue-btn" data-tooltip="Очистить очередь" disabled style="display: none;">${ICONS.trash}</button>
+                    </div>
+                  </div>
+                  <div class="hha-log-stream" data-el="queue-stream">
+                    <div class="hha-log-empty">
+                      <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
+                      <div class="hha-log-empty-text">Очередь пуста</div>
+                    </div>
+                  </div>
+                  <div class="hha-overlay-scrollbar" data-el="queue-scrollbar">
+                    <div class="hha-overlay-thumb" data-el="queue-scroll-thumb"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Tab 3: Logs (Журнал) -->
               <div class="hha-panel" data-panel="logs">
                 <div class="hha-log-card">
                   <div class="hha-log-header">
-                    <div class="hha-log-segmented" data-el="log-segmented">
-                      <button type="button" class="hha-log-seg-btn is-active" data-log-mode="queue" data-action="switch-log-mode"><span>Очередь</span> <span>(<span data-el="queue-count">0</span>)</span></button>
-                      <button type="button" class="hha-log-seg-btn" data-log-mode="events" data-action="switch-log-mode"><span>Журнал</span><span class="hha-seg-badge-error" data-el="log-error-badge" style="display: none;">0</span></button>
-                    </div>
+                    <span class="hha-log-header-title" data-el="log-status-text">События и отклики</span>
                     <div class="hha-log-actions">
-                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-clear-queue" data-action="clear-queue" data-el="clear-queue-btn" data-tooltip="Очистить очередь" disabled style="display: none;">${ICONS.trash}</button>
-                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-clear-logs" data-action="clear-logs" data-el="clear-logs-btn" data-tooltip="Очистить журнал" style="display: none;">${ICONS.reset}</button>
-                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-copy-log" data-action="copy-logs" data-el="copy-logs-btn" data-tooltip="Скопировать журнал" style="display: none;">${ICONS.copy}</button>
+                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-clear-logs" data-action="clear-logs" data-el="clear-logs-btn" data-tooltip="Очистить журнал">${ICONS.reset}</button>
+                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-copy-log" data-action="copy-logs" data-el="copy-logs-btn" data-tooltip="Скопировать журнал">${ICONS.copy}</button>
                     </div>
                   </div>
                   <div class="hha-log-stream" data-el="log-stream">
                     <div class="hha-log-empty">
                       <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
-                      <div class="hha-log-empty-text">Очередь пуста</div>
+                      <div class="hha-log-empty-text">Нет записей в журнале</div>
                     </div>
                   </div>
                   <div class="hha-overlay-scrollbar" data-el="log-scrollbar">
@@ -4053,9 +4057,8 @@
           if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
             e.preventDefault();
             e.stopPropagation();
+            this.setActiveTab('queue');
             this.open();
-            this.setActiveTab('logs');
-            this._switchLogMode('queue');
           }
         });
       }
@@ -4138,142 +4141,152 @@
     }
 
     _initOverlayScrollbar() {
-      const stream = this._shadow.querySelector('[data-el="log-stream"]');
-      const logCard = this._shadow.querySelector('.hha-log-card');
-      const scrollbar = this._shadow.querySelector('[data-el="log-scrollbar"]');
-      const thumb = this._shadow.querySelector('[data-el="log-scroll-thumb"]');
-      if (!stream || !logCard || !scrollbar || !thumb) return;
+      const attach = (streamSel, scrollbarSel, thumbSel) => {
+        const stream = this._shadow.querySelector(streamSel);
+        const scrollbar = this._shadow.querySelector(scrollbarSel);
+        const thumb = this._shadow.querySelector(thumbSel);
+        const logCard = stream ? stream.closest('.hha-log-card') : null;
+        if (!stream || !logCard || !scrollbar || !thumb) return;
 
-      let isHovered = false;
-      let isDragging = false;
-      let hideTimer = null;
+        let isHovered = false;
+        let isDragging = false;
+        let hideTimer = null;
 
-      const scheduleHide = (delay = 800) => {
-        if (hideTimer) clearTimeout(hideTimer);
-        hideTimer = setTimeout(() => {
-          if (!isHovered && !isDragging) {
-            scrollbar.classList.remove('is-visible');
+        const scheduleHide = (delay = 800) => {
+          if (hideTimer) clearTimeout(hideTimer);
+          hideTimer = setTimeout(() => {
+            if (!isHovered && !isDragging) {
+              scrollbar.classList.remove('is-visible');
+            }
+          }, delay);
+        };
+
+        const showScrollbar = () => {
+          if (stream.scrollHeight > stream.clientHeight + 1) {
+            this._updateOverlayScrollbar();
+            scrollbar.classList.add('is-visible');
           }
-        }, delay);
-      };
+        };
 
-      const showScrollbar = () => {
-        if (stream.scrollHeight > stream.clientHeight + 1) {
+        stream.addEventListener('scroll', () => {
           this._updateOverlayScrollbar();
+          showScrollbar();
+          if (!isHovered && !isDragging) {
+            scheduleHide(800);
+          }
+        }, { passive: true });
+
+        logCard.addEventListener('mouseenter', () => {
+          isHovered = true;
+          if (hideTimer) clearTimeout(hideTimer);
+          showScrollbar();
+        });
+
+        logCard.addEventListener('mouseleave', () => {
+          isHovered = false;
+          if (!isDragging) {
+            scheduleHide(300);
+          }
+        });
+
+        // Pointer drag interaction on thumb
+        let startY = 0;
+        let startScrollTop = 0;
+
+        const onPointerMove = (e) => {
+          if (!isDragging) return;
+          const deltaY = e.clientY - startY;
+          const trackH = scrollbar.clientHeight;
+          const scrollH = stream.scrollHeight;
+          const clientH = stream.clientHeight;
+          const thumbH = thumb.offsetHeight || 24;
+          const maxThumbTop = trackH - thumbH;
+          const maxScrollTop = scrollH - clientH;
+          if (maxThumbTop > 0 && maxScrollTop > 0) {
+            const scrollDelta = (deltaY / maxThumbTop) * maxScrollTop;
+            stream.scrollTop = startScrollTop + scrollDelta;
+          }
+        };
+
+        const onPointerUp = (e) => {
+          if (!isDragging) return;
+          isDragging = false;
+          thumb.classList.remove('is-dragging');
+          try { thumb.releasePointerCapture(e.pointerId); } catch (_) {}
+          window.removeEventListener('pointermove', onPointerMove);
+          window.removeEventListener('pointerup', onPointerUp);
+          window.removeEventListener('pointercancel', onPointerUp);
+          if (!isHovered) {
+            scheduleHide(800);
+          }
+        };
+
+        thumb.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          isDragging = true;
+          startY = e.clientY;
+          startScrollTop = stream.scrollTop;
+          thumb.classList.add('is-dragging');
           scrollbar.classList.add('is-visible');
-        }
+          try { thumb.setPointerCapture(e.pointerId); } catch (_) {}
+          window.addEventListener('pointermove', onPointerMove);
+          window.addEventListener('pointerup', onPointerUp);
+          window.addEventListener('pointercancel', onPointerUp);
+        });
+
+        // Click on scrollbar track to jump
+        scrollbar.addEventListener('pointerdown', (e) => {
+          if (e.target === thumb) return;
+          e.preventDefault();
+          const rect = scrollbar.getBoundingClientRect();
+          const clickY = e.clientY - rect.top;
+          const trackH = scrollbar.clientHeight;
+          const scrollH = stream.scrollHeight;
+          const clientH = stream.clientHeight;
+          const thumbH = thumb.offsetHeight || 24;
+          const targetThumbTop = Math.max(0, Math.min(trackH - thumbH, clickY - thumbH / 2));
+          const maxThumbTop = trackH - thumbH;
+          const maxScrollTop = scrollH - clientH;
+          if (maxThumbTop > 0) {
+            stream.scrollTop = (targetThumbTop / maxThumbTop) * maxScrollTop;
+          }
+        });
       };
 
-      stream.addEventListener('scroll', () => {
-        this._updateOverlayScrollbar();
-        showScrollbar();
-        if (!isHovered && !isDragging) {
-          scheduleHide(800);
-        }
-      }, { passive: true });
-
-      logCard.addEventListener('mouseenter', () => {
-        isHovered = true;
-        if (hideTimer) clearTimeout(hideTimer);
-        showScrollbar();
-      });
-
-      logCard.addEventListener('mouseleave', () => {
-        isHovered = false;
-        if (!isDragging) {
-          scheduleHide(300);
-        }
-      });
-
-      // Pointer drag interaction on thumb
-      let startY = 0;
-      let startScrollTop = 0;
-
-      const onPointerMove = (e) => {
-        if (!isDragging) return;
-        const deltaY = e.clientY - startY;
-        const trackH = scrollbar.clientHeight;
-        const scrollH = stream.scrollHeight;
-        const clientH = stream.clientHeight;
-        const thumbH = thumb.offsetHeight || 24;
-        const maxThumbTop = trackH - thumbH;
-        const maxScrollTop = scrollH - clientH;
-        if (maxThumbTop > 0 && maxScrollTop > 0) {
-          const scrollDelta = (deltaY / maxThumbTop) * maxScrollTop;
-          stream.scrollTop = startScrollTop + scrollDelta;
-        }
-      };
-
-      const onPointerUp = (e) => {
-        if (!isDragging) return;
-        isDragging = false;
-        thumb.classList.remove('is-dragging');
-        try { thumb.releasePointerCapture(e.pointerId); } catch (_) {}
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', onPointerUp);
-        window.removeEventListener('pointercancel', onPointerUp);
-        if (!isHovered) {
-          scheduleHide(800);
-        }
-      };
-
-      thumb.addEventListener('pointerdown', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        isDragging = true;
-        startY = e.clientY;
-        startScrollTop = stream.scrollTop;
-        thumb.classList.add('is-dragging');
-        scrollbar.classList.add('is-visible');
-        try { thumb.setPointerCapture(e.pointerId); } catch (_) {}
-        window.addEventListener('pointermove', onPointerMove);
-        window.addEventListener('pointerup', onPointerUp);
-        window.addEventListener('pointercancel', onPointerUp);
-      });
-
-      // Click on scrollbar track to jump
-      scrollbar.addEventListener('pointerdown', (e) => {
-        if (e.target === thumb) return;
-        e.preventDefault();
-        const rect = scrollbar.getBoundingClientRect();
-        const clickY = e.clientY - rect.top;
-        const trackH = scrollbar.clientHeight;
-        const scrollH = stream.scrollHeight;
-        const clientH = stream.clientHeight;
-        const thumbH = thumb.offsetHeight || 24;
-        const targetThumbTop = Math.max(0, Math.min(trackH - thumbH, clickY - thumbH / 2));
-        const maxThumbTop = trackH - thumbH;
-        const maxScrollTop = scrollH - clientH;
-        if (maxThumbTop > 0) {
-          stream.scrollTop = (targetThumbTop / maxThumbTop) * maxScrollTop;
-        }
-      });
+      attach('[data-el="queue-stream"]', '[data-el="queue-scrollbar"]', '[data-el="queue-scroll-thumb"]');
+      attach('[data-el="log-stream"]', '[data-el="log-scrollbar"]', '[data-el="log-scroll-thumb"]');
     }
 
     _updateOverlayScrollbar() {
       if (!this._shadow) return;
-      const stream = this._shadow.querySelector('[data-el="log-stream"]');
-      const scrollbar = this._shadow.querySelector('[data-el="log-scrollbar"]');
-      const thumb = this._shadow.querySelector('[data-el="log-scroll-thumb"]');
-      if (!stream || !scrollbar || !thumb) return;
+      const update = (streamSel, scrollbarSel, thumbSel) => {
+        const stream = this._shadow.querySelector(streamSel);
+        const scrollbar = this._shadow.querySelector(scrollbarSel);
+        const thumb = this._shadow.querySelector(thumbSel);
+        if (!stream || !scrollbar || !thumb) return;
 
-      const scrollH = stream.scrollHeight;
-      const clientH = stream.clientHeight;
-      const trackH = scrollbar.clientHeight;
+        const scrollH = stream.scrollHeight;
+        const clientH = stream.clientHeight;
+        const trackH = scrollbar.clientHeight;
 
-      if (scrollH <= clientH + 1 || trackH <= 0) {
-        scrollbar.classList.remove('is-visible');
-        thumb.style.height = '0px';
-        return;
-      }
+        if (scrollH <= clientH + 1 || trackH <= 0) {
+          scrollbar.classList.remove('is-visible');
+          thumb.style.height = '0px';
+          return;
+        }
 
-      const thumbH = Math.max(24, Math.round((clientH / scrollH) * trackH));
-      const maxScrollTop = scrollH - clientH;
-      const maxThumbTop = trackH - thumbH;
-      const thumbTop = maxScrollTop > 0 ? Math.round((stream.scrollTop / maxScrollTop) * maxThumbTop) : 0;
+        const thumbH = Math.max(24, Math.round((clientH / scrollH) * trackH));
+        const maxScrollTop = scrollH - clientH;
+        const maxThumbTop = trackH - thumbH;
+        const thumbTop = maxScrollTop > 0 ? Math.round((stream.scrollTop / maxScrollTop) * maxThumbTop) : 0;
 
-      thumb.style.height = `${thumbH}px`;
-      thumb.style.transform = `translateY(${thumbTop}px)`;
+        thumb.style.height = `${thumbH}px`;
+        thumb.style.transform = `translateY(${thumbTop}px)`;
+      };
+
+      update('[data-el="queue-stream"]', '[data-el="queue-scrollbar"]', '[data-el="queue-scroll-thumb"]');
+      update('[data-el="log-stream"]', '[data-el="log-scrollbar"]', '[data-el="log-scroll-thumb"]');
     }
 
     _handleRootClick(e) {
@@ -4291,9 +4304,6 @@
 
       // Click on pill free surface via event delegation
       if (pillTarget && !isInteractive && !actionTarget && !this._dragMoved) {
-        if (!this._isExpanded) {
-          this.setActiveTab('settings');
-        }
         this.toggleExpand();
         return;
       }
@@ -4307,14 +4317,10 @@
         this._handleToggleAutomation();
       } else if (action === 'open-queue-tab') {
         e.stopPropagation();
+        this.setActiveTab('queue');
         this.open();
-        this.setActiveTab('logs');
-        this._switchLogMode('queue');
       } else if (action === 'toggle-expand') {
         e.stopPropagation();
-        if (!this._isExpanded) {
-          this.setActiveTab('settings');
-        }
         this.toggleExpand();
       } else if (action === 'switch-tab') {
         e.stopPropagation();
@@ -4372,10 +4378,6 @@
         if (['safe', 'balanced', 'fast'].includes(preset)) {
           this._applyConfig({ preset });
         }
-      } else if (action === 'switch-log-mode') {
-        e.stopPropagation();
-        const mode = actionTarget.dataset.logMode;
-        if (mode) this._switchLogMode(mode);
       }
     }
 
@@ -4464,7 +4466,7 @@
       let textToCopy = '';
       const lines = [];
 
-      if (this._logFilterMode === 'queue') {
+      if (this._activeTab === 'queue' || this._logFilterMode === 'queue') {
         if (this._queue && this._queue.length > 0) {
           for (const item of this._queue) {
             const cVid = cleanVid(item.vid);
@@ -4974,10 +4976,22 @@
         }, 300);
       }
 
-      // Update queue count in segmented control
-      const queueCountEl = this._shadow.querySelector('[data-el="queue-count"]');
-      if (queueCountEl) {
-        queueCountEl.textContent = String(count);
+      // Update queue count badge in tabs
+      const queueTabCount = this._shadow.querySelector('[data-el="queue-tab-count"]');
+      if (queueTabCount) {
+        if (count > 0) {
+          queueTabCount.textContent = `(${count})`;
+          queueTabCount.style.display = 'inline';
+        } else {
+          queueTabCount.textContent = '';
+          queueTabCount.style.display = 'none';
+        }
+      }
+
+      // Update queue status text in queue list header
+      const queueStatusText = this._shadow.querySelector('[data-el="queue-status-text"]');
+      if (queueStatusText) {
+        queueStatusText.textContent = count > 0 ? `Вакансий в очереди: ${count}` : 'Очередь откликов';
       }
 
       // Update error badge on Journal tab button
@@ -4997,143 +5011,126 @@
         }
       }
 
-      // Sync action buttons visibility based on mode
+      // Sync action buttons visibility
       this._syncLogActions();
 
-      const list = this._shadow.querySelector('.hha-log-stream');
-      if (!list) return;
-
-      const isQueueMode = this._logFilterMode === 'queue';
-      const items = [];
-
-      if (isQueueMode) {
-        // Queue mode: show only queue items
+      // Render Queue Stream
+      const queueStream = this._shadow.querySelector('[data-el="queue-stream"]');
+      if (queueStream) {
         if (this._queue && this._queue.length > 0) {
-          this._queue.forEach(item => {
+          queueStream.innerHTML = this._queue.map(item => {
             const rawVid = item.vid ? String(item.vid) : '';
             const cVid = cleanVid(rawVid);
             const targetUrl = toVacancyUrl(cVid, item.url);
             const reasonText = formatQueueReason(item.reason || item.note);
 
-            items.push({
-              time: item.time || formatTime(),
-              tagClass: 'is-queue hha-reason-badge',
-              tagText: reasonText,
-              title: item.title || 'Вакансия',
-              url: targetUrl,
-              vid: cVid,
-              rawVid: rawVid,
-              isQueue: true
-            });
-          });
-        }
-      } else {
-        // Events mode: chronological stream of all events
-        (this._liveFeed || []).forEach(item => {
-          items.push(item);
-        });
-      }
-
-      if (items.length === 0) {
-        const emptyText = isQueueMode ? 'Очередь пуста' : 'Нет записей в журнале';
-        list.innerHTML = `
-          <div class="hha-log-empty">
-            <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
-            <div class="hha-log-empty-text">${emptyText}</div>
-          </div>
-        `;
-        this._updateOverlayScrollbar();
-        return;
-      }
-
-      if (isQueueMode) {
-        list.innerHTML = items.map(item => `
-          <div class="hha-log-item is-queue">
-            <div class="hha-log-item-left">
-              <span class="hha-log-tag ${escapeHtml(item.tagClass)}">${escapeHtml(item.tagText)}</span>
-              <span class="hha-log-title" data-tooltip="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
-            </div>
-            <div class="hha-log-item-right">
-              ${item.url ? `
-                <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="hha-log-link-btn hha-btn-open" data-tooltip="Открыть в новой вкладке">
-                  ${ICONS.open} <span>Открыть</span>
-                </a>
-              ` : ''}
-              <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(item.rawVid || item.vid)}" data-clean-vid="${escapeHtml(item.vid)}" data-tooltip="Удалить из очереди" aria-label="Удалить">${ICONS.trash}</button>
-            </div>
-          </div>
-        `).join('');
-      } else {
-        list.innerHTML = items.map(item => {
-          const isExpanded = this._expandedLogIds && this._expandedLogIds.has(item.id);
-          return `
-            <div class="hha-log-dev-row ${isExpanded ? 'is-expanded' : ''}" data-action="toggle-log-detail" data-log-id="${escapeHtml(item.id)}">
-              <div class="hha-log-dev-main">
-                <span class="hha-log-dev-time">${escapeHtml(item.time)}</span>
-                <span class="hha-log-dev-tag tag-${escapeHtml(item.tagType)}">[${escapeHtml(item.tag)}]</span>
-                <span class="hha-log-dev-msg" title="${escapeHtml(item.msg)}">${escapeHtml(item.msg)}</span>
-                ${item.metaBadge ? `<span class="hha-log-dev-badge badge-${escapeHtml(String(item.metaBadge).toLowerCase())} badge-${escapeHtml(item.tagType)}">${escapeHtml(item.metaBadge)}</span>` : ''}
-                <span class="hha-log-dev-arrow">▾</span>
-              </div>
-              <div class="hha-log-dev-details">
-                <div class="hha-log-detail-grid">
-                  ${item.selector ? `
-                    <div class="hha-log-detail-key">Селектор:</div>
-                    <div class="hha-log-detail-val"><code>${escapeHtml(item.selector)}</code> ${item.selectorName ? `<span class="hha-log-detail-note">(${escapeHtml(item.selectorName)})</span>` : ''}</div>
-                  ` : ''}
-                  ${item.expectedCss ? `
-                    <div class="hha-log-detail-block">
-                      <div class="hha-log-detail-block-title">Ожидался CSS:</div>
-                      <code class="hha-code-highlight">${escapeHtml(item.expectedCss)}</code>
-                    </div>
-                  ` : ''}
-                  ${item.heuristic ? `
-                    <div class="hha-log-detail-block">
-                      <div class="hha-log-detail-block-title">Эвристика:</div>
-                      <code class="hha-code-heuristic">${escapeHtml(item.heuristic)}</code>
-                    </div>
-                  ` : ''}
-                  ${item.contextSnippet ? `
-                    <div class="hha-log-detail-block">
-                      <div class="hha-log-detail-block-title">HTML родителя:</div>
-                      <pre class="hha-dom-snippet">${escapeHtml(item.contextSnippet)}</pre>
-                    </div>
-                  ` : ''}
-                  ${item.vid ? `
-                    <div class="hha-log-detail-key">ID:</div>
-                    <div class="hha-log-detail-val">
-                      <code>v_${escapeHtml(item.vid)}</code>
-                      ${item.url ? `
-                        <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="hha-log-detail-link" onclick="event.stopPropagation();" title="Открыть вакансию в новой вкладке">
-                          ${ICONS.open} <span>Открыть</span>
-                        </a>
-                      ` : ''}
-                    </div>
-                  ` : ''}
-                  ${item.employer ? `
-                    <div class="hha-log-detail-key">Компания:</div>
-                    <div class="hha-log-detail-val">${escapeHtml(item.employer)}</div>
-                  ` : ''}
-                  ${item.sub ? `
-                    <div class="hha-log-detail-key">Инфо:</div>
-                    <div class="hha-log-detail-val">${escapeHtml(item.sub)}</div>
-                  ` : ''}
-                  ${item.url ? `
-                    <div class="hha-log-detail-key">URL:</div>
-                    <div class="hha-log-detail-val">
-                      <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="hha-log-detail-url" onclick="event.stopPropagation();">${escapeHtml(item.url)}</a>
-                    </div>
-                  ` : ''}
+            return `
+              <div class="hha-log-item is-queue">
+                <div class="hha-log-item-left">
+                  <span class="hha-log-tag is-queue hha-reason-badge">${escapeHtml(reasonText)}</span>
+                  <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-tooltip="${escapeHtml(item.title || 'Вакансия')}" onclick="event.stopPropagation();">
+                    <span class="hha-queue-title-text">${escapeHtml(item.title || 'Вакансия')}</span>
+                    <span class="hha-queue-ext-icon">${ICONS.open}</span>
+                  </a>
                 </div>
-                <div class="hha-log-detail-footer">
-                  <button type="button" class="hha-btn-copy-item" data-action="copy-single-log" data-log-id="${escapeHtml(item.id)}">
-                    ${ICONS.copy} <span>Скопировать детали</span>
-                  </button>
+                <div class="hha-log-item-right">
+                  <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить">${ICONS.trash}</button>
                 </div>
               </div>
+            `;
+          }).join('');
+        } else {
+          queueStream.innerHTML = `
+            <div class="hha-log-empty">
+              <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
+              <div class="hha-log-empty-text">Очередь пуста</div>
             </div>
           `;
-        }).join('');
+        }
+      }
+
+      // Render Logs Stream
+      const logStream = this._shadow.querySelector('[data-el="log-stream"]');
+      if (logStream) {
+        if (this._liveFeed && this._liveFeed.length > 0) {
+          logStream.innerHTML = this._liveFeed.map(item => {
+            const isExpanded = this._expandedLogIds && this._expandedLogIds.has(item.id);
+            const cleanSub = item.sub ? item.sub.replace(/^Причина:\s*Причина:\s*/i, 'Причина: ') : '';
+            return `
+              <div class="hha-log-dev-row ${isExpanded ? 'is-expanded' : ''}" data-action="toggle-log-detail" data-log-id="${escapeHtml(item.id)}">
+                <div class="hha-log-dev-main">
+                  <span class="hha-log-dev-time">${escapeHtml(item.time)}</span>
+                  <span class="hha-log-dev-tag tag-${escapeHtml(item.tagType)}">[${escapeHtml(item.tag)}]</span>
+                  <span class="hha-log-dev-msg" title="${escapeHtml(item.msg)}">${escapeHtml(item.msg)}</span>
+                  ${item.metaBadge ? `<span class="hha-log-dev-badge badge-${escapeHtml(String(item.metaBadge).toLowerCase())} badge-${escapeHtml(item.tagType)}">${escapeHtml(item.metaBadge)}</span>` : ''}
+                  <span class="hha-log-dev-arrow">▾</span>
+                </div>
+                <div class="hha-log-dev-details">
+                  <div class="hha-log-detail-grid">
+                    ${item.selector ? `
+                      <div class="hha-log-detail-key">Селектор:</div>
+                      <div class="hha-log-detail-val"><code>${escapeHtml(item.selector)}</code> ${item.selectorName ? `<span class="hha-log-detail-note">(${escapeHtml(item.selectorName)})</span>` : ''}</div>
+                    ` : ''}
+                    ${item.expectedCss ? `
+                      <div class="hha-log-detail-block">
+                        <div class="hha-log-detail-block-title">Ожидался CSS:</div>
+                        <code class="hha-code-highlight">${escapeHtml(item.expectedCss)}</code>
+                      </div>
+                    ` : ''}
+                    ${item.heuristic ? `
+                      <div class="hha-log-detail-block">
+                        <div class="hha-log-detail-block-title">Эвристика:</div>
+                        <code class="hha-code-heuristic">${escapeHtml(item.heuristic)}</code>
+                      </div>
+                    ` : ''}
+                    ${item.contextSnippet ? `
+                      <div class="hha-log-detail-block">
+                        <div class="hha-log-detail-block-title">HTML родителя:</div>
+                        <pre class="hha-dom-snippet">${escapeHtml(item.contextSnippet)}</pre>
+                      </div>
+                    ` : ''}
+                    ${item.vid ? `
+                      <div class="hha-log-detail-key">Вакансия:</div>
+                      <div class="hha-log-detail-val">
+                        <code>v_${escapeHtml(item.vid)}</code>
+                        ${item.url ? `
+                          <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="hha-log-detail-link" onclick="event.stopPropagation();" title="Открыть вакансию в новой вкладке">
+                            ${ICONS.open} <span>Открыть на hh.ru</span>
+                          </a>
+                        ` : ''}
+                      </div>
+                    ` : (item.url ? `
+                      <div class="hha-log-detail-key">URL:</div>
+                      <div class="hha-log-detail-val">
+                        <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="hha-log-detail-url" onclick="event.stopPropagation();">${escapeHtml(item.url)}</a>
+                      </div>
+                    ` : '')}
+                    ${item.employer ? `
+                      <div class="hha-log-detail-key">Компания:</div>
+                      <div class="hha-log-detail-val">${escapeHtml(item.employer)}</div>
+                    ` : ''}
+                    ${cleanSub ? `
+                      <div class="hha-log-detail-key">${cleanSub.startsWith('Причина:') ? 'Причина:' : 'Инфо:'}</div>
+                      <div class="hha-log-detail-val">${escapeHtml(cleanSub.replace(/^Причина:\s*/i, ''))}</div>
+                    ` : ''}
+                  </div>
+                  <div class="hha-log-detail-footer">
+                    <button type="button" class="hha-btn-copy-item" data-action="copy-single-log" data-log-id="${escapeHtml(item.id)}">
+                      ${ICONS.copy} <span>Скопировать детали</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('');
+        } else {
+          logStream.innerHTML = `
+            <div class="hha-log-empty">
+              <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
+              <div class="hha-log-empty-text">Нет записей в журнале</div>
+            </div>
+          `;
+        }
       }
 
       this._updateOverlayScrollbar();
