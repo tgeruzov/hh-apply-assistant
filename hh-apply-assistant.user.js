@@ -1717,27 +1717,6 @@
     const clean = cleanVid(vid);
     return clean ? `https://hh.ru/vacancy/${clean}` : '';
   }
-
-  function formatStatusLabel(status, code) {
-    const c = String(code || '').toUpperCase();
-    if (status === 'running') {
-      if (c === 'RESPONSE_PAGE' || c === 'SUBMITTING_RESPONSE_PAGE') return 'Страница отклика';
-      if (c === 'RETURNING_TO_LIST') return 'Возврат к поиску';
-      if (c === 'LOOP_STARTING') return 'Запуск цикла...';
-      return 'Автоматизация активна';
-    }
-    if (status === 'done') return 'Дневной лимит достигнут';
-    if (status === 'stopped') return 'Остановлено пользователем';
-    if (status === 'error') {
-      if (c === 'TAB_BUSY') return 'Активна другая вкладка';
-      if (c === 'STORAGE_BLOCKED') return 'Хранилище заблокировано';
-      if (c === 'CAPTCHA_DETECTED') return 'Обнаружена капча!';
-      if (c === 'RATE_LIMITED') return 'Ограничение запросов (429)';
-      return `Ошибка: ${c || 'SYSTEM'}`;
-    }
-    return 'Готов к запуску';
-  }
-
   // --- 2. SVG Icons ---
 
   const ICONS = {
@@ -1754,6 +1733,9 @@
   // --- 3. Shadow DOM Stylesheet ---
 
   const STYLES = `
+    /* ═══════════════════════════════════════════════════════════════
+       1. HOST & DESIGN TOKENS
+       ═══════════════════════════════════════════════════════════════ */
     :host {
       all: initial;
       position: fixed;
@@ -1787,13 +1769,14 @@
       padding: 0;
     }
 
+    /* ─── 2. ROOT POSITIONING ─────────────────────────────────────── */
     .hha-root {
       position: fixed;
       left: var(--center-x, 0px);
       bottom: 24px;
       top: auto;
       display: flex;
-      flex-direction: column-reverse;
+      flex-direction: column;
       align-items: center;
       gap: 8px;
       padding: 0;
@@ -1810,7 +1793,7 @@
     }
 
 
-    /* --- 1. Compact Pill (Glass Bevel Border 2px, Height: 36px) --- */
+    /* ─── 3. PILL (DYNAMIC ISLAND) ────────────────────────────────── */
     .hha-pill {
       font-size: 12px;
       line-height: 1.4;
@@ -2009,19 +1992,7 @@
       animation: hhaBadgePop 200ms cubic-bezier(0.25, 1, 0.5, 1);
     }
 
-    @keyframes hhaBadgePop {
-      0% {
-        transform: scale(1);
-      }
-      40% {
-        transform: scale(1.06);
-      }
-      100% {
-        transform: scale(1);
-      }
-    }
-
-    /* Quick Action Button: Soft pastel tone, capsule shape */
+    /* ─── 4. QUICK ACTION BUTTON ──────────────────────────────────── */
     .hha-btn-start,
     .hha-btn-stop,
     .hha-btn-quick {
@@ -2075,35 +2046,31 @@
       border-color: #f87171;
     }
 
-    .hha-btn-quick.hha-btn-done,
     .hha-btn-done {
       background: #f1f5f9;
       color: #475569;
       border: 1px solid #e2e8f0;
     }
 
-    .hha-btn-quick.hha-btn-done:hover,
     .hha-btn-done:hover {
       background: #e2e8f0;
       border-color: #cbd5e1;
       color: #0f172a;
     }
 
-    .hha-btn-quick.hha-btn-error,
     .hha-btn-error {
       background: #fee2e2;
       color: #b91c1c;
       border: 1px solid #fecaca;
     }
 
-    .hha-btn-quick.hha-btn-error:hover,
     .hha-btn-error:hover {
       background: #fecaca;
       border-color: #fca5a5;
     }
 
 
-    /* --- 2. Flyout Overlay Panel (390px, Glass Bevel Border 2px) --- */
+    /* ─── 5. FLYOUT PANEL ─────────────────────────────────────────── */
     .hha-flyout {
       font-size: 12px;
       line-height: 1.4;
@@ -2165,7 +2132,7 @@
       transform: scale(1) translateY(0);
     }
 
-    /* --- Segmented Tabs (Apple HIG Inset Track) --- */
+    /* ─── 6. TABS (SEGMENTED CONTROL) ─────────────────────────────── */
     .hha-tabs {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -2261,7 +2228,7 @@
       box-shadow: 0 0 0 2px #3b82f6, 0 1px 2px rgba(0, 0, 0, 0.05);
     }
 
-    /* --- Tab Panels Body --- */
+    /* ─── 7. TAB PANELS ───────────────────────────────────────────── */
     .hha-panels {
       flex: 1;
       display: flex;
@@ -2294,7 +2261,7 @@
       display: flex;
     }
 
-    /* Activity and Queue Block */
+    /* ─── 8. LOG & QUEUE CARD ─────────────────────────────────────── */
     .hha-log-card {
       flex: 1;
       min-height: 220px;
@@ -2564,7 +2531,7 @@
     }
 
 
-    /* DevTools Compact Row Stream */
+    /* ─── 9. DEVTOOLS LOG STREAM ──────────────────────────────────── */
     .hha-log-dev-row {
       display: flex;
       flex-direction: column;
@@ -2885,7 +2852,7 @@
       display: none !important;
     }
 
-    /* Custom Apple HIG Floating Tooltip (Dynamic Bounds-Clamped) */
+    /* ─── 10. TOOLTIP ─────────────────────────────────────────────── */
     .hha-tooltip {
       position: absolute;
       background: #0f172a;
@@ -2912,8 +2879,7 @@
       visibility: visible;
     }
 
-    /* Grouped Cards */
-    .hha-group,
+    /* ─── 11. SETTINGS CONTROLS ───────────────────────────────────── */
     .hha-card {
       background: #ffffff;
       border: 1px solid #e2e8f0;
@@ -2928,7 +2894,6 @@
       margin-bottom: 0;
     }
 
-    .hha-group-row,
     .hha-row {
       display: flex;
       align-items: center;
@@ -2938,7 +2903,6 @@
       box-sizing: border-box;
     }
 
-    .hha-group-row + .hha-group-row,
     .hha-row + .hha-row {
       border-top: 1px solid #f1f5f9;
     }
@@ -2955,12 +2919,6 @@
     }
 
     .hha-row-label {
-      font-size: 13px;
-      font-weight: 500;
-      color: #0f172a;
-    }
-
-    .hha-setting-label {
       font-size: 13px;
       font-weight: 500;
       color: #0f172a;
@@ -3077,7 +3035,7 @@
       font-weight: 600 !important;
     }
 
-    /* Apple HIG iOS Switch Toggle & Seamless Cover Letter Card */
+    /* ─── 12. SWITCH & COVER LETTER ───────────────────────────────── */
     .hha-card-cover {
       flex: 1;
       min-height: 0;
@@ -3191,8 +3149,7 @@
       background: #ffffff;
     }
 
-    .hha-cover-textarea,
-    .hha-textarea {
+    .hha-cover-textarea {
       width: 100%;
       flex: 1;
       height: 100%;
@@ -3220,8 +3177,7 @@
 
 
     .hha-cover-textarea:disabled,
-    .hha-cover-textarea.is-disabled,
-    .hha-textarea:disabled {
+    .hha-cover-textarea.is-disabled {
       opacity: 0.55;
       background: #f8fafc;
       color: #64748b;
@@ -3260,6 +3216,29 @@
       border-color: rgba(244, 63, 94, 0.4);
       font-weight: 600;
     }
+
+    /* ─── 13. KEYFRAMES ───────────────────────────────────────────── */
+
+    @keyframes hhaBadgePop {
+      0% {
+        transform: scale(1);
+      }
+      40% {
+        transform: scale(1.06);
+      }
+      100% {
+        transform: scale(1);
+      }
+    }
+
+    @keyframes hhaFadeIn {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
   `;
 
   // --- 4. Web Component Implementation (Closed Shadow DOM) ---
@@ -3277,8 +3256,7 @@
 
       // UI State
       this._isExpanded = false;
-      this._activeTab = 'settings'; // 'settings' | 'logs'
-      this._logFilterMode = 'queue'; // 'queue' | 'events'
+      this._activeTab = 'settings'; // 'settings' | 'queue' | 'logs'
       this._expandedLogIds = new Set();
       const initWinW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
       const initWinH = (typeof window !== 'undefined' && window.innerHeight) || 768;
@@ -3314,6 +3292,7 @@
       this._onDocClick = null;
       this._copyFeedbackTimer = null;
       this._copyBtnOrigHtml = null;
+      this._copyBtnOrigColor = null;
 
       // Bound Event Handlers
       this._onResize = this._onResize.bind(this);
@@ -3441,6 +3420,7 @@
         this._copyFeedbackTimer = null;
       }
       this._copyBtnOrigHtml = null;
+      this._copyBtnOrigColor = null;
     }
 
     updateStatus(status, code) {
@@ -3711,14 +3691,6 @@
       requestAnimationFrame(() => this._updateOverlayScrollbar());
     }
 
-    _switchLogMode(mode) {
-      if (mode === 'queue') {
-        this.setActiveTab('queue');
-      } else {
-        this.setActiveTab('logs');
-      }
-    }
-
     _syncLogActions() {
       if (!this._shadow) return;
       const count = this._queue ? this._queue.length : 0;
@@ -3817,7 +3789,7 @@
             </button>
           </div>
 
-          <!-- Flyout Overlay (360px wide, fixed 350px height) -->
+          <!-- Flyout Overlay (390px wide, max 420px height) -->
           <div class="hha-flyout" data-el="flyout">
             <!-- Floating Tooltip -->
             <div class="hha-tooltip" data-el="tooltip"></div>
@@ -3833,16 +3805,16 @@
             <div class="hha-panels">
               <!-- Tab 1: Settings (Настройки) -->
               <div class="hha-panel active" data-panel="settings">
-                <div class="hha-card hha-group">
-                  <div class="hha-row hha-group-row">
-                    <span class="hha-row-label hha-setting-label">Лимит откликов</span>
+                <div class="hha-card">
+                  <div class="hha-row">
+                    <span class="hha-row-label">Лимит откликов</span>
                     <div class="hha-stepper">
                       <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="-5" aria-label="Уменьшить лимит">−</button>
                       <input type="number" class="hha-stepper-input" data-el="setting-limit" min="1" max="200" step="5" value="50">
                       <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="5" aria-label="Увеличить лимит">+</button>
                     </div>
                   </div>
-                  <div class="hha-speed-row hha-group-row">
+                  <div class="hha-speed-row">
                     <span class="hha-row-label">Скорость</span>
                     <div class="hha-segmented-control">
                       <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="safe" data-tooltip="Безопасно: интервал 4–8 с">Безопасно</button>
@@ -3852,7 +3824,7 @@
                   </div>
                 </div>
 
-                <div class="hha-card hha-group hha-card-cover">
+                <div class="hha-card hha-card-cover">
                   <div class="hha-switch-row">
                     <label class="hha-switch-label" for="hha-use-cover-input">
                       <span class="hha-row-label">Отправлять сопроводительное письмо</span>
@@ -3863,7 +3835,7 @@
                     </label>
                   </div>
                   <div class="hha-cover-container" data-el="setting-cover-container">
-                    <textarea class="hha-cover-textarea hha-textarea" data-el="setting-cover-text" maxlength="5000" placeholder="Текст сопроводительного письма..."></textarea>
+                    <textarea class="hha-cover-textarea" data-el="setting-cover-text" maxlength="5000" placeholder="Текст сопроводительного письма..."></textarea>
                     <div class="hha-char-counter" data-el="setting-cover-counter">0 / 5000</div>
                   </div>
                 </div>
@@ -4253,7 +4225,7 @@
         e.stopPropagation();
         const logId = actionTarget.dataset.logId;
         this._copySingleLogToClipboard(logId, actionTarget);
-      } else if (action === 'clear-logs' || action === 'reset-history') {
+      } else if (action === 'clear-logs') {
         e.stopPropagation();
         this._liveFeed = [];
         this._expandedLogIds.clear();
@@ -4332,7 +4304,7 @@
     _formatLogItemForClipboard(item) {
       if (!item) return '';
       const time = String(item.time || '').startsWith('[') ? item.time : `[${item.time || formatTime()}]`;
-      const tag = item.tag ? `[${item.tag}]` : `[${item.badgeText || 'EVENT'}]`;
+      const tag = item.tag ? `[${item.tag}]` : '[EVENT]';
       const badge = item.metaBadge ? ` [${item.metaBadge}]` : '';
       const msg = item.msg || item.title || '';
 
@@ -4383,7 +4355,7 @@
       let textToCopy = '';
       const lines = [];
 
-      if (this._activeTab === 'queue' || this._logFilterMode === 'queue') {
+      if (this._activeTab === 'queue') {
         if (this._queue && this._queue.length > 0) {
           for (const item of this._queue) {
             const cVid = cleanVid(item.vid);
@@ -5151,7 +5123,6 @@
     clampCoordinates,
     formatTime,
     formatQueueReason,
-    formatStatusLabel,
     ICONS,
     STYLES
   };
