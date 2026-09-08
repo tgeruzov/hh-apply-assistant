@@ -31,11 +31,11 @@
   const VERSION = '2.0.0';
   const SELECTORS = {
     applyBtn: '[data-qa="vacancy-serp__vacancy_response"], button[data-qa="vacancy-serp__vacancy_response"]',
-    vacancyApply: '[data-qa="vacancy-response-link-top"], a[data-qa="vacancy-response-link-top"], [data-qa="vacancy-response-link-bottom"], a[data-qa="vacancy-response-link-bottom"]',
-    attachCoverBtn: '[data-qa="responded-success-attach-cover-letter"]',
+    vacancyApply: '[data-qa="vacancy-response-link-bottom"], [data-qa="vacancy-response-link-top"], a[data-qa*="vacancy-response-link"]',
+    attachCoverBtn: '[data-qa="responded-success-attach-cover-letter"], button[data-qa="responded-success-attach-cover-letter"]',
     attachCoverInModal: '[data-qa="responded-success-attach-cover-letter"], [data-qa="add-cover-letter"], button[data-qa="add-cover-letter"], [data-qa="vacancy-response-letter-toggle"]',
-    letterTextarea: 'textarea[name="text"], textarea[data-qa="vacancy-response-popup-form-letter-input"], textarea[name="coverLetter"]',
-    letterSubmit: '[data-qa="vacancy-response-letter-submit"], button[data-qa="vacancy-response-letter-submit"], button[data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit-popup"]',
+    letterTextarea: 'textarea[data-qa="vacancy-response-popup-form-letter-input"], textarea[name="text"], textarea[name="coverLetter"]',
+    letterSubmit: 'button[data-qa="vacancy-response-letter-submit"], [data-qa="vacancy-response-letter-submit"], button[data-qa="vacancy-response-submit-popup"]',
     responseChat: '[data-qa="vacancy-response-link-view-topic"]',
     nativeWrapper: '[data-qa="textarea-native-wrapper"]',
     relocationBtn: '[data-qa="relocation-warning-confirm"]',
@@ -1074,7 +1074,7 @@
       await actionPause();
       if (!isRunCurrent(runId)) return false;
     }
-    const submit = query('letterSubmit', scope);
+    const submit = query('letterSubmit', scope) || q('button[type="submit"]', scope);
     if (!submit) return false;
     await clickElement(submit);
     await actionPause();
@@ -1086,15 +1086,29 @@
     log('Scenario A: Attaching cover letter after direct apply', false, 'SCENARIO_A');
     await actionPause();
     if (!isRunCurrent(runId)) return 'STOPPED';
-    if (btn) await clickElement(btn);
-    await actionPause();
-    if (!isRunCurrent(runId)) return 'STOPPED';
-    const ta = await waitForElement('letterTextarea', 3000, activeAbortController?.signal);
-    if (!ta) {
-      notifySelectorFailure('letterTextarea', btn ? getVacancyCard(btn) : null);
+
+    const attachBtn = btn || query('attachCoverBtn');
+    if (attachBtn) {
+      await clickElement(attachBtn);
+    } else {
+      notifySelectorFailure('attachCoverBtn', globalThis.document?.body);
       return isRunCurrent(runId) ? 'OK' : 'STOPPED';
     }
-    await submitCoverLetterForm(null, runId);
+
+    await actionPause();
+    if (!isRunCurrent(runId)) return 'STOPPED';
+
+    const ta = await waitForElement('letterTextarea', 5000, activeAbortController?.signal);
+    if (!ta) {
+      notifySelectorFailure('letterTextarea', globalThis.document?.body);
+      return isRunCurrent(runId) ? 'OK' : 'STOPPED';
+    }
+
+    const modalScope = q('[data-qa="bottom-sheet-content"], [role="dialog"]') || globalThis.document?.body;
+    await submitCoverLetterForm(modalScope, runId);
+    if (!isRunCurrent(runId)) return 'STOPPED';
+
+    await waitForCondition(() => !q('[data-qa="bottom-sheet-content"], textarea[data-qa="vacancy-response-popup-form-letter-input"]') || isResponseConfirmed(), 5000, activeAbortController?.signal);
     return isRunCurrent(runId) ? 'OK' : 'STOPPED';
   }
 
