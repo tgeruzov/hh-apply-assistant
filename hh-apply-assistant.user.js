@@ -343,6 +343,7 @@
       title: collapseSpaces(entry.title || ''),
       employer: collapseSpaces(entry.employer || ''),
       salary: collapseSpaces(entry.salary || ''),
+      reason: collapseSpaces(entry.reason || entry.note || ''),
       addedAt: Number(entry.addedAt || entry.ts) || Date.now(),
       returnUrl: toSafeHhUrl(entry.returnUrl || '')
     };
@@ -1025,6 +1026,7 @@
       vid: vid || ('v_' + Math.random().toString(36).slice(2, 10)),
       url,
       returnUrl: getReturnUrl(),
+      reason: note,
       addedAt: Date.now(),
       title: parseVacancyTitle()
     };
@@ -1706,6 +1708,16 @@
     return 'Ручной';
   }
 
+  function cleanVid(vid) {
+    return vid ? String(vid).replace(/^v_/, '').trim() : '';
+  }
+
+  function toVacancyUrl(vid, url) {
+    if (url) return url;
+    const clean = cleanVid(vid);
+    return clean ? `https://hh.ru/vacancy/${clean}` : '';
+  }
+
   function formatStatusLabel(status, code) {
     const c = String(code || '').toUpperCase();
     if (status === 'running') {
@@ -1782,7 +1794,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 0;
+      gap: 8px;
       padding: 0;
       margin: 0;
       font-size: 0;
@@ -1824,10 +1836,8 @@
       white-space: nowrap;
       position: relative;
       transition: 
-        width 240ms cubic-bezier(0.16, 1, 0.3, 1),
-        border-color 240ms ease,
-        box-shadow 240ms ease,
-        padding 240ms ease;
+        box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1),
+        border-color 180ms ease;
     }
 
     .hha-pill:active {
@@ -1835,21 +1845,12 @@
     }
 
     .hha-root.is-expanded .hha-pill {
-      width: min(390px, calc(100vw - 16px));
-      max-width: min(390px, calc(100vw - 16px));
-      box-sizing: border-box;
-      justify-content: flex-start;
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: var(--hha-radius-full, 9999px);
-      z-index: 2;
-      padding: 3px;
-      box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
-      transition: width 280ms cubic-bezier(0.34, 1.25, 0.64, 1), box-shadow 200ms ease;
+      box-shadow: 0 8px 24px -4px rgba(15, 23, 42, 0.14), 0 2px 6px -1px rgba(15, 23, 42, 0.06);
+      border-color: #cbd5e1;
     }
 
-    .hha-root.is-expanded .hha-btn-quick {
-      margin-left: auto;
+    .hha-root.is-expanded .hha-pill-status-group {
+      background: #f1f5f9;
     }
 
     .hha-pill-status-group {
@@ -2102,7 +2103,7 @@
       background: #ffffff;
       border: 1px solid #e2e8f0;
       border-radius: var(--hha-radius-lg, 16px);
-      box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.04);
+      box-shadow: 0 16px 36px -6px rgba(15, 23, 42, 0.14), 0 6px 12px -3px rgba(15, 23, 42, 0.08);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -2113,32 +2114,24 @@
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
-      transform: translate3d(0, 10px, 0);
       will-change: opacity, transform;
       backface-visibility: hidden;
       transition:
-        opacity 220ms cubic-bezier(0.16, 1, 0.3, 1),
-        transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
-        visibility 220ms;
+        opacity 180ms cubic-bezier(0.16, 1, 0.3, 1),
+        transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+        visibility 180ms;
     }
 
     .hha-root.dir-up .hha-flyout {
-      margin-bottom: 8px;
-      margin-top: 0;
-      transform: translate3d(0, 10px, 0);
+      margin: 0;
+      transform-origin: center bottom;
+      transform: scale(0.96) translateY(6px);
     }
 
     .hha-root:not(.dir-up) .hha-flyout {
-      margin-top: 8px;
-      margin-bottom: 0;
-      transform: translate3d(0, -10px, 0);
-    }
-
-    .hha-root.is-expanded .hha-flyout {
-      opacity: 1;
-      visibility: visible;
-      pointer-events: auto;
-      transform: translate3d(0, 0, 0);
+      margin: 0;
+      transform-origin: center top;
+      transform: scale(0.96) translateY(-6px);
     }
 
     .hha-flyout.is-animating,
@@ -2149,16 +2142,11 @@
       overflow-y: hidden;
     }
 
-    .hha-root.is-expanded.dir-up .hha-flyout {
-      transform: translate3d(0, 0, 0);
-      margin-bottom: 8px;
-      margin-top: 0;
-    }
-
-    .hha-root.is-expanded:not(.dir-up) .hha-flyout {
-      transform: translate3d(0, 0, 0);
-      margin-top: 8px;
-      margin-bottom: 0;
+    .hha-root.is-expanded .hha-flyout {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: scale(1) translateY(0);
     }
 
     /* --- Segmented Tabs (Apple HIG) --- */
@@ -2166,7 +2154,7 @@
       display: grid;
       grid-template-columns: 1fr 1fr;
       background: #f1f5f9;
-      margin: 10px 12px 8px 12px;
+      margin: 6px;
       padding: 2px;
       border: 1px solid #e2e8f0;
       border-radius: var(--hha-radius-md, 10px);
@@ -2229,8 +2217,7 @@
       font-weight: 600;
     }
 
-    .hha-tab-btn.active:focus-visible,
-    .hha-tab-btn.active.is-focus-visible {
+    .hha-tab-btn.active:focus-visible {
       outline: none;
       box-shadow: 0 0 0 2px #3b82f6, 0 1px 2px rgba(0, 0, 0, 0.05);
     }
@@ -2242,7 +2229,7 @@
       flex-direction: column;
       overflow: hidden;
       overflow-x: hidden;
-      padding: 0 12px 10px 12px;
+      padding: 0 6px 6px 6px;
       box-sizing: border-box;
       position: relative;
     }
@@ -2280,6 +2267,7 @@
       padding: 8px 10px;
       box-sizing: border-box;
       overflow: hidden;
+      position: relative;
     }
 
     .hha-log-header {
@@ -2348,7 +2336,7 @@
     }
 
     .hha-btn-copy-log,
-    .hha-btn-reset-session {
+    .hha-btn-clear-logs {
       font-weight: 500;
     }
 
@@ -2383,16 +2371,21 @@
     }
 
     .hha-log-empty {
-      height: 100%;
+      position: absolute;
+      top: calc(50% + 14px);
+      left: 0;
+      right: 0;
+      transform: translateY(-50%);
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      padding: 24px 16px;
+      padding: 0 16px;
       user-select: none;
       background: transparent;
       border: none;
+      pointer-events: none;
     }
 
     .hha-log-empty-icon {
@@ -2512,75 +2505,24 @@
       background: #fee2e2;
     }
 
-    /* DevTools Console & Filter Chips Styles */
-    .hha-log-chips {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 4px 0 6px 0;
-      border-bottom: 1px solid #e2e8f0;
-      margin-bottom: 4px;
-      flex-shrink: 0;
-    }
-
-    .hha-log-chip {
-      background: #f1f5f9;
-      border: 1px solid #e2e8f0;
-      border-radius: var(--hha-radius-micro, 4px);
-      padding: 2px 7px;
-      font-size: 10px;
-      font-weight: 500;
-      color: #64748b;
-      cursor: pointer;
+    /* Segmented Tab Error Badge */
+    .hha-seg-badge-error {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      transition: all 120ms ease;
-      font-family: inherit;
-      line-height: 1.3;
-    }
-
-    .hha-log-chip:hover {
-      background: #e2e8f0;
-      color: #0f172a;
-    }
-
-    .hha-log-chip.is-active {
-      background: #0f172a;
-      color: #ffffff;
-      border-color: #0f172a;
-      font-weight: 600;
-    }
-
-    .hha-log-chip.chip-apply.is-active {
-      background: #059669;
-      border-color: #059669;
-      color: #ffffff;
-    }
-
-    .hha-log-chip.chip-filter.is-active {
-      background: #7c3aed;
-      border-color: #7c3aed;
-      color: #ffffff;
-    }
-
-    .hha-log-chip.chip-error.is-active {
-      background: #dc2626;
-      border-color: #dc2626;
-      color: #ffffff;
-    }
-
-    .hha-chip-count {
-      font-size: 9px;
+      justify-content: center;
+      min-width: 15px;
+      height: 15px;
       padding: 0 4px;
-      border-radius: 9999px;
-      background: rgba(0, 0, 0, 0.08);
+      border-radius: var(--hha-radius-full, 9999px);
+      background: #fee2e2;
+      color: #b91c1c;
+      border: 1px solid #fca5a5;
+      font-size: 9px;
       font-weight: 700;
-    }
-
-    .hha-log-chip.is-active .hha-chip-count {
-      background: rgba(255, 255, 255, 0.25);
-      color: #ffffff;
+      line-height: 1;
+      box-sizing: border-box;
+      margin-left: 2px;
+      animation: hhaPopIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     /* DevTools Compact Row Stream */
@@ -2877,6 +2819,46 @@
       line-height: 1.35;
     }
 
+    .hha-log-detail-footer {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 6px;
+      padding-top: 5px;
+      border-top: 1px dashed #e2e8f0;
+    }
+
+    .hha-btn-copy-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: var(--hha-radius-xs, 6px);
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+      color: #475569;
+      font-size: 10px;
+      font-weight: 500;
+      cursor: pointer;
+      line-height: 1.2;
+      transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+    }
+
+    .hha-btn-copy-item:hover {
+      background: #f1f5f9;
+      color: #0f172a;
+      border-color: #94a3b8;
+    }
+
+    .hha-btn-copy-item:active {
+      background: #e2e8f0;
+    }
+
+    .hha-btn-copy-item.is-copied {
+      color: #15803d;
+      border-color: #86efac;
+      background: #f0fdf4;
+    }
+
     .hha-btn-clear-queue {
       color: #64748b;
     }
@@ -2933,43 +2915,6 @@
       color: #0f172a;
       font-weight: 600;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-    }
-
-    .hha-info-trigger {
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      color: #94a3b8;
-      background: transparent;
-      border: 1px solid #e2e8f0;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 10px;
-      font-weight: 700;
-      line-height: 1;
-      padding: 0;
-      margin-top: 1px;
-      position: relative;
-      transition: color 100ms ease, border-color 100ms ease, background-color 100ms ease;
-    }
-
-    .hha-info-trigger::before {
-      content: '';
-      position: absolute;
-      top: -6px;
-      left: -6px;
-      right: -6px;
-      bottom: -6px;
-      cursor: pointer;
-    }
-
-    .hha-info-trigger:hover,
-    .hha-info-trigger.active {
-      color: #0f172a;
-      border-color: #94a3b8;
-      background: #f1f5f9;
     }
 
     /* Custom Apple HIG Floating Tooltip (Dynamic Bounds-Clamped) */
@@ -3302,10 +3247,8 @@
 
     .hha-cover-textarea:focus,
     .hha-cover-textarea:focus-visible,
-    .hha-cover-textarea.is-focus-visible,
     .hha-textarea:focus,
-    .hha-textarea:focus-visible,
-    .hha-textarea.is-focus-visible {
+    .hha-textarea:focus-visible {
       outline: none;
       border: none;
       box-shadow: none !important;
@@ -3366,13 +3309,11 @@
         : null;
       this._assistant = null;
       this._unsubscribers = [];
-      this._notesByVid = Object.create(null);
 
       // UI State
       this._isExpanded = false;
       this._activeTab = 'settings'; // 'settings' | 'logs'
       this._logFilterMode = 'queue'; // 'queue' | 'events'
-      this._logCategoryFilter = 'all'; // 'all' | 'apply' | 'filter' | 'error'
       this._expandedLogIds = new Set();
       this._logCounter = 0;
       this._pillPos = { x: 100, y: 100 };
@@ -3587,14 +3528,9 @@
 
     updateLiveFeed(event) {
       if (!event) return;
-      if (event.action === 'manual' && event.vid && (event.note || event.reason)) {
-        this._notesByVid[event.vid] = event.note || event.reason;
-        const clean = String(event.vid).replace(/^v_/, '');
-        if (clean) this._notesByVid[clean] = event.note || event.reason;
-      }
 
-      const cleanVid = event.vid ? String(event.vid).replace(/^v_/, '') : '';
-      const url = event.url || (cleanVid ? `https://hh.ru/vacancy/${cleanVid}` : '');
+      const cVid = cleanVid(event.vid);
+      const url = toVacancyUrl(cVid, event.url);
       const time = event.time || formatTime(Date.now());
       const logId = event.id || 'log_' + (++this._logCounter || (this._logCounter = 1)) + '_' + Date.now();
 
@@ -3603,62 +3539,53 @@
       let msg = event.msg || event.title || 'Событие';
       let sub = event.sub || '';
       let metaBadge = event.metaBadge || '';
-      let category = 'all';
 
       if (event.action === 'applied' || tagType === 'apply') {
         tag = 'APPLY';
         tagType = 'apply';
-        category = 'apply';
         const emp = event.employer ? `${event.employer} • ` : '';
-        msg = `${emp}${event.title || (cleanVid ? `Вакансия #${cleanVid}` : 'Вакансия')}`;
-        sub = `ID: v_${cleanVid || 'N/A'}${event.employer ? ` • Компания: ${event.employer}` : ''} • HTTP 200 OK • Отклик успешно доставлен`;
+        msg = `${emp}${event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия')}`;
+        sub = `ID: v_${cVid || 'N/A'}${event.employer ? ` • Компания: ${event.employer}` : ''} • HTTP 200 OK • Отклик успешно доставлен`;
         metaBadge = '200 OK';
       } else if (event.action === 'skipped' || tagType === 'filter') {
         tag = 'FILTER';
         tagType = 'filter';
-        category = 'filter';
-        msg = `${event.title || (cleanVid ? `Вакансия #${cleanVid}` : 'Вакансия')}`;
+        msg = `${event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия')}`;
         sub = `Причина отсева: ${event.reason || 'не соответствует фильтрам поиска'}`;
         metaBadge = 'отсев';
       } else if (event.action === 'manual' || tagType === 'queue') {
         tag = 'QUEUE';
         tagType = 'queue';
-        category = 'all';
-        msg = `В очередь: ${event.title || (cleanVid ? `Вакансия #${cleanVid}` : 'Вакансия')}`;
+        msg = `В очередь: ${event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия')}`;
         sub = `Причина: ${formatQueueReason(event.note || event.reason)}`;
         metaBadge = 'очередь';
       } else if (event.action === 'error' || tagType === 'error') {
         tag = event.tag || 'ERROR';
         tagType = 'error';
-        category = 'error';
         msg = event.msg || event.reason || event.error || 'Сбой выполнения запроса';
         sub = event.sub || 'Ошибка API: требуется подтверждение или проверка суточных лимитов';
         metaBadge = event.metaBadge || 'ERR';
       } else if (event.action === 'scan' || tagType === 'scan') {
         tag = 'SCAN';
         tagType = 'scan';
-        category = 'all';
         msg = event.msg || `Поиск вакансий (страница ${event.page || 1})`;
         sub = event.sub || `Найдено элементов в выдаче: ${event.found || 20}`;
         metaBadge = `${event.found || 20} вак.`;
       } else if (event.action === 'delay' || tagType === 'delay') {
         tag = 'DELAY';
         tagType = 'delay';
-        category = 'all';
         msg = event.msg || `Анти-спам задержка`;
         sub = event.sub || `Пауза безопасности перед следующим действием`;
         metaBadge = event.delay ? `${event.delay}s` : '1.6s';
       } else if (event.action === 'cover' || tagType === 'cover') {
         tag = 'COVER';
         tagType = 'cover';
-        category = 'all';
         msg = event.msg || `Сопроводительное письмо`;
         sub = event.sub || `Сгенерировано письмо (${event.chars || 178} симв.)`;
         metaBadge = `${event.chars || 178} с.`;
       } else if (event.action === 'status' || tagType === 'status') {
         tag = 'STATUS';
         tagType = 'status';
-        category = 'all';
         msg = event.msg || `Статус цикла: ${event.status || 'активен'}`;
         sub = event.sub || '';
         metaBadge = event.status ? String(event.status).toUpperCase() : 'OK';
@@ -3669,12 +3596,11 @@
         time,
         tag,
         tagType,
-        category,
         msg,
         sub,
         employer: event.employer || '',
         metaBadge,
-        vid: cleanVid,
+        vid: cVid,
         url,
         selector: event.selector || '',
         selectorName: event.selectorName || '',
@@ -3782,7 +3708,7 @@
             }
             this._updatePosition();
           }
-        }, 240);
+        }, 190);
       } else {
         this._isAnimating = false;
       }
@@ -3845,25 +3771,11 @@
         }
       }
 
-      // Reset and Copy buttons: visible only in events mode
-      const resetBtn = this._shadow.querySelector('[data-action="reset-history"]');
+      // Clear logs and Copy buttons: visible only in events mode
+      const resetBtn = this._shadow.querySelector('[data-action="clear-logs"]') || this._shadow.querySelector('[data-action="reset-history"]');
       const copyBtn = this._shadow.querySelector('[data-action="copy-logs"]') || this._shadow.querySelector('[data-el="copy-logs-btn"]');
       if (resetBtn) resetBtn.style.display = isQueue ? 'none' : 'inline-flex';
       if (copyBtn) copyBtn.style.display = isQueue ? 'none' : 'inline-flex';
-
-      // Quick filter chips: visible only in events mode
-      const chipsEl = this._shadow.querySelector('[data-el="log-chips"]');
-      if (chipsEl) chipsEl.style.display = isQueue ? 'none' : 'flex';
-    }
-
-    _setLogCategoryFilter(category) {
-      if (!['all', 'apply', 'filter', 'error'].includes(category)) return;
-      this._logCategoryFilter = category;
-      if (this._shadow) {
-        const chipBtns = this._shadow.querySelectorAll('.hha-log-chip');
-        chipBtns.forEach(btn => btn.classList.toggle('is-active', btn.dataset.filter === category));
-      }
-      this._syncLogs();
     }
 
     _toggleLogDetail(logId, rowEl) {
@@ -3924,7 +3836,6 @@
       this._shadow.innerHTML = `
         <style>${STYLES}</style>
         <div class="hha-root" data-el="root">
-          <!-- Collapsed Pill (34px high, solid white, fit-content) -->
           <div class="hha-pill" data-el="pill">
             <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и журнал">
               <div class="hha-pill-progress-fill" data-el="pill-progress-fill"></div>
@@ -3995,20 +3906,14 @@
                 <div class="hha-log-card">
                   <div class="hha-log-header">
                     <div class="hha-log-segmented" data-el="log-segmented">
-                      <button type="button" class="hha-log-seg-btn is-active" data-log-mode="queue" data-action="switch-log-mode">Очередь (<span data-el="queue-count">0</span>)</button>
-                      <button type="button" class="hha-log-seg-btn" data-log-mode="events" data-action="switch-log-mode">Журнал</button>
+                      <button type="button" class="hha-log-seg-btn is-active" data-log-mode="queue" data-action="switch-log-mode"><span>Очередь</span> <span>(<span data-el="queue-count">0</span>)</span></button>
+                      <button type="button" class="hha-log-seg-btn" data-log-mode="events" data-action="switch-log-mode"><span>Журнал</span><span class="hha-seg-badge-error" data-el="log-error-badge" style="display: none;">0</span></button>
                     </div>
                     <div class="hha-log-actions">
                       <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-clear-queue" data-action="clear-queue" data-el="clear-queue-btn" data-tooltip="Очистить очередь" disabled style="display: none;">${ICONS.trash}</button>
-                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-reset-session" data-action="reset-history" data-el="reset-session-btn" data-tooltip="Сбросить счетчик" style="display: none;">${ICONS.reset}</button>
+                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-clear-logs" data-action="clear-logs" data-el="clear-logs-btn" data-tooltip="Очистить журнал" style="display: none;">${ICONS.reset}</button>
                       <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-copy-log" data-action="copy-logs" data-el="copy-logs-btn" data-tooltip="Скопировать журнал" style="display: none;">${ICONS.copy}</button>
                     </div>
-                  </div>
-                  <div class="hha-log-chips" data-el="log-chips" style="display: none;">
-                    <button type="button" class="hha-log-chip is-active" data-action="set-log-filter" data-filter="all">Все <span class="hha-chip-count" data-el="chip-all-count">0</span></button>
-                    <button type="button" class="hha-log-chip chip-apply" data-action="set-log-filter" data-filter="apply">Отклики <span class="hha-chip-count" data-el="chip-apply-count">0</span></button>
-                    <button type="button" class="hha-log-chip chip-filter" data-action="set-log-filter" data-filter="filter">Отсев <span class="hha-chip-count" data-el="chip-filter-count">0</span></button>
-                    <button type="button" class="hha-log-chip chip-error" data-action="set-log-filter" data-filter="error">Ошибки <span class="hha-chip-count" data-el="chip-error-count">0</span></button>
                   </div>
                   <div class="hha-log-stream" data-el="log-stream">
                     <div class="hha-log-empty">
@@ -4209,21 +4114,19 @@
       } else if (action === 'copy-logs') {
         e.stopPropagation();
         this._copyLogsToClipboard();
-      } else if (action === 'set-log-filter') {
-        e.stopPropagation();
-        this._setLogCategoryFilter(actionTarget.dataset.filter);
       } else if (action === 'toggle-log-detail') {
         e.stopPropagation();
         const logId = actionTarget.dataset.logId;
         this._toggleLogDetail(logId, actionTarget);
-      } else if (action === 'reset-history') {
+      } else if (action === 'copy-single-log') {
+        e.stopPropagation();
+        const logId = actionTarget.dataset.logId;
+        this._copySingleLogToClipboard(logId, actionTarget);
+      } else if (action === 'clear-logs' || action === 'reset-history') {
         e.stopPropagation();
         this._liveFeed = [];
         this._expandedLogIds.clear();
         this._syncLogs();
-        if (this._assistant && typeof this._assistant.resetHistory === 'function') {
-          this._assistant.resetHistory();
-        }
       } else if (action === 'clear-queue') {
         e.stopPropagation();
         if (actionTarget.disabled || (typeof actionTarget.hasAttribute === 'function' && actionTarget.hasAttribute('disabled')) || this._queue.length === 0) {
@@ -4238,15 +4141,12 @@
       } else if (action === 'delete-queue-item') {
         e.stopPropagation();
         const vid = actionTarget.dataset.vid || actionTarget.dataset.cleanVid;
-        const cleanVid = (actionTarget.dataset.cleanVid || vid || '').replace(/^v_/, '');
+        const cVid = cleanVid(actionTarget.dataset.cleanVid || vid);
         if (vid) {
           if (this._assistant && typeof this._assistant.removeManualItem === 'function') {
             this._assistant.removeManualItem(vid);
           } else {
-            this._queue = this._queue.filter(it => {
-              const itVid = String(it.vid || '').replace(/^v_/, '');
-              return itVid !== cleanVid;
-            });
+            this._queue = this._queue.filter(it => cleanVid(it.vid) !== cVid);
             this._syncLogs();
           }
         }
@@ -4292,6 +4192,66 @@
       }
     }
 
+    _copyText(text) {
+      if (!text) return Promise.resolve(false);
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          return navigator.clipboard.writeText(text).catch(() => this._fallbackCopyText(text));
+        }
+      } catch (_) {}
+      return Promise.resolve(this._fallbackCopyText(text));
+    }
+
+    _formatLogItemForClipboard(item) {
+      if (!item) return '';
+      const time = String(item.time || '').startsWith('[') ? item.time : `[${item.time || formatTime()}]`;
+      const tag = item.tag ? `[${item.tag}]` : `[${item.badgeText || 'EVENT'}]`;
+      const badge = item.metaBadge ? ` [${item.metaBadge}]` : '';
+      const msg = item.msg || item.title || '';
+
+      const isDomOrDetailedError = Boolean(item.selector || item.expectedCss || item.heuristic || item.contextSnippet);
+
+      if (isDomOrDetailedError) {
+        const parts = [`${time} ${tag}${badge} ${msg}`];
+        if (item.url) parts.push(`  URL: ${item.url}`);
+        if (item.selector) parts.push(`  Селектор: ${item.selector}${item.selectorName ? ` (${item.selectorName})` : ''}`);
+        if (item.expectedCss) parts.push(`  Ожидался CSS: ${item.expectedCss}`);
+        if (item.heuristic) parts.push(`  Эвристика: ${item.heuristic}`);
+        if (item.vid) parts.push(`  ID вакансии: v_${item.vid}`);
+        if (item.employer) parts.push(`  Компания: ${item.employer}`);
+        if (item.contextSnippet) {
+          parts.push('  HTML родителя:');
+          const snippetLines = String(item.contextSnippet).trim().split(/\r?\n/);
+          snippetLines.forEach(l => parts.push(`    ${l}`));
+        }
+        return parts.join('\n');
+      }
+
+      const idPart = item.vid ? ` (v_${item.vid}${item.url ? ' / ' + item.url : ''})` : (item.url ? ` (${item.url})` : '');
+      const sub = item.sub ? ` • ${item.sub}` : '';
+      return `${time} ${tag} ${msg}${idPart}${sub}`;
+    }
+
+    _copySingleLogToClipboard(logId, btnEl) {
+      if (!logId || !this._liveFeed) return;
+      const item = this._liveFeed.find(l => l.id === logId);
+      if (!item) return;
+      const textToCopy = this._formatLogItemForClipboard(item);
+      if (!textToCopy) return;
+
+      this._copyText(textToCopy);
+
+      if (btnEl) {
+        const origHtml = btnEl.innerHTML;
+        btnEl.classList.add('is-copied');
+        btnEl.innerHTML = `${ICONS.check} <span>Скопировано</span>`;
+        setTimeout(() => {
+          btnEl.classList.remove('is-copied');
+          btnEl.innerHTML = origHtml;
+        }, 1500);
+      }
+    }
+
     _copyLogsToClipboard() {
       let textToCopy = '';
       const lines = [];
@@ -4299,55 +4259,30 @@
       if (this._logFilterMode === 'queue') {
         if (this._queue && this._queue.length > 0) {
           for (const item of this._queue) {
-            const cleanVid = item.vid ? String(item.vid).replace(/^v_/, '') : '';
-            const url = item.url || (cleanVid ? `https://hh.ru/vacancy/${cleanVid}` : '');
-            const idUrl = cleanVid && url ? `${cleanVid} / ${url}` : (cleanVid || url || '');
+            const cVid = cleanVid(item.vid);
+            const url = toVacancyUrl(cVid, item.url);
+            const idUrl = cVid && url ? `${cVid} / ${url}` : (cVid || url || '');
             const suffix = idUrl ? ` (${idUrl})` : '';
             const time = item.time ? (String(item.time).startsWith('[') ? item.time : `[${item.time}]`) : `[${formatTime()}]`;
             const badge = 'В очередь';
             const title = item.title || 'Вакансия';
             lines.push(`${time} [${badge}] ${title}${suffix}`);
           }
+          textToCopy = lines.join('\n');
         }
       } else {
         if (this._liveFeed && this._liveFeed.length > 0) {
-          const activeCat = this._logCategoryFilter || 'all';
-          const filtered = this._liveFeed.filter(item => {
-            if (activeCat === 'all') return true;
-            if (activeCat === 'apply') return item.category === 'apply' || item.tagType === 'apply';
-            if (activeCat === 'filter') return item.category === 'filter' || item.tagType === 'filter';
-            if (activeCat === 'error') return item.category === 'error' || item.tagType === 'error';
-            return true;
-          });
-
-          for (const item of filtered) {
-            const time = String(item.time || '').startsWith('[') ? item.time : `[${item.time || formatTime()}]`;
-            const tag = item.tag ? `[${item.tag}]` : `[${item.badgeText || 'EVENT'}]`;
-            const msg = item.msg || item.title || '';
-            const idPart = item.vid ? ` (v_${item.vid}${item.url ? ' / ' + item.url : ''})` : '';
-            const sub = item.sub ? ` • ${item.sub}` : '';
-            lines.push(`${time} ${tag} ${msg}${idPart}${sub}`);
-          }
+          const formattedItems = this._liveFeed.map(item => this._formatLogItemForClipboard(item)).filter(Boolean);
+          const hasMultiline = formattedItems.some(str => str.includes('\n'));
+          textToCopy = hasMultiline ? formattedItems.join('\n\n') : formattedItems.join('\n');
         }
       }
 
-      if (lines.length > 0) {
-        textToCopy = lines.join('\n');
-      } else {
+      if (!textToCopy) {
         textToCopy = 'Нет недавних действий';
       }
 
-      try {
-        if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-          navigator.clipboard.writeText(textToCopy).catch(() => {
-            this._fallbackCopyText(textToCopy);
-          });
-        } else {
-          this._fallbackCopyText(textToCopy);
-        }
-      } catch (_) {
-        this._fallbackCopyText(textToCopy);
-      }
+      this._copyText(textToCopy);
 
       const copyBtn = this._shadow ? (this._shadow.querySelector('[data-action="copy-logs"]') || this._shadow.querySelector('[data-el="copy-logs-btn"]')) : null;
       if (copyBtn) {
@@ -4620,8 +4555,8 @@
 
       // Determine open direction dynamically based on available screen space
       const flyoutH = 420;
-      const spaceBelow = winH - (this._pillPos.y + 36 + 8);
-      const spaceAbove = this._pillPos.y - 8;
+      const spaceBelow = Math.max(0, winH - (this._pillPos.y + 36) - 8);
+      const spaceAbove = Math.max(0, this._pillPos.y - 8);
 
       let opensUp = false;
       if (this._isPointerDown && this._dragOpenDirection !== null) {
@@ -4833,6 +4768,23 @@
         queueCountEl.textContent = String(count);
       }
 
+      // Update error badge on Journal tab button
+      let countError = 0;
+      if (this._liveFeed && this._liveFeed.length > 0) {
+        for (const it of this._liveFeed) {
+          if (it.category === 'error' || it.tagType === 'error') countError++;
+        }
+      }
+      const errBadge = this._shadow.querySelector('[data-el="log-error-badge"]');
+      if (errBadge) {
+        if (countError > 0) {
+          errBadge.textContent = String(countError);
+          errBadge.style.display = 'inline-flex';
+        } else {
+          errBadge.style.display = 'none';
+        }
+      }
+
       // Sync action buttons visibility based on mode
       this._syncLogActions();
 
@@ -4847,10 +4799,9 @@
         if (this._queue && this._queue.length > 0) {
           this._queue.forEach(item => {
             const rawVid = item.vid ? String(item.vid) : '';
-            const cleanVid = rawVid.replace(/^v_/, '');
-            const targetUrl = item.url || (cleanVid ? `https://hh.ru/vacancy/${cleanVid}` : '');
-            const reason = item.note || item.reason || (rawVid && this._notesByVid && this._notesByVid[rawVid]) || (cleanVid && this._notesByVid && this._notesByVid[cleanVid]) || '';
-            const reasonText = formatQueueReason(reason);
+            const cVid = cleanVid(rawVid);
+            const targetUrl = toVacancyUrl(cVid, item.url);
+            const reasonText = formatQueueReason(item.reason || item.note);
 
             items.push({
               time: item.time || formatTime(),
@@ -4858,61 +4809,21 @@
               tagText: reasonText,
               title: item.title || 'Вакансия',
               url: targetUrl,
-              vid: cleanVid,
+              vid: cVid,
               rawVid: rawVid,
               isQueue: true
             });
           });
         }
       } else {
-        // Compute category counts for chips
-        let countAll = 0;
-        let countApply = 0;
-        let countFilter = 0;
-        let countError = 0;
-
-        if (this._liveFeed && this._liveFeed.length > 0) {
-          countAll = this._liveFeed.length;
-          for (const it of this._liveFeed) {
-            if (it.category === 'apply' || it.tagType === 'apply') countApply++;
-            else if (it.category === 'filter' || it.tagType === 'filter') countFilter++;
-            else if (it.category === 'error' || it.tagType === 'error') countError++;
-          }
-        }
-
-        const chipAll = this._shadow.querySelector('[data-el="chip-all-count"]');
-        const chipApply = this._shadow.querySelector('[data-el="chip-apply-count"]');
-        const chipFilter = this._shadow.querySelector('[data-el="chip-filter-count"]');
-        const chipError = this._shadow.querySelector('[data-el="chip-error-count"]');
-
-        if (chipAll) chipAll.textContent = String(countAll);
-        if (chipApply) chipApply.textContent = String(countApply);
-        if (chipFilter) chipFilter.textContent = String(countFilter);
-        if (chipError) chipError.textContent = String(countError);
-
-        // Events mode: filter by active category chip
-        const activeCat = this._logCategoryFilter || 'all';
-        const filtered = (this._liveFeed || []).filter(item => {
-          if (activeCat === 'all') return true;
-          if (activeCat === 'apply') return item.category === 'apply' || item.tagType === 'apply';
-          if (activeCat === 'filter') return item.category === 'filter' || item.tagType === 'filter';
-          if (activeCat === 'error') return item.category === 'error' || item.tagType === 'error';
-          return true;
-        });
-
-        filtered.forEach(item => {
+        // Events mode: chronological stream of all events
+        (this._liveFeed || []).forEach(item => {
           items.push(item);
         });
       }
 
       if (items.length === 0) {
-        let emptyText = isQueueMode ? 'Очередь пуста' : 'Нет записей в журнале';
-        if (!isQueueMode) {
-          const activeCat = this._logCategoryFilter || 'all';
-          if (activeCat === 'error') emptyText = 'Ошибок не обнаружено ✓';
-          else if (activeCat === 'apply') emptyText = 'Нет отправленных откликов';
-          else if (activeCat === 'filter') emptyText = 'Нет отфильтрованных вакансий';
-        }
+        const emptyText = isQueueMode ? 'Очередь пуста' : 'Нет записей в журнале';
         list.innerHTML = `
           <div class="hha-log-empty">
             <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
@@ -5000,6 +4911,11 @@
                       <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="hha-log-detail-url" onclick="event.stopPropagation();">${escapeHtml(item.url)}</a>
                     </div>
                   ` : ''}
+                </div>
+                <div class="hha-log-detail-footer">
+                  <button type="button" class="hha-btn-copy-item" data-action="copy-single-log" data-log-id="${escapeHtml(item.id)}">
+                    ${ICONS.copy} <span>Скопировать детали</span>
+                  </button>
                 </div>
               </div>
             </div>
