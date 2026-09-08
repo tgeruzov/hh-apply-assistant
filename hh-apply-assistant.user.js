@@ -1204,6 +1204,53 @@
     return 'FAIL';
   }
 
+  async function simulateHumanReading(vid, runId = currentRunId) {
+    if (!isRunCurrent(runId)) return;
+    const doc = globalThis.document;
+    const win = globalThis.window;
+    if (!doc || !win) return;
+
+    const totalHeight = Math.max(doc.body?.scrollHeight || 0, doc.documentElement?.scrollHeight || 0);
+    const viewportHeight = win.innerHeight || 800;
+    const maxScroll = Math.max(0, totalHeight - viewportHeight);
+    if (maxScroll < 150) return;
+
+    // Random viewing depth between 45% and 75%
+    const pct = 0.45 + Math.random() * 0.30;
+    const targetY = Math.round(maxScroll * pct);
+
+    // 2 to 4 micro-steps simulating natural pauses while reading
+    const steps = Math.floor(Math.random() * 3) + 2;
+    const t = timings();
+    const minDelay = Math.max(1200, Math.round(t.delay[0] * 0.7));
+    const maxDelay = Math.round(t.delay[1] * 0.85);
+    const totalDuration = randBetween(minDelay, maxDelay);
+    const stepDelay = Math.round(totalDuration / steps);
+
+    const title = parseVacancyTitle();
+    log(`Изучение вакансии (просмотр ~${Math.round(pct * 100)}%, пауза ${(totalDuration / 1000).toFixed(1)} с)`, false, 'HUMAN_READING', {
+      vid, pct: Math.round(pct * 100), duration: totalDuration
+    });
+    events.emit('entity', {
+      vid,
+      title,
+      url: globalThis.location?.href || '',
+      action: 'viewing',
+      msg: title ? `${title} (~${Math.round(pct * 100)}%)` : `Изучение вакансии (~${Math.round(pct * 100)}%)`
+    });
+
+    for (let i = 1; i <= steps; i++) {
+      if (!isRunCurrent(runId)) return;
+      const curY = Math.round((targetY / steps) * i);
+      try {
+        win.scrollTo({ top: curY, behavior: 'smooth' });
+      } catch (_) {
+        win.scroll?.(0, curY);
+      }
+      await wait(stepDelay);
+    }
+  }
+
   async function handleVacancyPage(vid, runId = currentRunId) {
     try {
       if (detectAlreadyApplied()) {
@@ -1212,6 +1259,11 @@
         returnToList(vid, { markProcessed: true, runId });
         return 'OK';
       }
+
+      // Simulate human-like reading (45-75% scroll with random stops)
+      await simulateHumanReading(vid, runId);
+      if (!isRunCurrent(runId)) return 'STOPPED';
+
       const applyBtn = await waitForCondition(() => query('vacancyApply'), 4000, activeAbortController?.signal);
       if (!applyBtn) {
         notifySelectorFailure('vacancyApply', globalThis.document?.body);
@@ -3342,6 +3394,7 @@
         limit: 50,
         preset: 'balanced',
         useCover: true,
+        openVacancy: true,
         coverText: '',
         skipHidden: true
       };
