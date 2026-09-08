@@ -1790,9 +1790,10 @@
     .hha-root {
       position: fixed;
       left: var(--center-x, var(--hud-center-x, 0px));
-      top: 0;
+      bottom: var(--hud-bottom, 24px);
+      top: auto;
       display: flex;
-      flex-direction: column;
+      flex-direction: column-reverse;
       align-items: center;
       gap: 8px;
       padding: 0;
@@ -1812,27 +1813,29 @@
       transition: none;
     }
 
-    /* --- 1. Compact Pill (Frosted Glass, Height: 34px) --- */
+    /* --- 1. Compact Pill (Glass Bevel Border 2px, Height: 36px) --- */
     .hha-pill {
       font-size: 12px;
       line-height: 1.4;
       pointer-events: auto;
       display: inline-flex;
       align-items: center;
-      height: 34px;
+      height: 36px;
       width: fit-content;
       min-width: auto;
       max-width: min(390px, calc(100vw - 16px));
-      padding: 3px;
+      padding: 2px;
       gap: 4px;
       border-radius: var(--hha-radius-full, 9999px);
-      border: 1px solid #cbd5e1;
-      background: rgba(255, 255, 255, 0.94);
-      -webkit-backdrop-filter: blur(16px);
-      backdrop-filter: blur(16px);
+      border: 2px solid rgba(203, 213, 225, 0.9);
+      background: #ffffff;
       box-sizing: border-box;
       overflow: hidden;
-      box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.12), 0 2px 6px -1px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.04);
+      box-shadow: 
+        inset 0 1px 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.4),
+        0 4px 16px -2px rgba(15, 23, 42, 0.12),
+        0 2px 6px -1px rgba(15, 23, 42, 0.06);
       cursor: grab;
       touch-action: none;
       white-space: nowrap;
@@ -1847,12 +1850,16 @@
     }
 
     .hha-root.is-expanded .hha-pill {
-      box-shadow: 0 8px 24px -4px rgba(15, 23, 42, 0.16), 0 2px 6px -1px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.05);
-      border-color: #94a3b8;
+      box-shadow: 
+        inset 0 1px 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.4),
+        0 8px 24px -4px rgba(15, 23, 42, 0.16),
+        0 2px 6px -1px rgba(15, 23, 42, 0.08);
     }
 
+    .hha-pill-status-group:hover,
     .hha-root.is-expanded .hha-pill-status-group {
-      background: #f1f5f9;
+      background: #e2e8f0;
     }
 
     .hha-pill-status-group {
@@ -1868,12 +1875,13 @@
       height: var(--hha-control-height, 28px);
       min-height: var(--hha-control-height, 28px);
       padding: 0 10px;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
+      background: #f1f5f9;
+      border: none;
       box-sizing: border-box;
       line-height: 1;
       vertical-align: middle;
       outline: none;
+      transition: background 150ms ease;
     }
 
     .hha-pill-status {
@@ -1938,45 +1946,49 @@
       font-size: 12px;
       font-weight: 700;
       line-height: 1;
+      font-variant-numeric: tabular-nums;
       cursor: pointer;
       user-select: none;
       white-space: nowrap;
       flex-shrink: 0;
       vertical-align: middle;
-      max-width: 0;
+      width: 0;
+      min-width: 0;
+      max-width: none;
       opacity: 0;
-      transform: scale(0.35);
       margin-left: -4px; /* absorbs parent gap when hidden */
       overflow: hidden;
       visibility: hidden;
       pointer-events: none;
-      will-change: max-width, opacity, transform, padding, margin;
+      will-change: width, opacity, margin-left;
       transition: 
-        max-width 240ms cubic-bezier(0.16, 1, 0.3, 1),
-        padding 240ms cubic-bezier(0.16, 1, 0.3, 1),
-        margin 240ms cubic-bezier(0.16, 1, 0.3, 1),
-        transform 240ms cubic-bezier(0.16, 1, 0.3, 1),
-        opacity 200ms ease,
+        width 240ms cubic-bezier(0.16, 1, 0.3, 1),
+        margin-left 240ms cubic-bezier(0.16, 1, 0.3, 1),
+        opacity 180ms ease,
+        transform 100ms ease,
         visibility 240ms;
     }
 
     .hha-pill-queue-badge.is-visible,
     .hha-pill-queue-badge.visible {
-      max-width: 56px;
-      min-width: var(--hha-control-height, 28px);
-      padding: 0 9px;
+      width: 28px;
+      min-width: 0;
+      padding: 0;
       margin-left: 0;
       opacity: 1;
-      transform: scale(1);
       visibility: visible;
       pointer-events: auto;
       transition: 
-        max-width 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
-        padding 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
-        margin 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
-        transform 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
-        opacity 220ms ease,
-        visibility 280ms;
+        width 240ms cubic-bezier(0.16, 1, 0.3, 1),
+        margin-left 240ms cubic-bezier(0.16, 1, 0.3, 1),
+        opacity 180ms ease,
+        transform 100ms ease,
+        visibility 240ms;
+    }
+
+    .hha-pill-queue-badge.is-wide {
+      width: 36px;
+      padding: 0 4px;
     }
 
     .hha-pill-queue-badge:hover {
@@ -2091,7 +2103,7 @@
     }
 
 
-    /* --- 2. Flyout Overlay Panel (390px, Frosted Glass) --- */
+    /* --- 2. Flyout Overlay Panel (390px, Glass Bevel Border 2px) --- */
     .hha-flyout {
       font-size: 12px;
       line-height: 1.4;
@@ -2102,12 +2114,14 @@
       min-height: 160px;
       max-height: min(420px, calc(100vh - 56px));
       box-sizing: border-box;
-      background: rgba(255, 255, 255, 0.94);
-      -webkit-backdrop-filter: blur(16px);
-      backdrop-filter: blur(16px);
-      border: 1px solid #cbd5e1;
+      background: #f1f5f9;
+      border: 2px solid rgba(203, 213, 225, 0.9);
       border-radius: var(--hha-radius-lg, 16px);
-      box-shadow: 0 20px 40px -6px rgba(15, 23, 42, 0.18), 0 8px 16px -4px rgba(15, 23, 42, 0.1), 0 0 0 1px rgba(15, 23, 42, 0.05);
+      box-shadow: 
+        inset 0 1px 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.4),
+        0 20px 40px -6px rgba(15, 23, 42, 0.16),
+        0 8px 16px -4px rgba(15, 23, 42, 0.08);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -2126,16 +2140,11 @@
         visibility 180ms;
     }
 
+    .hha-root .hha-flyout,
     .hha-root.dir-up .hha-flyout {
       margin: 0;
       transform-origin: center bottom;
       transform: scale(0.96) translateY(6px);
-    }
-
-    .hha-root:not(.dir-up) .hha-flyout {
-      margin: 0;
-      transform-origin: center top;
-      transform: scale(0.96) translateY(-6px);
     }
 
     .hha-flyout.is-animating,
@@ -2153,14 +2162,14 @@
       transform: scale(1) translateY(0);
     }
 
-    /* --- Segmented Tabs (Apple HIG) --- */
+    /* --- Segmented Tabs (Apple HIG Inset Track) --- */
     .hha-tabs {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      background: #f1f5f9;
+      background: #e2e8f0;
       margin: 6px;
       padding: 2px;
-      border: 1px solid #e2e8f0;
+      border: 1px solid #cbd5e1;
       border-radius: var(--hha-radius-md, 10px);
       gap: 2px;
       flex-shrink: 0;
@@ -2268,6 +2277,7 @@
       background: #ffffff;
       border: 1px solid #e2e8f0;
       border-radius: var(--hha-radius-md, 10px);
+      box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.05);
       padding: 8px 10px;
       box-sizing: border-box;
       overflow: hidden;
@@ -2355,23 +2365,58 @@
       display: flex;
       flex-direction: column;
       gap: 4px;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
     }
 
     .hha-log-stream::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+
+    /* Floating Overlay Scrollbar (macOS / iOS capsule style) */
+    .hha-overlay-scrollbar {
+      position: absolute;
+      top: 48px;
+      bottom: 8px;
+      right: 3px;
+      width: 6px;
+      pointer-events: auto;
+      z-index: 10;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 200ms ease, visibility 200ms ease;
+      user-select: none;
+      cursor: pointer;
+    }
+
+    .hha-overlay-scrollbar.is-visible {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .hha-overlay-thumb {
+      position: absolute;
+      top: 0;
+      right: 0;
       width: 4px;
+      min-height: 24px;
+      border-radius: var(--hha-radius-full, 9999px);
+      background: rgba(148, 163, 184, 0.6);
+      cursor: grab;
+      touch-action: none;
+      transition: width 150ms ease, background-color 150ms ease;
     }
 
-    .hha-log-stream::-webkit-scrollbar-track {
-      background: transparent;
+    .hha-overlay-thumb:hover,
+    .hha-overlay-thumb.is-dragging {
+      width: 6px;
+      background: rgba(100, 116, 139, 0.85);
     }
 
-    .hha-log-stream::-webkit-scrollbar-thumb {
-      background: #cbd5e1;
-      border-radius: var(--hha-radius-micro, 4px);
-    }
-
-    .hha-log-stream::-webkit-scrollbar-thumb:hover {
-      background: #94a3b8;
+    .hha-overlay-thumb.is-dragging {
+      cursor: grabbing;
     }
 
     .hha-log-empty {
@@ -2954,6 +2999,7 @@
       background: #ffffff;
       border: 1px solid #e2e8f0;
       border-radius: var(--hha-radius-md, 10px);
+      box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.05);
       margin-bottom: 6px;
       overflow: visible;
       box-sizing: border-box;
@@ -3319,8 +3365,9 @@
       this._activeTab = 'settings'; // 'settings' | 'logs'
       this._logFilterMode = 'queue'; // 'queue' | 'events'
       this._expandedLogIds = new Set();
-      this._logCounter = 0;
-      this._pillPos = { x: 100, y: 100 };
+      const initWinW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
+      const initWinH = (typeof window !== 'undefined' && window.innerHeight) || 768;
+      this._pillPos = { x: Math.max(8, initWinW - 220), y: Math.max(8, initWinH - 36 - 24) };
       this._collapsedPillWidth = 166;
       this._isAnimating = false;
       this._liveFeed = [];
@@ -3705,6 +3752,9 @@
           if (root) root.classList.remove('is-animating');
           if (flyout) flyout.classList.remove('is-animating');
           this._animTimer = null;
+          if (this._isExpanded && this._activeTab === 'logs') {
+            this._updateOverlayScrollbar();
+          }
           if (!this._isExpanded && this._shadow) {
             const pill = this._shadow.querySelector('[data-el="pill"]');
             if (pill && typeof pill.offsetWidth === 'number' && pill.offsetWidth > 0 && pill.offsetWidth < 300) {
@@ -3740,6 +3790,10 @@
 
       const panels = this._shadow.querySelectorAll('.hha-panel');
       panels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabName));
+
+      if (tabName === 'logs') {
+        requestAnimationFrame(() => this._updateOverlayScrollbar());
+      }
     }
 
     _switchLogMode(mode) {
@@ -3776,7 +3830,7 @@
       }
 
       // Clear logs and Copy buttons: visible only in events mode
-      const resetBtn = this._shadow.querySelector('[data-action="clear-logs"]') || this._shadow.querySelector('[data-action="reset-history"]');
+      const resetBtn = this._shadow.querySelector('[data-action="clear-logs"]') || this._shadow.querySelector('[data-el="clear-logs-btn"]');
       const copyBtn = this._shadow.querySelector('[data-action="copy-logs"]') || this._shadow.querySelector('[data-el="copy-logs-btn"]');
       if (resetBtn) resetBtn.style.display = isQueue ? 'none' : 'inline-flex';
       if (copyBtn) copyBtn.style.display = isQueue ? 'none' : 'inline-flex';
@@ -3797,6 +3851,7 @@
         this._expandedLogIds.add(logId);
         if (rowEl) rowEl.classList.add('is-expanded');
       }
+      this._updateOverlayScrollbar();
     }
 
     getPosition() {
@@ -3827,10 +3882,11 @@
       const targetW = Math.min(390, Math.max(100, winW - 16));
       const maxW = Math.max(targetW, pillW);
       const offset = (maxW - pillW) / 2;
-      const clamped = clampCoordinates(x - offset, y, maxW, 36, winW, winH, 8);
+      const bottomY = Math.max(8, winH - 36 - 24);
+      const clamped = clampCoordinates(x - offset, bottomY, maxW, 36, winW, winH, 8);
       return {
         x: Math.round(clamped.x + offset),
-        y: clamped.y
+        y: bottomY
       };
     }
 
@@ -3924,6 +3980,9 @@
                       <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
                       <div class="hha-log-empty-text">Очередь пуста</div>
                     </div>
+                  </div>
+                  <div class="hha-overlay-scrollbar" data-el="log-scrollbar">
+                    <div class="hha-overlay-thumb" data-el="log-scroll-thumb"></div>
                   </div>
                 </div>
               </div>
@@ -4070,6 +4129,147 @@
       if (typeof document !== 'undefined') {
         document.addEventListener('click', this._onDocClick);
       }
+
+      this._initOverlayScrollbar();
+    }
+
+    _initOverlayScrollbar() {
+      const stream = this._shadow.querySelector('[data-el="log-stream"]');
+      const logCard = this._shadow.querySelector('.hha-log-card');
+      const scrollbar = this._shadow.querySelector('[data-el="log-scrollbar"]');
+      const thumb = this._shadow.querySelector('[data-el="log-scroll-thumb"]');
+      if (!stream || !logCard || !scrollbar || !thumb) return;
+
+      let isHovered = false;
+      let isDragging = false;
+      let hideTimer = null;
+
+      const scheduleHide = (delay = 800) => {
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => {
+          if (!isHovered && !isDragging) {
+            scrollbar.classList.remove('is-visible');
+          }
+        }, delay);
+      };
+
+      const showScrollbar = () => {
+        if (stream.scrollHeight > stream.clientHeight + 1) {
+          this._updateOverlayScrollbar();
+          scrollbar.classList.add('is-visible');
+        }
+      };
+
+      stream.addEventListener('scroll', () => {
+        this._updateOverlayScrollbar();
+        showScrollbar();
+        if (!isHovered && !isDragging) {
+          scheduleHide(800);
+        }
+      }, { passive: true });
+
+      logCard.addEventListener('mouseenter', () => {
+        isHovered = true;
+        if (hideTimer) clearTimeout(hideTimer);
+        showScrollbar();
+      });
+
+      logCard.addEventListener('mouseleave', () => {
+        isHovered = false;
+        if (!isDragging) {
+          scheduleHide(300);
+        }
+      });
+
+      // Pointer drag interaction on thumb
+      let startY = 0;
+      let startScrollTop = 0;
+
+      const onPointerMove = (e) => {
+        if (!isDragging) return;
+        const deltaY = e.clientY - startY;
+        const trackH = scrollbar.clientHeight;
+        const scrollH = stream.scrollHeight;
+        const clientH = stream.clientHeight;
+        const thumbH = thumb.offsetHeight || 24;
+        const maxThumbTop = trackH - thumbH;
+        const maxScrollTop = scrollH - clientH;
+        if (maxThumbTop > 0 && maxScrollTop > 0) {
+          const scrollDelta = (deltaY / maxThumbTop) * maxScrollTop;
+          stream.scrollTop = startScrollTop + scrollDelta;
+        }
+      };
+
+      const onPointerUp = (e) => {
+        if (!isDragging) return;
+        isDragging = false;
+        thumb.classList.remove('is-dragging');
+        try { thumb.releasePointerCapture(e.pointerId); } catch (_) {}
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+        window.removeEventListener('pointercancel', onPointerUp);
+        if (!isHovered) {
+          scheduleHide(800);
+        }
+      };
+
+      thumb.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        isDragging = true;
+        startY = e.clientY;
+        startScrollTop = stream.scrollTop;
+        thumb.classList.add('is-dragging');
+        scrollbar.classList.add('is-visible');
+        try { thumb.setPointerCapture(e.pointerId); } catch (_) {}
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('pointercancel', onPointerUp);
+      });
+
+      // Click on scrollbar track to jump
+      scrollbar.addEventListener('pointerdown', (e) => {
+        if (e.target === thumb) return;
+        e.preventDefault();
+        const rect = scrollbar.getBoundingClientRect();
+        const clickY = e.clientY - rect.top;
+        const trackH = scrollbar.clientHeight;
+        const scrollH = stream.scrollHeight;
+        const clientH = stream.clientHeight;
+        const thumbH = thumb.offsetHeight || 24;
+        const targetThumbTop = Math.max(0, Math.min(trackH - thumbH, clickY - thumbH / 2));
+        const maxThumbTop = trackH - thumbH;
+        const maxScrollTop = scrollH - clientH;
+        if (maxThumbTop > 0) {
+          stream.scrollTop = (targetThumbTop / maxThumbTop) * maxScrollTop;
+        }
+      });
+    }
+
+    _updateOverlayScrollbar() {
+      if (!this._shadow) return;
+      const stream = this._shadow.querySelector('[data-el="log-stream"]');
+      const scrollbar = this._shadow.querySelector('[data-el="log-scrollbar"]');
+      const thumb = this._shadow.querySelector('[data-el="log-scroll-thumb"]');
+      if (!stream || !scrollbar || !thumb) return;
+
+      const scrollH = stream.scrollHeight;
+      const clientH = stream.clientHeight;
+      const trackH = scrollbar.clientHeight;
+
+      if (scrollH <= clientH + 1 || trackH <= 0) {
+        scrollbar.classList.remove('is-visible');
+        thumb.style.height = '0px';
+        return;
+      }
+
+      const thumbH = Math.max(24, Math.round((clientH / scrollH) * trackH));
+      const maxScrollTop = scrollH - clientH;
+      const maxThumbTop = trackH - thumbH;
+      const thumbTop = maxScrollTop > 0 ? Math.round((stream.scrollTop / maxScrollTop) * maxThumbTop) : 0;
+
+      thumb.style.height = `${thumbH}px`;
+      thumb.style.transform = `translateY(${thumbTop}px)`;
     }
 
     _handleRootClick(e) {
@@ -4557,23 +4757,7 @@
       const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
       const pillW = this._getPillWidth();
 
-      // Determine open direction dynamically based on available screen space
-      const flyoutH = 420;
-      const spaceBelow = Math.max(0, winH - (this._pillPos.y + 36) - 8);
-      const spaceAbove = Math.max(0, this._pillPos.y - 8);
-
-      let opensUp = false;
-      if (this._isPointerDown && this._dragOpenDirection !== null) {
-        opensUp = this._dragOpenDirection;
-      } else if (spaceBelow < flyoutH && spaceAbove >= flyoutH) {
-        opensUp = true;
-      } else if (spaceAbove < flyoutH && spaceBelow >= flyoutH) {
-        opensUp = false;
-      } else {
-        opensUp = spaceAbove > spaceBelow;
-      }
-
-      root.classList.toggle('dir-up', opensUp);
+      root.classList.add('dir-up');
       root.classList.toggle('is-expanded', this._isExpanded);
 
       // Strict center alignment positioning (Center Anchor)
@@ -4592,21 +4776,15 @@
         root.style.setProperty('--center-x', `${clampedCenterX}px`);
       }
 
-      // Vertical positioning
-      if (opensUp) {
-        const bottomDist = Math.max(8, winH - (this._pillPos.y + 36));
-        root.style.top = 'auto';
-        root.style.bottom = `${bottomDist}px`;
-      } else {
-        root.style.top = `${this._pillPos.y}px`;
-        root.style.bottom = 'auto';
-      }
+      // Vertical positioning: permanently locked to bottom dock (24px)
+      root.style.top = 'auto';
+      root.style.bottom = '24px';
 
-      // Lock flyout height dynamically to available screen space
+      // Lock flyout height dynamically to available screen space above pill
       const flyout = this._shadow.querySelector('.hha-flyout');
       if (flyout) {
-        const availSpace = Math.floor(opensUp ? spaceAbove : spaceBelow);
-        const maxAvail = Math.max(100, Math.min(availSpace, winH - 44));
+        const spaceAbove = Math.max(0, winH - 68 - 8);
+        const maxAvail = Math.max(100, Math.min(spaceAbove, winH - 44));
         const finalH = Math.min(420, maxAvail);
         flyout.style.maxHeight = `${finalH}px`;
         flyout.style.height = `${finalH}px`;
@@ -4620,31 +4798,34 @@
       const targetW = Math.min(390, Math.max(100, winW - 16));
       const maxW = Math.max(targetW, pillW);
 
+      // Default position: Bottom-Right with 24px margin
+      const offset = (maxW - pillW) / 2;
+      const defX = Math.max(8, winW - maxW - 24 + offset);
+      const defY = Math.max(8, winH - 36 - 24);
+
       let pos = null;
       try {
         if (typeof localStorage !== 'undefined') {
-          const raw = localStorage.getItem('hha_hud_pos');
+          // Versioned storage key 'hha_hud_pos_v2' cleanly resets any legacy positions from when pill could be on top
+          const raw = localStorage.getItem('hha_hud_pos_v2');
           if (raw) pos = JSON.parse(raw);
         }
       } catch (_) {}
 
-      if (pos && typeof pos.x === 'number' && !isNaN(pos.x) && typeof pos.y === 'number' && !isNaN(pos.y)) {
-        this._pillPos = this._clampPillCoordinates(pos.x, pos.y, winW, winH);
+      if (pos && typeof pos.x === 'number' && !isNaN(pos.x)) {
+        this._pillPos = this._clampPillCoordinates(pos.x, defY, winW, winH);
       } else {
-        // Default position: Bottom-Right with 24px margin
-        const offset = (maxW - pillW) / 2;
-        const defX = Math.max(8, winW - maxW - 24 + offset);
-        const defY = Math.max(8, winH - 36 - 24);
         this._pillPos = this._clampPillCoordinates(defX, defY, winW, winH);
       }
 
+      this._persistPosition();
       this._updatePosition();
     }
 
     _persistPosition() {
       try {
         if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('hha_hud_pos', JSON.stringify({ x: this._pillPos.x, y: this._pillPos.y }));
+          localStorage.setItem('hha_hud_pos_v2', JSON.stringify({ x: this._pillPos.x, y: this._pillPos.y }));
         }
       } catch (_) {}
     }
@@ -4734,6 +4915,7 @@
           }
           const countChanged = prevCount > 0 && prevCount !== count;
           queueBadge.textContent = String(count);
+          queueBadge.classList.toggle('is-wide', count >= 10);
           queueBadge.style.display = '';
           const wasVisible = queueBadge.classList.contains('is-visible');
           queueBadge.classList.add('is-visible', 'visible');
@@ -4745,7 +4927,7 @@
           }
         } else {
           queueBadge.style.display = '';
-          queueBadge.classList.remove('is-visible', 'visible', 'is-popping');
+          queueBadge.classList.remove('is-visible', 'visible', 'is-popping', 'is-wide');
           if (this._badgeClearTimer) clearTimeout(this._badgeClearTimer);
           this._badgeClearTimer = setTimeout(() => {
             if (this._queue && this._queue.length === 0 && queueBadge) {
@@ -4834,6 +5016,7 @@
             <div class="hha-log-empty-text">${emptyText}</div>
           </div>
         `;
+        this._updateOverlayScrollbar();
         return;
       }
 
@@ -4926,6 +5109,8 @@
           `;
         }).join('');
       }
+
+      this._updateOverlayScrollbar();
     }
 
 
