@@ -1812,7 +1812,7 @@
       transition: none;
     }
 
-    /* --- 1. Compact Pill (Light Theme, Solid White, Height: 34px) --- */
+    /* --- 1. Compact Pill (Frosted Glass, Height: 34px) --- */
     .hha-pill {
       font-size: 12px;
       line-height: 1.4;
@@ -1826,11 +1826,13 @@
       padding: 3px;
       gap: 4px;
       border-radius: var(--hha-radius-full, 9999px);
-      border: 1px solid #e2e8f0;
-      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      background: rgba(255, 255, 255, 0.94);
+      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
       box-sizing: border-box;
       overflow: hidden;
-      box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
+      box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.12), 0 2px 6px -1px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.04);
       cursor: grab;
       touch-action: none;
       white-space: nowrap;
@@ -1845,8 +1847,8 @@
     }
 
     .hha-root.is-expanded .hha-pill {
-      box-shadow: 0 8px 24px -4px rgba(15, 23, 42, 0.14), 0 2px 6px -1px rgba(15, 23, 42, 0.06);
-      border-color: #cbd5e1;
+      box-shadow: 0 8px 24px -4px rgba(15, 23, 42, 0.16), 0 2px 6px -1px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.05);
+      border-color: #94a3b8;
     }
 
     .hha-root.is-expanded .hha-pill-status-group {
@@ -2089,7 +2091,7 @@
     }
 
 
-    /* --- 2. Flyout Overlay Panel (390px, Fixed Height) --- */
+    /* --- 2. Flyout Overlay Panel (390px, Frosted Glass) --- */
     .hha-flyout {
       font-size: 12px;
       line-height: 1.4;
@@ -2100,10 +2102,12 @@
       min-height: 160px;
       max-height: min(420px, calc(100vh - 56px));
       box-sizing: border-box;
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
+      background: rgba(255, 255, 255, 0.94);
+      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
+      border: 1px solid #cbd5e1;
       border-radius: var(--hha-radius-lg, 16px);
-      box-shadow: 0 16px 36px -6px rgba(15, 23, 42, 0.14), 0 6px 12px -3px rgba(15, 23, 42, 0.08);
+      box-shadow: 0 20px 40px -6px rgba(15, 23, 42, 0.18), 0 8px 16px -4px rgba(15, 23, 42, 0.1), 0 0 0 1px rgba(15, 23, 42, 0.05);
       display: flex;
       flex-direction: column;
       overflow: hidden;
