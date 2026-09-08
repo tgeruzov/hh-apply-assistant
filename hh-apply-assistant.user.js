@@ -982,7 +982,8 @@
     if (detectCaptcha()) return 'CAPTCHA';
     if (detectRateLimit()) return 'RATE_LIMIT';
     if (hasReliableRejectWarning()) return 'REJECT_WARNING';
-    if (query('relocationBtn', root)) return 'RELOCATION_WARNING';
+    const relocRootBtn = query('relocationBtn', root);
+    if (relocRootBtn && isVisible(relocRootBtn)) return 'RELOCATION_WARNING';
     if (query('letterTextarea', root) || query('attachCoverInModal', root) || query('letterSubmit', root) || q('[data-qa="vacancy-response-popup-form"]', root)) {
       return 'MODAL_OPEN';
     }
@@ -993,7 +994,10 @@
   }
 
   function detectResponseOutcomeOnce({ allowDocumentStrongText = false } = {}) {
-    const modal = q('[data-qa*="modal" i], [class*="modal" i], [role="dialog"]');
+    const relocBtn = query('relocationBtn');
+    if (relocBtn && isVisible(relocBtn)) return 'RELOCATION_WARNING';
+
+    const modal = q('[data-qa*="modal" i], [class*="modal" i], [role="dialog"], [data-qa="magritte-alert"], [data-qa="bottom-sheet-content"]');
     if (modal) {
       const outcome = detectResponseOutcomeInRoot(modal, true);
       if (outcome) return outcome;
@@ -1200,11 +1204,22 @@
     }
 
     if (outcome === 'RELOCATION_WARNING') {
-      const relocBtn = query('relocationBtn');
+      log('Предупреждение о релокации в другую страну: подтверждаем («Все равно откликнуться»)', false, 'RELOCATION_CONFIRM');
+      const relocBtn = query('relocationBtn') || q('[data-qa="relocation-warning-confirm"]');
       if (relocBtn) {
         await clickElement(relocBtn);
         await actionPause();
         if (!isRunCurrent(runId)) return 'STOPPED';
+
+        await waitForCondition(() => {
+          const btn = query('relocationBtn') || q('[data-qa="relocation-warning-confirm"]');
+          return !btn || !isVisible(btn);
+        }, 3000, activeAbortController?.signal);
+
+        const nextOutcome = await waitForCondition(() => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()), 8000, activeAbortController?.signal);
+        if (nextOutcome) {
+          return await dispatchOutcome(nextOutcome, vid, runId);
+        }
         if (vid) commitSuccess(vid, runId);
         return 'OK';
       }
