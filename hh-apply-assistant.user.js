@@ -44,6 +44,41 @@
     vacancyCard: 'div[data-qa="vacancy-serp__vacancy"], .vacancy-serp-item'
   };
 
+  const SELECTOR_METADATA = {
+    applyBtn: {
+      name: 'Кнопка «Откликнуться» в поисковой выдаче',
+      heuristic: 'button, [role="button"] /откликнуться|apply|respond/i'
+    },
+    vacancyApply: {
+      name: 'Кнопка «Откликнуться» на странице вакансии',
+      heuristic: 'button, a, [role="button"] /откликнуться|отклик без резюме|перейти к отклику/i'
+    },
+    attachCoverBtn: {
+      name: 'Кнопка «Прикрепить сопроводительное» после отклика',
+      heuristic: 'button, a /сопроводительное|письмо|cover/i'
+    },
+    attachCoverInModal: {
+      name: 'Переключатель письма в модальном окне',
+      heuristic: 'button, [role="button"] /добавить сопроводительное|написать письмо/i'
+    },
+    letterTextarea: {
+      name: 'Поле ввода текста письма',
+      heuristic: 'textarea[name="text"] или первый видимый <textarea>'
+    },
+    letterSubmit: {
+      name: 'Кнопка отправки формы отклика',
+      heuristic: 'button, input[type="submit"] /отправить|сохранить|откликнуться|send|submit/i'
+    },
+    relocationBtn: {
+      name: 'Подтверждение предупреждения о релокации',
+      heuristic: 'button /всё равно|подтвер|переезд|confirm/i'
+    },
+    vacancyCard: {
+      name: 'Карточка вакансии в выдаче',
+      heuristic: 'div, article с одиночной ссылкой на /vacancy/'
+    }
+  };
+
   const STORAGE_PREFIX = 'hh_apply_assistant_s1_';
   const KEYS = {
     settings: STORAGE_PREFIX + 'settings',
@@ -51,7 +86,6 @@
     returnUrl: STORAGE_PREFIX + 'return_url',
     history: STORAGE_PREFIX + 'processed_ids',
     needF5: STORAGE_PREFIX + 'reload_flag',
-    reloadAttempts: STORAGE_PREFIX + 'reload_attempts',
     trapLock: STORAGE_PREFIX + 'trap_lock',
     instanceLock: STORAGE_PREFIX + 'instance_lock',
     lastAttempt: STORAGE_PREFIX + 'last_attempt_id',
@@ -202,7 +236,7 @@
     }
   }
 
-  // --- 5. Pure Event Telemetry (No In-Memory Buffers) ---
+  // --- 5. Logging & Telemetry ---
   function log(msg, isError = false, code = '', context = null) {
     const level = isError ? 'ERR' : 'INFO';
     const entryCode = code || (isError ? 'ERROR' : 'INFO');
@@ -407,7 +441,6 @@
 
   const isF5Needed = () => storage.sessionGet(KEYS.needF5) === '1';
   const clearF5Flag = () => storage.sessionRemove(KEYS.needF5);
-  const clearReloadAttempts = () => storage.sessionRemove(KEYS.reloadAttempts);
 
   function getActiveTrapLock() {
     const val = storage.sessionGet(KEYS.trapLock);
@@ -435,7 +468,7 @@
     events.emit('status', { status: key, code: currentStatus.code, details: details || {} });
   }
 
-  // --- 10. Concurrency & Web Locks (Invariant 2) ---
+  // --- 10. Concurrency & Instance Locks ---
   const INSTANCE_LOCK_TTL = 30000;
   let currentLeaseId = null;
   let instanceLeaseVerified = false;
@@ -697,15 +730,45 @@
     return qa(keyOrSelector, root);
   }
 
-  function validatePageSelectors(root = null) {
-    const scope = root || globalThis.document;
-    const res = {};
-    for (const k of Object.keys(SELECTORS)) {
-      const ex = queryExact(k, scope);
-      const he = ex ? null : queryHeuristic(k, scope);
-      res[k] = { found: Boolean(ex || he), isExact: Boolean(ex), isHeuristic: Boolean(he && !ex) };
-    }
-    return res;
+  function notifySelectorFailure(key, scope = null, extra = {}) {
+    const meta = SELECTOR_METADATA[key] || {};
+    const selectorName = meta.name || key;
+    const expectedCss = SELECTORS[key] || '';
+    const heuristic = meta.heuristic || '';
+
+    let snippet = '';
+    try {
+      if (scope) {
+        const rawHtml = scope.outerHTML || (scope.body && scope.body.outerHTML) || '';
+        if (rawHtml) {
+          snippet = rawHtml.slice(0, 160).replace(/\s+/g, ' ').trim();
+          if (rawHtml.length > 160) snippet += '...';
+        }
+      }
+    } catch (_) {}
+
+    const url = globalThis.location?.href || '';
+    const msg = `Не найден селектор: ${key} (${selectorName})`;
+    const sub = `Ожидался CSS: ${expectedCss}`;
+
+    events.emit('entity', {
+      action: 'error',
+      tagType: 'error',
+      category: 'error',
+      tag: 'ERROR',
+      metaBadge: 'DOM_ERR',
+      selector: key,
+      selectorName,
+      expectedCss,
+      heuristic,
+      contextSnippet: snippet,
+      url,
+      msg,
+      sub,
+      ...extra
+    });
+
+    log(msg, true, 'DOM_SELECTOR_NOT_FOUND', { key, expectedCss, heuristic, url });
   }
 
   function getVacancyCard(node) {
@@ -740,7 +803,7 @@
     return 'v_' + (cardId ? encodeURIComponent(cardId).slice(0, 32) : Math.random().toString(36).slice(2, 10));
   }
 
-  // --- React form bypass (Invariant 1) ---
+  // --- Form Input Dispatch ---
   function fillTextarea(el, value) {
     try {
       if (typeof el.focus === 'function') el.focus();
@@ -930,7 +993,7 @@
     return docRoot ? detectResponseOutcomeInRoot(docRoot, false) : null;
   }
 
-  // --- 14. Application Flow & Scenarios (Invariant 4) ---
+  // --- 14. Application Flow & Scenarios ---
   function markVacancyProcessed(vid, runId = currentRunId) {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
     return vid ? addProcessedID(vid) : true;
@@ -1013,7 +1076,7 @@
     if (!isRunCurrent(runId)) return 'STOPPED';
     const ta = await waitForElement('letterTextarea', 3000, activeAbortController?.signal);
     if (!ta) {
-      log('Cover letter textarea not found in Scenario A', true, 'TEXTAREA_NOT_FOUND');
+      notifySelectorFailure('letterTextarea', btn ? getVacancyCard(btn) : null);
       return isRunCurrent(runId) ? 'OK' : 'STOPPED';
     }
     await submitCoverLetterForm(null, runId);
@@ -1043,7 +1106,7 @@
     const submitted = await submitCoverLetterForm(modal, runId);
     if (!submitted) {
       if (!isRunCurrent(runId)) return 'STOPPED';
-      log('Submit button not found in modal', true, 'SUBMIT_NOT_FOUND');
+      notifySelectorFailure('letterSubmit', modal);
       return 'FAIL';
     }
 
@@ -1136,7 +1199,7 @@
       }
       const applyBtn = query('vacancyApply') || findPatternElement(globalThis.document?.body, 'button, a, [role="button"]', /откликнуться|отклик без резюме|перейти к отклику|apply|respond/i);
       if (!applyBtn) {
-        log('Apply button not found on vacancy page', true, 'APPLY_BUTTON_NOT_FOUND');
+        notifySelectorFailure('vacancyApply', globalThis.document?.body);
         if (vid) saveCurrentForManual(vid, 'no-apply-button', runId);
         returnToList(vid, { markProcessed: true, runId });
         return 'FAIL';
@@ -1173,7 +1236,7 @@
       const submitBtn = await waitForCondition(() => query('letterSubmit') || findPatternElement(null, 'button, input[type="submit"], [role="button"]', /отправить|сохранить|откликнуться|send|submit/i), 4000, activeAbortController?.signal);
       if (!isRunCurrent(runId)) return;
       if (!submitBtn) {
-        log('Submit button missing on response page', true, 'SUBMIT_BUTTON_MISSING');
+        notifySelectorFailure('letterSubmit', globalThis.document?.body);
         saveCurrentForManual(vid, 'no-submit-button', runId);
         return returnToList(vid, { markProcessed: true, runId });
       }
@@ -1304,6 +1367,14 @@
       }
       if (stopSignal || runId !== currentRunId) return;
 
+      if (Page.isSearch() && !allBtns.length) {
+        const cards = qa(SELECTORS.vacancyCard) || qa('.vacancy-serp-item, [data-qa="vacancy-serp__vacancy"]');
+        if (cards.length > 0) {
+          notifySelectorFailure('applyBtn', cards[0], { cardsCount: cards.length });
+          return finalizeRun(runId, 'error', 'Селектор applyBtn не найден на странице поиска');
+        }
+      }
+
       const processed = getProcessedIDs();
       let targets = allBtns.filter(b => (config.skipHidden && !isVisible(b) ? false : !processed.has(getVacancyID(b))));
       log(`Search page scanned: ${allBtns.length} buttons, ${targets.length} pending, ${initialSent}/${config.limit} sent`, false, 'VACANCIES_SCANNED', {
@@ -1401,7 +1472,7 @@
     } else {
       clearTrapLock();
       handlingResponsePage = false;
-      if (isF5Needed()) { clearF5Flag(); clearReloadAttempts(); }
+      if (isF5Needed()) { clearF5Flag(); }
     }
   }
 
@@ -1418,7 +1489,6 @@
   }
 
   function teardownRuntime() {
-    clearReloadAttempts();
     if (watchdogIntervalId !== null) {
       clearInterval(watchdogIntervalId);
       watchdogIntervalId = null;
@@ -1434,7 +1504,7 @@
     events.removeAllListeners();
   }
 
-  // --- 17. Public API Contract (Invariant 3) ---
+  // --- 17. Public API ---
   const HHApplyAssistant = {
     version: VERSION,
     start: () => startLoop(),
@@ -1469,7 +1539,6 @@
       clearLastAttemptID();
       clearTrapLock();
       clearF5Flag();
-      clearReloadAttempts();
       clearReturnUrl();
       setStatus('idle', 'IDLE');
       return true;
@@ -1491,28 +1560,6 @@
     addManualItem: (entry) => Boolean(ManualQueue.add(entry)),
     removeManualItem: (vid) => ManualQueue.remove(vid),
     clearManualQueue: () => ManualQueue.clear(),
-    checkSelectors: (root = null) => validatePageSelectors(root),
-    getLogs: () => [],
-    clearLogs: () => {},
-    getMetrics: () => ({
-      counters: {},
-      timings: {},
-      selectors: {}
-    }),
-    clearMetrics: () => {},
-    exportDiagnosticData: () => ({
-      version: VERSION,
-      tabId: TAB_ID,
-      timestamp: new Date().toISOString(),
-      url: globalThis.location?.href || '',
-      userAgent: (globalThis.navigator?.userAgent) || '',
-      state: HHApplyAssistant.getState(),
-      stats: HHApplyAssistant.getStats(),
-      config: HHApplyAssistant.getConfig(),
-      selectors: HHApplyAssistant.checkSelectors(),
-      metrics: HHApplyAssistant.getMetrics(),
-      logs: HHApplyAssistant.getLogs()
-    }),
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
     once: (evt, fn) => events.once(evt, fn),
@@ -1679,7 +1726,7 @@
     return 'Готов к запуску';
   }
 
-  // --- 2. Inline SVG Icons (Strictly stroke: 1.5-2px or currentColor, zero noise) ---
+  // --- 2. SVG Icons ---
 
   const ICONS = {
     play: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`,
@@ -1687,20 +1734,12 @@
     check: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
     reset: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>`,
     copy: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
-    info: `<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>`,
     open: `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`,
     trash: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>`,
     inboxEmpty: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`
   };
 
-  const INFO_POPOVERS = {
-    speed: {
-      title: 'Скорость автоматизации и риски',
-      text: 'Safe: 4–8с (мин. риск) · Balanced: 2–5с · Fast: 1.5–3с'
-    }
-  };
-
-  // --- 3. Shadow DOM Stylesheet (Apple HIG Light Theme, Solid Surfaces, WCAG AA) ---
+  // --- 3. Shadow DOM Stylesheet ---
 
   const STYLES = `
     :host {
@@ -1718,9 +1757,9 @@
       pointer-events: auto;
       interpolate-size: allow-keywords;
 
-      /* Design Tokens: Apple HIG Border Radii Hierarchy */
+      /* Design Tokens: Border Radii */
       --hha-radius-lg: 16px;    /* External overlay container */
-      --hha-radius-md: 10px;    /* Inner cards, groups, tabs track, popover */
+      --hha-radius-md: 10px;    /* Inner cards, groups, tabs track */
       --hha-radius-sm: 8px;     /* Interactive elements: stepper, textarea, active tab */
       --hha-radius-xs: 6px;     /* Segmented buttons, ghost action icons, log items */
       --hha-radius-micro: 4px;  /* Compact tags, inline inputs, link badges */
@@ -2049,7 +2088,7 @@
     }
 
 
-    /* --- 2. Flyout Overlay Panel (Apple HIG Floating Popover, 360px, Fixed Height) --- */
+    /* --- 2. Flyout Overlay Panel (360px, Fixed Height) --- */
     .hha-flyout {
       font-size: 12px;
       line-height: 1.4;
@@ -2167,18 +2206,14 @@
     .hha-pill-status-group:focus-visible,
     .hha-pill-queue-badge:focus-visible,
     .hha-tab-btn:focus-visible,
-    .hha-tab-btn.is-focus-visible,
     .hha-segmented-btn:focus-visible,
     .hha-stepper-btn:focus-visible,
     .hha-stepper-input:focus-visible,
     .hha-btn-quick:focus-visible,
     .hha-btn-open:focus-visible,
     .hha-btn-icon:focus-visible,
-    .hha-popover-close:focus-visible,
-    .hha-info-trigger:focus-visible,
     .hha-log-item-delete:focus-visible,
     .hha-log-seg-btn:focus-visible,
-    .hha-checkbox:focus-visible,
     .hha-cover-textarea:focus-visible,
     .hha-textarea:focus-visible {
       outline: none;
@@ -2257,14 +2292,6 @@
       width: 100%;
       flex-shrink: 0;
       box-sizing: border-box;
-    }
-
-    .hha-log-header-title {
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      color: #64748b;
-      letter-spacing: 0.04em;
     }
 
     .hha-log-actions {
@@ -2405,13 +2432,6 @@
       flex: 1;
     }
 
-    .hha-log-time {
-      color: #94a3b8;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 10px;
-      flex-shrink: 0;
-    }
-
     .hha-log-tag {
       padding: 1px 5px;
       border-radius: var(--hha-radius-micro, 4px);
@@ -2424,21 +2444,6 @@
     .hha-log-tag.is-queue {
       background: #ffedd5;
       color: #c2410c;
-    }
-
-    .hha-log-tag.is-applied {
-      background: #dcfce7;
-      color: #15803d;
-    }
-
-    .hha-log-tag.is-skipped {
-      background: #f1f5f9;
-      color: #475569;
-    }
-
-    .hha-log-tag.is-error {
-      background: #fee2e2;
-      color: #b91c1c;
     }
 
     .hha-log-title {
@@ -2709,6 +2714,12 @@
       color: #dc2626;
     }
 
+    .hha-log-dev-badge.badge-dom_err {
+      background: #fef2f2;
+      color: #b91c1c;
+      border: 1px solid #fca5a5;
+    }
+
     .hha-log-dev-arrow {
       font-size: 10px;
       color: #94a3b8;
@@ -2786,6 +2797,28 @@
       text-decoration: underline;
       font-size: 10px;
       word-break: break-all;
+    }
+
+    .hha-code-highlight {
+      color: #b91c1c;
+      background: rgba(239, 68, 68, 0.08);
+      padding: 1px 4px;
+      border-radius: 3px;
+      border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+
+    .hha-dom-snippet {
+      margin: 2px 0 0 0;
+      padding: 4px 6px;
+      background: #0f172a;
+      color: #f1f5f9;
+      border-radius: 4px;
+      font-size: 9px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 80px;
+      overflow-y: auto;
     }
 
     .hha-btn-clear-queue {
@@ -2910,77 +2943,7 @@
       visibility: visible;
     }
 
-    [data-tooltip]::after,
-    .hha-tooltip-target::after {
-      display: none !important;
-    }
-
-    .hha-popover {
-      position: absolute;
-      background: #ffffff;
-      border: 1px solid #cbd5e1;
-      border-radius: var(--hha-radius-md, 10px);
-      box-shadow: 0 12px 28px -4px rgba(15, 23, 42, 0.16), 0 4px 10px -2px rgba(15, 23, 42, 0.06);
-      z-index: 100;
-      width: 270px;
-      max-width: calc(100% - 24px);
-      padding: 10px 12px;
-      font-size: 11px;
-      line-height: 1.45;
-      color: #334155;
-      pointer-events: auto;
-      box-sizing: border-box;
-      overflow-y: auto;
-      scrollbar-width: thin;
-      transition: opacity 120ms ease;
-    }
-
-    .hha-popover-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 4px;
-      gap: 8px;
-    }
-
-    .hha-popover-title {
-      font-weight: 600;
-      color: #0f172a;
-      font-size: 11px;
-      flex: 1;
-    }
-
-    .hha-popover-close {
-      background: transparent;
-      border: none;
-      font-size: 16px;
-      line-height: 1;
-      color: #94a3b8;
-      cursor: pointer;
-      width: 24px;
-      height: 24px;
-      min-width: 24px;
-      min-height: 24px;
-      padding: 0;
-      border-radius: 4px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      transition: color 100ms ease, background-color 100ms ease;
-    }
-
-    .hha-popover-close:hover {
-      color: #0f172a;
-      background: #f1f5f9;
-    }
-
-    .hha-popover-body {
-      color: #475569;
-      font-size: 11px;
-      line-height: 1.45;
-    }
-
-    /* Apple HIG Grouped Inset Cards & Typography */
+    /* Grouped Cards */
     .hha-group,
     .hha-card {
       background: #ffffff;
@@ -3021,39 +2984,10 @@
       flex-wrap: nowrap;
     }
 
-    .hha-checkbox-row {
-      display: flex;
-      align-items: flex-start;
-      padding: 6px 10px 7px 10px;
-      gap: 8px;
-      box-sizing: border-box;
-    }
-
-    .hha-row-vertical {
-      display: flex;
-      flex-direction: column;
-      padding: 5px 10px 3px 10px;
-      gap: 2px;
-      box-sizing: border-box;
-    }
-
     .hha-row-label {
       font-size: 13px;
       font-weight: 500;
       color: #0f172a;
-    }
-
-    .hha-checkbox-label .hha-row-label {
-      font-size: 11.5px;
-      line-height: 1.35;
-      display: inline;
-    }
-
-    .hha-row-divider {
-      height: 1px;
-      background: #f1f5f9;
-      margin: 3px 0 0 0;
-      border: none;
     }
 
     .hha-setting-label {
@@ -3414,9 +3348,6 @@
       this._coverDebounceTimer = null;
       this._animTimer = null;
       this._domEventsBound = false;
-      this._activePopoverKey = null;
-      this._popoverCloseTimer = null;
-      this._popoverHovered = false;
       this._onDocClick = null;
       this._copyFeedbackTimer = null;
       this._copyBtnOrigHtml = null;
@@ -3454,7 +3385,6 @@
       if (this._onDocClick && typeof document !== 'undefined') {
         document.removeEventListener('click', this._onDocClick);
       }
-      if (this._popoverCloseTimer) clearTimeout(this._popoverCloseTimer);
       if (this._coverDebounceTimer) clearTimeout(this._coverDebounceTimer);
       if (this._animTimer) clearTimeout(this._animTimer);
     }
@@ -3642,12 +3572,12 @@
         sub = `Причина: ${formatQueueReason(event.note || event.reason)}`;
         metaBadge = 'очередь';
       } else if (event.action === 'error' || tagType === 'error') {
-        tag = 'ERROR';
+        tag = event.tag || 'ERROR';
         tagType = 'error';
         category = 'error';
-        msg = `${event.reason || event.error || 'Сбой выполнения запроса'}`;
-        sub = `Ошибка API: требуется подтверждение или проверка суточных лимитов`;
-        metaBadge = 'ERR';
+        msg = event.msg || event.reason || event.error || 'Сбой выполнения запроса';
+        sub = event.sub || 'Ошибка API: требуется подтверждение или проверка суточных лимитов';
+        metaBadge = event.metaBadge || 'ERR';
       } else if (event.action === 'scan' || tagType === 'scan') {
         tag = 'SCAN';
         tagType = 'scan';
@@ -3690,6 +3620,11 @@
         metaBadge,
         vid: cleanVid,
         url,
+        selector: event.selector || '',
+        selectorName: event.selectorName || '',
+        expectedCss: event.expectedCss || '',
+        heuristic: event.heuristic || '',
+        contextSnippet: event.contextSnippet || '',
         isDevLog: true
       };
 
@@ -3760,9 +3695,6 @@
       this._isAnimating = true;
 
       this._hideTooltip();
-      if (!this._isExpanded) {
-        this._hidePopover();
-      }
 
       if (this._shadow) {
         const flyout = this._shadow.querySelector('.hha-flyout');
@@ -3814,7 +3746,6 @@
       }
       if (!['settings', 'logs'].includes(tabName)) return;
       this._activeTab = tabName;
-      this._hidePopover();
       this._hideTooltip();
 
       if (!this._shadow) return;
@@ -3950,9 +3881,6 @@
           <div class="hha-flyout" data-el="flyout">
             <!-- Floating Tooltip -->
             <div class="hha-tooltip" data-el="tooltip"></div>
-
-            <!-- Popover for interactive help -->
-            <div class="hha-popover" data-el="popover" style="display: none;"></div>
 
             <!-- Segmented Control Tabs (50% / 50%) -->
             <div class="hha-tabs">
@@ -4159,11 +4087,8 @@
         coverTextarea.addEventListener('change', flushCoverText);
       }
 
-      // Document click listener to dismiss popover and close overlay when clicking outside
+      // Document click listener to close overlay when clicking outside
       this._onDocClick = (e) => {
-        if (this._activePopoverKey) {
-          this._hidePopover();
-        }
         if (this._isExpanded && e) {
           const path = (typeof e.composedPath === 'function') ? e.composedPath() : [];
           if (!path.includes(this) && (!e.target || (typeof this.contains === 'function' && !this.contains(e.target)))) {
@@ -4174,34 +4099,6 @@
       if (typeof document !== 'undefined') {
         document.addEventListener('click', this._onDocClick);
       }
-
-      // Popover hover listeners
-      const popoverEl = this._shadow.querySelector('[data-el="popover"]');
-      if (popoverEl) {
-        popoverEl.addEventListener('mouseenter', () => {
-          this._popoverHovered = true;
-          if (this._popoverCloseTimer) clearTimeout(this._popoverCloseTimer);
-        });
-        popoverEl.addEventListener('mouseleave', () => {
-          this._popoverHovered = false;
-          this._popoverCloseTimer = setTimeout(() => {
-            this._hidePopover();
-          }, 200);
-        });
-      }
-
-      this._shadow.querySelectorAll('[data-info]').forEach(btn => {
-        btn.addEventListener('mouseenter', () => {
-          if (this._popoverCloseTimer) clearTimeout(this._popoverCloseTimer);
-          const key = btn.dataset.info;
-          this._showPopover(key, btn);
-        });
-        btn.addEventListener('mouseleave', () => {
-          this._popoverCloseTimer = setTimeout(() => {
-            if (!this._popoverHovered) this._hidePopover();
-          }, 200);
-        });
-      });
     }
 
     _handleRootClick(e) {
@@ -4211,30 +4108,6 @@
         return;
       }
 
-      // Check info trigger click
-      const infoTarget = e.target.closest('[data-info]');
-      if (infoTarget) {
-        e.stopPropagation();
-        e.preventDefault();
-        const key = infoTarget.dataset.info;
-        this._togglePopover(key, infoTarget);
-        return;
-      }
-
-      // If click was inside popover, check close button or keep open
-      const popover = this._shadow ? this._shadow.querySelector('[data-el="popover"]') : null;
-      if (popover && e.target.closest('[data-el="popover"]')) {
-        if (e.target.closest('[data-action="close-popover"]')) {
-          this._hidePopover();
-        }
-        e.stopPropagation();
-        return;
-      }
-
-      // Any other click inside shadow root dismisses popover
-      if (this._activePopoverKey) {
-        this._hidePopover();
-      }
       this._hideTooltip();
 
       const pillTarget = e.target.closest('[data-el="pill"]');
@@ -4398,17 +4271,7 @@
 
       if (lines.length > 0) {
         textToCopy = lines.join('\n');
-      } else if (this._assistant && typeof this._assistant.getLogs === 'function') {
-        const diagLogs = this._assistant.getLogs();
-        if (Array.isArray(diagLogs) && diagLogs.length > 0) {
-          textToCopy = diagLogs.slice(-10).map(l => {
-            const time = formatTime(l.ts);
-            return `[${time}] [${l.code || 'LOG'}] ${l.msg || ''}`;
-          }).join('\n');
-        }
-      }
-
-      if (!textToCopy) {
+      } else {
         textToCopy = 'Нет недавних действий';
       }
 
@@ -4500,100 +4363,8 @@
       this._syncConfig();
     }
 
-    _showToast(msg) {}
-
-    _showPopover(key, trigger) {
-      this._hideTooltip();
-      const popover = this._shadow ? this._shadow.querySelector('[data-el="popover"]') : null;
-      if (!popover) return;
-
-      const info = INFO_POPOVERS[key];
-      if (!info) return;
-
-      this._activePopoverKey = key;
-      popover.innerHTML = `
-        <div class="hha-popover-header">
-          <div class="hha-popover-title">${info.title}</div>
-          <button type="button" class="hha-popover-close" data-action="close-popover" aria-label="Закрыть">×</button>
-        </div>
-        <div class="hha-popover-body">${info.text}</div>
-      `;
-
-      const flyout = this._shadow.querySelector('[data-el="flyout"]');
-      if (flyout && trigger && typeof trigger.getBoundingClientRect === 'function' && typeof flyout.getBoundingClientRect === 'function') {
-        const flyoutRect = flyout.getBoundingClientRect();
-        const triggerRect = trigger.getBoundingClientRect();
-        const row = trigger.closest('.hha-row') || trigger.closest('.hha-group-row') || trigger;
-        const rowRect = row ? row.getBoundingClientRect() : triggerRect;
-        const flyoutHeight = flyoutRect.height || 366;
-        const triggerRelTop = triggerRect.top - flyoutRect.top;
-        const isBottomHalf = triggerRelTop > (flyoutHeight / 2);
-        const popoverW = Math.min(270, Math.max(140, flyoutRect.width - 24));
-        const maxLeft = Math.max(12, flyoutRect.width - popoverW - 12);
-        const left = clamp((triggerRect.left - flyoutRect.left) - 130, 12, maxLeft);
-        popover.style.left = `${Math.round(left)}px`;
-
-        if (isBottomHalf) {
-          const bottom = (flyoutRect.bottom - rowRect.top) + 8;
-          popover.style.bottom = `${Math.round(bottom)}px`;
-          popover.style.top = 'auto';
-          const maxAvailHeight = Math.max(120, (rowRect.top - flyoutRect.top) - 20);
-          popover.style.maxHeight = `${Math.round(maxAvailHeight)}px`;
-        } else {
-          const top = (rowRect.bottom - flyoutRect.top) + 8;
-          popover.style.top = `${Math.round(top)}px`;
-          popover.style.bottom = 'auto';
-          const maxAvailHeight = Math.max(120, (flyoutRect.bottom - rowRect.bottom) - 20);
-          popover.style.maxHeight = `${Math.round(maxAvailHeight)}px`;
-        }
-      } else {
-        popover.style.top = '100px';
-        popover.style.bottom = 'auto';
-        popover.style.left = '40px';
-        popover.style.maxHeight = '180px';
-      }
-
-      popover.style.display = 'block';
-
-      this._shadow.querySelectorAll('[data-info]').forEach(btn => {
-        if (btn.dataset.info === key) btn.classList.add('active');
-        else btn.classList.remove('active');
-      });
-    }
-
-    _togglePopover(key, trigger) {
-      const popover = this._shadow ? this._shadow.querySelector('[data-el="popover"]') : null;
-      if (!popover) return;
-
-      if (this._activePopoverKey === key && popover.style.display !== 'none') {
-        this._hidePopover();
-        return;
-      }
-
-      this._showPopover(key, trigger);
-    }
-
-    _hidePopover() {
-      this._activePopoverKey = null;
-      this._popoverHovered = false;
-      if (this._popoverCloseTimer) clearTimeout(this._popoverCloseTimer);
-      const popover = this._shadow ? this._shadow.querySelector('[data-el="popover"]') : null;
-      if (popover) {
-        popover.style.display = 'none';
-        popover.style.top = '';
-        popover.style.bottom = '';
-        popover.style.left = '';
-        popover.innerHTML = '';
-      }
-      if (this._shadow) {
-        this._shadow.querySelectorAll('[data-info]').forEach(btn => btn.classList.remove('active'));
-      }
-      this._hideTooltip();
-    }
-
     _showTooltip(target) {
-      if (!this._shadow || !target || this._activePopoverKey || !this._isExpanded) return;
-      if (target.dataset && target.dataset.info) return;
+      if (!this._shadow || !target || !this._isExpanded) return;
       const text = target.getAttribute('data-tooltip');
       if (!text) return;
       const tooltip = this._shadow.querySelector('[data-el="tooltip"]');
@@ -5115,11 +4886,27 @@
                 <span class="hha-log-dev-time">${escapeHtml(item.time)}</span>
                 <span class="hha-log-dev-tag tag-${escapeHtml(item.tagType)}">[${escapeHtml(item.tag)}]</span>
                 <span class="hha-log-dev-msg" title="${escapeHtml(item.msg)}">${escapeHtml(item.msg)}</span>
-                ${item.metaBadge ? `<span class="hha-log-dev-badge badge-${escapeHtml(item.tagType)}">${escapeHtml(item.metaBadge)}</span>` : ''}
+                ${item.metaBadge ? `<span class="hha-log-dev-badge badge-${escapeHtml(String(item.metaBadge).toLowerCase())} badge-${escapeHtml(item.tagType)}">${escapeHtml(item.metaBadge)}</span>` : ''}
                 <span class="hha-log-dev-arrow">▾</span>
               </div>
               <div class="hha-log-dev-details">
                 <div class="hha-log-detail-grid">
+                  ${item.selector ? `
+                    <div class="hha-log-detail-key">Селектор:</div>
+                    <div class="hha-log-detail-val"><code>${escapeHtml(item.selector)}</code> ${item.selectorName ? `(${escapeHtml(item.selectorName)})` : ''}</div>
+                  ` : ''}
+                  ${item.expectedCss ? `
+                    <div class="hha-log-detail-key">Ожидался CSS:</div>
+                    <div class="hha-log-detail-val"><code class="hha-code-highlight">${escapeHtml(item.expectedCss)}</code></div>
+                  ` : ''}
+                  ${item.heuristic ? `
+                    <div class="hha-log-detail-key">Эвристика:</div>
+                    <div class="hha-log-detail-val"><code>${escapeHtml(item.heuristic)}</code></div>
+                  ` : ''}
+                  ${item.contextSnippet ? `
+                    <div class="hha-log-detail-key">HTML родителя:</div>
+                    <div class="hha-log-detail-val"><pre class="hha-dom-snippet">${escapeHtml(item.contextSnippet)}</pre></div>
+                  ` : ''}
                   ${item.vid ? `
                     <div class="hha-log-detail-key">ID:</div>
                     <div class="hha-log-detail-val">
@@ -5256,7 +5043,6 @@
     formatQueueReason,
     formatStatusLabel,
     ICONS,
-    INFO_POPOVERS,
     STYLES
   };
 });
