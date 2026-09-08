@@ -96,7 +96,8 @@
     manualList: STORAGE_PREFIX + 'manual_queue',
     tabId: STORAGE_PREFIX + 'tab_id',
     sentCount: STORAGE_PREFIX + 'sent_count',
-    stats: STORAGE_PREFIX + 'run_stats'
+    stats: STORAGE_PREFIX + 'run_stats',
+    logHistory: STORAGE_PREFIX + 'log_history'
   };
 
   const PRESETS = {
@@ -245,11 +246,31 @@
   function log(msg, isError = false, code = '', context = null) {
     const level = isError ? 'ERR' : 'INFO';
     const entryCode = code || (isError ? 'ERROR' : 'INFO');
+    const timestamp = Date.now();
+
+    try {
+      const timeStr = new Date(timestamp).toTimeString().slice(0, 8);
+      const isWarn = /WARN|SKIP|DELAY|SCROLL_SKIP/i.test(entryCode);
+      const isSuccess = /SUCCESS|CONFIRM|DONE|DELIVERED/i.test(entryCode);
+      const color = isError ? '#ef4444' : (isSuccess ? '#10b981' : (isWarn ? '#f59e0b' : '#3b82f6'));
+      const badgeStyle = `background: ${color}; color: #ffffff; font-weight: 700; border-radius: 3px; padding: 1px 5px; font-size: 11px;`;
+      const textStyle = isError ? 'color: #ef4444; font-weight: 600;' : 'color: inherit;';
+      const ctxOutput = context ? (typeof context === 'object' ? context : { detail: context }) : '';
+
+      if (isError) {
+        console.error(`%c[HHA ${timeStr}]%c [${entryCode}] ${msg}`, badgeStyle, textStyle, ctxOutput);
+      } else if (isWarn) {
+        console.warn(`%c[HHA ${timeStr}]%c [${entryCode}] ${msg}`, badgeStyle, textStyle, ctxOutput);
+      } else {
+        console.log(`%c[HHA ${timeStr}]%c [${entryCode}] ${msg}`, badgeStyle, textStyle, ctxOutput);
+      }
+    } catch (_) {}
+
     events.emit('log', {
       level,
       message: String(msg || ''),
       code: entryCode,
-      timestamp: Date.now(),
+      timestamp,
       context: context || {}
     });
 
@@ -701,9 +722,17 @@
     vacancyApply: applyBtnHeuristic,
     attachCoverBtn: coverBtnHeuristic,
     attachCoverInModal: coverBtnHeuristic,
-    letterTextarea: (r) => Array.from((r || globalThis.document)?.querySelectorAll?.('textarea') || []).find(isVisible) || null,
-    letterSubmit: (r) => findPatternElement(r, 'button, input[type="submit"], [role="button"]', /отправить|сохранить|откликнуться|send|submit/i),
-    relocationBtn: (r) => findPatternElement(r, 'button, [role="button"]', /вс[её] равно|подтвер|переезд|confirm|relocation/i),
+    letterSubmit: (r) => {
+      const el = findPatternElement(r, 'button, input[type="submit"]', /^(отправить|сохранить|отправить отклик|send|submit)$/i, 50)
+        || findPatternElement(r, 'button, input[type="submit"]', /отправить|сохранить|send|submit/i, 50);
+      if (el && !el.closest?.('[data-qa*="vacancy-response-link"]')) return el;
+      return null;
+    },
+    relocationBtn: (r) => {
+      const direct = q('[data-qa="relocation-warning-confirm"]', r);
+      if (direct && isVisible(direct)) return direct;
+      return findPatternElement(r, 'button, [role="button"]', /вс[её]\s*равно|подтвер|переезд|confirm|relocation/i);
+    },
     rejectWarning: (r) => findPatternElement(r, 'div, p, span, section', /не соответствует|отказ|не подходит|warning|reject/i, 250),
     responseChat: (r) => findPatternElement(r, 'a, button', /чат|перейти в чат|сообщения|chat/i),
     pagerNext: (r) => findPatternElement(r, 'a, button', /дальше|впер[её]д|следующая|next/i)
@@ -977,13 +1006,30 @@
     return null;
   }
 
+  function detectRelocationWarning() {
+    const btn = query('relocationBtn')
+      || q('[data-qa="relocation-warning-confirm"]')
+      || findPatternElement(null, 'button, [role="button"]', /вс[её]\s*равно\s*откликнуться|вс[её]\s*равно/i);
+    if (btn && isVisible(btn)) return btn;
+
+    const title = q('[data-qa="relocation-warning-title"]')
+      || findPatternElement(null, 'h1, h2, h3, div, p', /в\s*другой\s*стране/i);
+    if (title && isVisible(title)) {
+      const scope = title.closest?.('[data-qa="magritte-alert"], [role="dialog"], div') || globalThis.document?.body;
+      const confirmBtn = q('[data-qa="relocation-warning-confirm"]', scope)
+        || findPatternElement(scope, 'button, [role="button"]', /вс[её]\s*равно|откликнуться/i);
+      if (confirmBtn && isVisible(confirmBtn)) return confirmBtn;
+    }
+    return null;
+  }
+
   function detectResponseOutcomeInRoot(root, includeExactSelectors) {
     if (!root) return null;
     if (detectCaptcha()) return 'CAPTCHA';
     if (detectRateLimit()) return 'RATE_LIMIT';
     if (hasReliableRejectWarning()) return 'REJECT_WARNING';
-    const relocRootBtn = query('relocationBtn', root);
-    if (relocRootBtn && isVisible(relocRootBtn)) return 'RELOCATION_WARNING';
+    if (detectRelocationWarning()) return 'RELOCATION_WARNING';
+
     if (query('letterTextarea', root) || query('attachCoverInModal', root) || query('letterSubmit', root) || q('[data-qa="vacancy-response-popup-form"]', root)) {
       return 'MODAL_OPEN';
     }
@@ -994,21 +1040,26 @@
   }
 
   function detectResponseOutcomeOnce({ allowDocumentStrongText = false } = {}) {
-    const relocBtn = query('relocationBtn');
-    if (relocBtn && isVisible(relocBtn)) return 'RELOCATION_WARNING';
+    // 1. Relocation warning alert has absolute top priority
+    if (detectRelocationWarning()) return 'RELOCATION_WARNING';
 
-    const modal = q('[data-qa*="modal" i], [class*="modal" i], [role="dialog"], [data-qa="magritte-alert"], [data-qa="bottom-sheet-content"]');
-    if (modal) {
-      const outcome = detectResponseOutcomeInRoot(modal, true);
-      if (outcome) return outcome;
-    }
+    // 2. Cover letter attachment on vacancy page banner
     const attachBtn = query('attachCoverBtn');
     if (config.useCover && attachBtn && isVisible(attachBtn)) {
       return 'ATTACH_COVER';
     }
+
+    // 3. Modals and bottom sheets (only when actually present and visible)
+    const modal = q('[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [role="dialog"]');
+    if (modal && isVisible(modal)) {
+      const outcome = detectResponseOutcomeInRoot(modal, true);
+      if (outcome) return outcome;
+    }
+
+    // 4. Exact response confirmations
     if (hasExactResponseConfirmation() || isResponseConfirmed({ allowDocumentStrongText })) return 'SUCCESS';
-    const docRoot = globalThis.document?.body || globalThis.document?.documentElement;
-    return docRoot ? detectResponseOutcomeInRoot(docRoot, false) : null;
+
+    return null;
   }
 
   // --- 14. Application Flow & Scenarios ---
@@ -1023,6 +1074,7 @@
     bumpStat('success');
     markVacancyProcessed(vid, runId);
     events.emit('entity', { vid, action: 'applied', reason: 'APPLIED' });
+    log(`Отклик успешно доставлен на вакансию #${vid}`, false, 'APPLY_SUCCESS', { vid });
     return true;
   }
 
@@ -1031,6 +1083,7 @@
     markVacancyProcessed(vid, runId);
     bumpStat('skipped');
     events.emit('entity', { vid, action: 'skipped', reason });
+    log(`Вакансия #${vid} пропущена (${reason})`, false, 'VACANCY_SKIPPED', { vid, reason });
   }
 
   function saveCurrentForManual(vid, note = '', runId = currentRunId) {
@@ -1051,7 +1104,7 @@
     if (added) {
       bumpStat('manual');
       events.emit('entity', { vid: entry.vid, title: entry.title, url: entry.url, action: 'manual', reason: note, note });
-      log(`Saved vacancy to manual queue: #${entry.vid} (${note || 'manual'})`, false, 'MANUAL_SAVED', { vid: entry.vid, note });
+      log(`Вакансия #${entry.vid} сохранена в ручную очередь (${note || 'manual'})`, false, 'MANUAL_SAVED', { vid: entry.vid, note, url: entry.url });
       return true;
     }
     return false;
@@ -1063,6 +1116,7 @@
     clearLastAttemptID();
     const rawReturn = getReturnUrl();
     const returnUrl = (rawReturn && (rawReturn.includes('/search/vacancy') || rawReturn.startsWith('http') || rawReturn.startsWith('/'))) ? rawReturn : '/search/vacancy';
+    log(`Возврат к поисковой выдаче: ${returnUrl}`, false, 'RETURN_TO_LIST', { vid, returnUrl });
     const loc = globalThis.location;
     if (loc && !Page.isSearchList() && loc.href !== returnUrl) {
       try { loc.assign(returnUrl); } catch (_) { loc.href = returnUrl; }
@@ -1074,27 +1128,41 @@
     if (!isRunCurrent(runId)) return false;
     const ta = query('letterTextarea', scope);
     if (ta && config.useCover) {
+      const letterLen = (config.coverText || '').length;
+      log(`Заполнение сопроводительного письма (${letterLen} симв.) в поле ввода...`, false, 'FILL_LETTER_START', { letterLen });
       fillTextarea(ta, config.coverText);
+      log(`Текст письма введен, клон синхронизирован, события отправлены`, false, 'FILL_LETTER_DONE', { letterLen });
       await actionPause();
       if (!isRunCurrent(runId)) return false;
     }
     const submit = query('letterSubmit', scope) || q('button[type="submit"]', scope);
-    if (!submit) return false;
+    if (!submit) {
+      log('Кнопка отправки формы сопроводительного письма не найдена', true, 'SUBMIT_BTN_NOT_FOUND');
+      return false;
+    }
+    const submitQa = submit.getAttribute?.('data-qa') || 'button[submit]';
+    log(`Нажатие кнопки отправки письма (${submitQa})...`, false, 'SUBMIT_LETTER_CLICK', { selector: submitQa });
     await clickElement(submit);
     await actionPause();
     return isRunCurrent(runId);
   }
 
   async function handleScenarioA(btn, runId = currentRunId) {
-    if (!config.useCover) return 'OK';
-    log('Scenario A: Attaching cover letter after direct apply', false, 'SCENARIO_A');
+    if (!config.useCover) {
+      log('Сопроводительное письмо отключено в настройках, сценарий A завершен', false, 'COVER_DISABLED');
+      return 'OK';
+    }
+    log('Сценарий A: Прикрепление сопроводительного письма после прямого отклика', false, 'SCENARIO_A');
     await actionPause();
     if (!isRunCurrent(runId)) return 'STOPPED';
 
     const attachBtn = btn || query('attachCoverBtn');
     if (attachBtn) {
+      const attachQa = attachBtn.getAttribute?.('data-qa') || 'attachCoverBtn';
+      log(`Нажатие кнопки «Приложить сопроводительное письмо» (${attachQa})...`, false, 'ATTACH_COVER_CLICK', { selector: attachQa });
       await clickElement(attachBtn);
     } else {
+      log('Кнопка «Приложить сопроводительное письмо» не найдена', true, 'ATTACH_BTN_NOT_FOUND');
       notifySelectorFailure('attachCoverBtn', globalThis.document?.body);
       return isRunCurrent(runId) ? 'OK' : 'STOPPED';
     }
@@ -1102,17 +1170,22 @@
     await actionPause();
     if (!isRunCurrent(runId)) return 'STOPPED';
 
+    log('Ожидание появления шторки ввода письма (bottom-sheet)...', false, 'WAIT_LETTER_FORM');
     const ta = await waitForElement('letterTextarea', 5000, activeAbortController?.signal);
     if (!ta) {
+      log('Поле ввода письма не появилось за 5 с', true, 'LETTER_FORM_TIMEOUT');
       notifySelectorFailure('letterTextarea', globalThis.document?.body);
       return isRunCurrent(runId) ? 'OK' : 'STOPPED';
     }
 
     const modalScope = q('[data-qa="bottom-sheet-content"], [role="dialog"]') || globalThis.document?.body;
+    log('Шторка письма открыта, отправляем форму...', false, 'SUBMITTING_COVER_SHEET');
     await submitCoverLetterForm(modalScope, runId);
     if (!isRunCurrent(runId)) return 'STOPPED';
 
+    log('Ожидание закрытия шторки письма и подтверждения доставки...', false, 'WAIT_COVER_DELIVERED');
     await waitForCondition(() => !q('[data-qa="bottom-sheet-content"], textarea[data-qa="vacancy-response-popup-form-letter-input"]') || isResponseConfirmed(), 5000, activeAbortController?.signal);
+    log('Сопроводительное письмо успешно прикреплено и отправлено!', false, 'COVER_ATTACH_SUCCESS');
     return isRunCurrent(runId) ? 'OK' : 'STOPPED';
   }
 
@@ -1205,18 +1278,18 @@
 
     if (outcome === 'RELOCATION_WARNING') {
       log('Предупреждение о релокации в другую страну: подтверждаем («Все равно откликнуться»)', false, 'RELOCATION_CONFIRM');
-      const relocBtn = query('relocationBtn') || q('[data-qa="relocation-warning-confirm"]');
+      const relocBtn = detectRelocationWarning() || query('relocationBtn') || q('[data-qa="relocation-warning-confirm"]');
       if (relocBtn) {
         await clickElement(relocBtn);
+        log('Кнопка «Все равно откликнуться» нажата, ожидаем закрытия алерта...', false, 'RELOCATION_CLICKED');
         await actionPause();
         if (!isRunCurrent(runId)) return 'STOPPED';
 
-        await waitForCondition(() => {
-          const btn = query('relocationBtn') || q('[data-qa="relocation-warning-confirm"]');
-          return !btn || !isVisible(btn);
-        }, 3000, activeAbortController?.signal);
+        await waitForCondition(() => !detectRelocationWarning(), 4000, activeAbortController?.signal);
 
+        log('Предупреждение о релокации закрыто, ожидаем следующего этапа...', false, 'RELOCATION_RESOLVED');
         const nextOutcome = await waitForCondition(() => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()), 8000, activeAbortController?.signal);
+        log(`Следующий этап после релокации: ${nextOutcome || 'TIMEOUT'}`, false, 'RELOCATION_NEXT_OUTCOME', { outcome: nextOutcome });
         if (nextOutcome) {
           return await dispatchOutcome(nextOutcome, vid, runId);
         }
@@ -1224,6 +1297,7 @@
         return 'OK';
       }
       if (vid) {
+        log('Не удалось найти кнопку подтверждения релокации', true, 'RELOCATION_BTN_NOT_FOUND', { vid });
         saveCurrentForManual(vid, 'relocation_unconfirmed', runId);
         markVacancyProcessed(vid, runId);
       }
@@ -1242,7 +1316,10 @@
     const totalHeight = Math.max(doc.body?.scrollHeight || 0, doc.documentElement?.scrollHeight || 0);
     const viewportHeight = win.innerHeight || 800;
     const maxScroll = Math.max(0, totalHeight - viewportHeight);
-    if (maxScroll < 150) return;
+    if (maxScroll < 150) {
+      log(`Страница короткая (${totalHeight}px), симуляция скролла пропущена`, false, 'SCROLL_SKIP', { vid, totalHeight });
+      return;
+    }
 
     // Random viewing depth between 45% and 75%
     const pct = 0.45 + Math.random() * 0.30;
@@ -1257,8 +1334,8 @@
     const stepDelay = Math.round(totalDuration / steps);
 
     const title = parseVacancyTitle();
-    log(`Изучение вакансии (просмотр ~${Math.round(pct * 100)}%, пауза ${(totalDuration / 1000).toFixed(1)} с)`, false, 'HUMAN_READING', {
-      vid, pct: Math.round(pct * 100), duration: totalDuration
+    log(`Изучение вакансии (просмотр ~${Math.round(pct * 100)}%, цель: ${targetY}px, шагов: ${steps}, пауза: ${(totalDuration / 1000).toFixed(1)} с)`, false, 'HUMAN_READING', {
+      vid, pct: Math.round(pct * 100), targetY, steps, duration: totalDuration
     });
     events.emit('entity', {
       vid,
@@ -1269,21 +1346,30 @@
     });
 
     for (let i = 1; i <= steps; i++) {
-      if (!isRunCurrent(runId)) return;
+      if (!isRunCurrent(runId)) {
+        log('Симуляция чтения прервана пользователем', false, 'SCROLL_ABORT', { vid, step: i });
+        return;
+      }
       const curY = Math.round((targetY / steps) * i);
       try {
         win.scrollTo({ top: curY, behavior: 'smooth' });
       } catch (_) {
         win.scroll?.(0, curY);
       }
+      log(`Чтение шага ${i}/${steps}: скролл до ${curY}px, пауза ${(stepDelay / 1000).toFixed(1)}с`, false, 'SCROLL_STEP', { vid, step: i, steps, targetY: curY, pauseMs: stepDelay });
       await wait(stepDelay);
     }
+    log(`Симуляция чтения вакансии #${vid} завершена`, false, 'SCROLL_DONE', { vid, finalY: targetY });
   }
 
   async function handleVacancyPage(vid, runId = currentRunId) {
     try {
+      const pageUrl = globalThis.location?.href || '';
+      const title = parseVacancyTitle();
+      log(`Загружена страница вакансии #${vid}: ${title}`, false, 'VACANCY_PAGE_LOADED', { vid, title, url: pageUrl });
+
       if (detectAlreadyApplied()) {
-        log('Already applied to this vacancy', false, 'ALREADY_APPLIED');
+        log(`На вакансию #${vid} уже был отправлен отклик ранее`, false, 'ALREADY_APPLIED', { vid });
         if (vid) skipVacancy(vid, 'already_applied', runId);
         returnToList(vid, { markProcessed: true, runId });
         return 'OK';
@@ -1293,27 +1379,37 @@
       await simulateHumanReading(vid, runId);
       if (!isRunCurrent(runId)) return 'STOPPED';
 
+      log(`Поиск кнопки отклика на странице вакансии #${vid}...`, false, 'SEARCH_APPLY_BTN', { vid });
       const applyBtn = await waitForCondition(() => query('vacancyApply'), 4000, activeAbortController?.signal);
       if (!applyBtn) {
+        log(`Кнопка «Откликнуться» не найдена на странице вакансии #${vid}`, true, 'NO_APPLY_BUTTON', { vid, url: pageUrl });
         notifySelectorFailure('vacancyApply', globalThis.document?.body);
         if (vid) saveCurrentForManual(vid, 'no-apply-button', runId);
         returnToList(vid, { markProcessed: true, runId });
         return 'FAIL';
       }
+
+      const applyQa = applyBtn.getAttribute?.('data-qa') || applyBtn.className || 'button';
+      log(`Кнопка «Откликнуться» найдена (${applyQa}), нажатие...`, false, 'APPLY_CLICK', { vid, selector: applyQa });
       await actionPause();
       if (!isRunCurrent(runId)) return 'STOPPED';
       await clickElement(applyBtn);
       await actionPause();
       if (!isRunCurrent(runId)) return 'STOPPED';
+
+      log(`Ожидание исхода отклика (модалка, релокация, форма или подтверждение)...`, false, 'WAIT_OUTCOME', { vid });
       const outcome = await waitForCondition(() => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()), 8000, activeAbortController?.signal);
+      log(`Определен исход отклика: ${outcome || 'TIMEOUT/UNKNOWN'}`, false, 'OUTCOME_DETECTED', { vid, outcome });
+
       const res = await dispatchOutcome(outcome, vid, runId);
+      log(`Результат обработки вакансии #${vid}: ${res}`, false, 'OUTCOME_RESULT', { vid, outcome, result: res });
       if (['OK', 'SKIP', 'TEST_REQUIRED', 'RESUME_HIDDEN'].includes(res)) {
         await actionPause();
         returnToList(vid, { markProcessed: true, runId });
       }
       return res;
     } catch (e) {
-      log(`Error on vacancy page: ${(e && e.message) || e}`, true, 'VACANCY_PAGE_ERROR');
+      log(`Ошибка при обработке страницы вакансии #${vid}: ${(e && e.message) || e}`, true, 'VACANCY_PAGE_ERROR', { vid, error: String(e) });
       if (vid) saveCurrentForManual(vid, 'vacancy-page-error', runId);
       returnToList(vid, { markProcessed: true, runId });
       return 'FAIL';
@@ -1487,14 +1583,14 @@
 
       const processed = getProcessedIDs();
       let targets = allBtns.filter(b => (config.skipHidden && !isVisible(b) ? false : !processed.has(getVacancyID(b))));
-      log(`Search page scanned: ${allBtns.length} buttons, ${targets.length} pending, ${initialSent}/${config.limit} sent`, false, 'VACANCIES_SCANNED', {
+      log(`Поисковая выдача: найдено ${allBtns.length} вакансий, ожидают обработки: ${targets.length}, отправлено в сеансе: ${initialSent}/${config.limit}`, false, 'VACANCIES_SCANNED', {
         total: allBtns.length, pending: targets.length, sent: initialSent, limit: config.limit
       });
 
       if (!targets.length) {
         const nextBtn = query('pagerNext');
         if (nextBtn) {
-          log('Все вакансии на странице обработаны. Переход на следующую страницу...', false, 'PAGINATION_NEXT');
+          log('Все вакансии на текущей странице обработаны. Переход к следующей странице (пагинация)...', false, 'PAGINATION_NEXT');
           await actionPause();
           if (!isRunCurrent(runId)) return;
           const href = nextBtn.getAttribute?.('href') || nextBtn.href;
@@ -1519,7 +1615,7 @@
         const targetUrl = link?.href || (vid && String(vid).startsWith('v_') ? `https://hh.ru/vacancy/${String(vid).slice(2)}` : null);
 
         if (!targetUrl) {
-          log(`Не удалось определить URL для вакансии #${vid}`, true, 'VACANCY_URL_NOT_FOUND');
+          log(`Не удалось определить URL для вакансии #${vid}`, true, 'VACANCY_URL_NOT_FOUND', { vid });
           skipVacancy(vid, 'no_url', runId);
           return;
         }
@@ -1527,7 +1623,7 @@
         setLastAttemptID(vid);
         if (globalThis.location) setReturnUrl(globalThis.location.href);
         events.emit('entity', { vid, title, url: targetUrl, action: 'viewing' });
-        log(`Открытие вакансии #${vid}: ${title}`, false, 'OPEN_VACANCY', { vid, url: targetUrl });
+        log(`Переход к вакансии #${vid} («${title}»)...`, false, 'OPEN_VACANCY', { vid, title, url: targetUrl });
         await vacancyPause();
         if (stopSignal || runId !== currentRunId) return;
 
@@ -1715,6 +1811,12 @@
     addManualItem: (entry) => Boolean(ManualQueue.add(entry)),
     removeManualItem: (vid) => ManualQueue.remove(vid),
     clearManualQueue: () => ManualQueue.clear(),
+    getLogHistory: () => parseJson(storage.localGet(KEYS.logHistory), []),
+    clearLogHistory() {
+      storage.localRemove(KEYS.logHistory);
+      log('История логов очищена', false, 'LOGS_CLEARED');
+      return true;
+    },
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
     once: (evt, fn) => events.once(evt, fn),
@@ -3447,6 +3549,7 @@
       this._copyFeedbackTimer = null;
       this._copyBtnOrigHtml = null;
       this._copyBtnOrigColor = null;
+      this._persistLogsTimer = null;
 
       // Bound Event Handlers
       this._onResize = this._onResize.bind(this);
@@ -3456,6 +3559,13 @@
     }
 
     connectedCallback() {
+      try {
+        const savedLogs = parseJson(storage.localGet(KEYS.logHistory), []);
+        if (Array.isArray(savedLogs) && savedLogs.length > 0) {
+          this._liveFeed = savedLogs.slice(0, 2000);
+        }
+      } catch (_) {}
+
       this._render();
       this._restorePosition();
       this._bindDomEvents();
@@ -3483,6 +3593,15 @@
       }
       if (this._coverDebounceTimer) clearTimeout(this._coverDebounceTimer);
       if (this._animTimer) clearTimeout(this._animTimer);
+      if (this._persistLogsTimer) {
+        clearTimeout(this._persistLogsTimer);
+        this._persistLogsTimer = null;
+        try {
+          if (this._liveFeed) {
+            storage.localSet(KEYS.logHistory, JSON.stringify(this._liveFeed.slice(0, 2000)));
+          }
+        } catch (_) {}
+      }
     }
 
     // --- Public API ---
@@ -3549,6 +3668,7 @@
           }),
           assistant.on('stats', (stats) => this.updateStats(stats)),
           assistant.on('entity', (event) => this.updateLiveFeed(event)),
+          assistant.on('log', (payload) => this._onEngineLog(payload)),
           assistant.on('manualQueue', (payload) => {
             const q = payload && Array.isArray(payload.queue) ? payload.queue : payload;
             this.updateQueue(q);
@@ -3723,9 +3843,90 @@
         isDevLog: true
       };
 
+      this._appendLogItem(item);
+    }
+
+    _appendLogItem(item) {
+      if (!item) return;
+      if (!this._liveFeed) this._liveFeed = [];
+
+      // Avoid immediate consecutive duplicate log messages
+      if (this._liveFeed.length > 0) {
+        const prev = this._liveFeed[0];
+        if (prev.msg === item.msg && prev.tag === item.tag && prev.vid === item.vid) {
+          return;
+        }
+      }
+
       this._liveFeed.unshift(item);
-      if (this._liveFeed.length > 50) this._liveFeed.length = 50;
+      if (this._liveFeed.length > 2000) {
+        this._liveFeed.length = 2000;
+      }
+      this._persistLogs();
       this._syncLogs();
+    }
+
+    _persistLogs() {
+      if (this._persistLogsTimer) return;
+      this._persistLogsTimer = setTimeout(() => {
+        this._persistLogsTimer = null;
+        try {
+          if (this._liveFeed) {
+            storage.localSet(KEYS.logHistory, JSON.stringify(this._liveFeed.slice(0, 2000)));
+          }
+        } catch (_) {}
+      }, 250);
+    }
+
+    _onEngineLog(payload) {
+      if (!payload) return;
+      const isErr = payload.level === 'ERR';
+      const code = payload.code || (isErr ? 'ERROR' : 'INFO');
+      const time = formatTime(payload.timestamp || Date.now());
+      const ctx = payload.context || {};
+      const cVid = ctx.vid ? cleanVid(ctx.vid) : '';
+      const url = ctx.url || (cVid ? toVacancyUrl(cVid) : '');
+
+      let tag = code;
+      let tagType = isErr ? 'error' : 'status';
+      if (/SCROLL|READING|VIEW|SCAN/i.test(code)) tagType = 'scan';
+      else if (/APPLY|COVER|CONFIRM|SCENARIO/i.test(code)) tagType = 'apply';
+      else if (/FILTER|SKIP|ALREADY/i.test(code)) tagType = 'filter';
+
+      let sub = '';
+      if (typeof ctx === 'string') {
+        sub = ctx;
+      } else if (ctx && typeof ctx === 'object') {
+        const parts = [];
+        if (ctx.targetY !== undefined) parts.push(`Цель: ${ctx.targetY}px (${ctx.pct ? ctx.pct + '%' : ''})`);
+        if (ctx.step !== undefined) parts.push(`Шаг: ${ctx.step}/${ctx.steps}`);
+        if (ctx.pauseMs !== undefined) parts.push(`Пауза: ${(ctx.pauseMs / 1000).toFixed(1)}с`);
+        if (ctx.total !== undefined) parts.push(`Всего кнопок: ${ctx.total}`);
+        if (ctx.pending !== undefined) parts.push(`К обработке: ${ctx.pending}`);
+        if (ctx.outcome !== undefined) parts.push(`Исход: ${ctx.outcome}`);
+        if (ctx.reason !== undefined) parts.push(`Причина: ${ctx.reason}`);
+        if (ctx.selector !== undefined) parts.push(`Селектор: ${ctx.selector}`);
+        sub = parts.join(' • ');
+      }
+
+      const item = {
+        id: 'log_' + (++this._logCounter || (this._logCounter = 1)) + '_' + Date.now(),
+        time,
+        tag,
+        tagType,
+        msg: String(payload.message || ''),
+        sub,
+        vid: cVid,
+        url,
+        selector: ctx.selector || '',
+        selectorName: ctx.selectorName || '',
+        expectedCss: ctx.expectedCss || '',
+        heuristic: ctx.heuristic || '',
+        contextSnippet: ctx.snippet || ctx.contextSnippet || '',
+        isDevLog: true
+      };
+
+      this._appendLogItem(item);
     }
 
     updateQueue(queue) {
@@ -3876,7 +4077,19 @@
       }
 
       // Clear logs and Copy buttons
-      // Handled natively by panel visibility and .hha-btn-icon styles
+      const clearLogsBtn = this._shadow.querySelector('[data-action="clear-logs"]') || this._shadow.querySelector('[data-el="clear-logs-btn"]');
+      const hasLogs = Boolean(this._liveFeed && this._liveFeed.length > 0);
+      if (clearLogsBtn) {
+        clearLogsBtn.style.opacity = hasLogs ? '1' : '0.4';
+        clearLogsBtn.style.pointerEvents = hasLogs ? 'auto' : 'none';
+      }
+
+      // Log header title with rolling count
+      const logHeaderTitle = this._shadow.querySelector('.hha-log-header-title');
+      if (logHeaderTitle) {
+        const logCount = this._liveFeed ? this._liveFeed.length : 0;
+        logHeaderTitle.textContent = logCount > 0 ? `События и отклики (${logCount} / 2000)` : 'События и отклики';
+      }
     }
 
     _toggleLogDetail(logId, rowEl) {
@@ -4391,6 +4604,11 @@
         e.stopPropagation();
         this._liveFeed = [];
         this._expandedLogIds.clear();
+        if (this._persistLogsTimer) {
+          clearTimeout(this._persistLogsTimer);
+          this._persistLogsTimer = null;
+        }
+        storage.localRemove(KEYS.logHistory);
         this._syncLogs();
       } else if (action === 'clear-queue') {
         e.stopPropagation();
@@ -5099,7 +5317,8 @@
       const logStream = this._shadow.querySelector('[data-el="log-stream"]');
       if (logStream) {
         if (this._liveFeed && this._liveFeed.length > 0) {
-          logStream.innerHTML = this._liveFeed.map(item => {
+          const itemsToRender = this._liveFeed.slice(0, 150);
+          const html = itemsToRender.map(item => {
             const isExpanded = this._expandedLogIds && this._expandedLogIds.has(item.id);
             const cleanSub = item.sub ? item.sub.replace(/^Причина:\s*Причина:\s*/i, 'Причина: ') : '';
             return `
@@ -5168,6 +5387,10 @@
               </div>
             `;
           }).join('');
+          const footerNote = this._liveFeed.length > 150
+            ? `<div class="hha-log-footer-note" style="padding: 10px 14px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px dashed rgba(226, 232, 240, 0.6);">Показаны последние 150 из ${this._liveFeed.length} записей.<br>Кнопка «Скопировать» экспортирует всю историю (${this._liveFeed.length}).</div>`
+            : '';
+          logStream.innerHTML = html + footerNote;
         } else {
           logStream.innerHTML = `
             <div class="hha-log-empty">
