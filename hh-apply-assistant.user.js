@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.0.7
+// @version      0.0.8
 // @author       Timur Geruzov
 // @description  HH Apply Assistant - Автоматизация откликов на вакансии hh.ru с эргономичным плавающим HUD интерфейсом
 // @license      GPL-3.0-only
@@ -30,19 +30,19 @@
   // --- 1. Constants, Selectors & Defaults ---
   const VERSION = '2.0.0';
   const SELECTORS = {
-    applyBtn: '[data-qa="vacancy-serp__vacancy_response"], button[data-qa="vacancy-serp__vacancy_response"]',
+    applyBtn: '[data-qa="vacancy-serp__vacancy_response"]',
     vacancyApply: '[data-qa="vacancy-response-link-bottom"], [data-qa="vacancy-response-link-top"], a[data-qa*="vacancy-response-link"]',
-    attachCoverBtn: '[data-qa="responded-success-attach-cover-letter"], button[data-qa="responded-success-attach-cover-letter"]',
-    attachCoverInModal: '[data-qa="responded-success-attach-cover-letter"], [data-qa="add-cover-letter"], button[data-qa="add-cover-letter"], [data-qa="vacancy-response-letter-toggle"]',
+    attachCoverBtn: '[data-qa="responded-success-attach-cover-letter"]',
+    attachCoverInModal: '[data-qa="responded-success-attach-cover-letter"], [data-qa="add-cover-letter"], [data-qa="vacancy-response-letter-toggle"]',
     letterTextarea: 'textarea[data-qa="vacancy-response-popup-form-letter-input"], textarea[name="text"], textarea[name="coverLetter"]',
-    letterSubmit: 'button[data-qa="vacancy-response-letter-submit"], [data-qa="vacancy-response-letter-submit"], button[data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit"], button[data-qa*="response-submit" i], [data-qa*="response-submit" i]',
+    letterSubmit: '[data-qa="vacancy-response-letter-submit"], [data-qa*="response-submit" i]',
     responseChat: '[data-qa="vacancy-response-link-view-topic"]',
     nativeWrapper: '[data-qa="textarea-native-wrapper"]',
     relocationBtn: '[data-qa="relocation-warning-confirm"]',
     rejectWarning: '[data-qa="response-reject-warning"]',
     vacancyLink: 'a[data-qa="serp-item__title"], a[data-qa="vacancy-serp__vacancy-title"]',
     vacancyCard: 'div[data-qa="vacancy-serp__vacancy"], .vacancy-serp-item',
-    pagerNext: '[data-qa="pager-next"], a[data-qa="pager-next"]'
+    pagerNext: '[data-qa="pager-next"]'
   };
 
   const SELECTOR_METADATA = {
@@ -97,7 +97,8 @@
     tabId: STORAGE_PREFIX + 'tab_id',
     sentCount: STORAGE_PREFIX + 'sent_count',
     stats: STORAGE_PREFIX + 'run_stats',
-    logHistory: STORAGE_PREFIX + 'log_history'
+    logHistory: STORAGE_PREFIX + 'log_history',
+    dailyLimitReached: STORAGE_PREFIX + 'daily_limit_reached'
   };
 
   const PRESETS = {
@@ -110,7 +111,6 @@
   const DEFAULTS = {
     coverText: DEFAULT_COVER_TEXT,
     useCover: true,
-    openVacancy: true,
     skipHidden: true,
     preset: 'balanced',
     limit: 50
@@ -306,7 +306,6 @@
     return {
       coverText: String(m.coverText ?? DEFAULT_COVER_TEXT).slice(0, 5000),
       useCover: m.useCover !== false,
-      openVacancy: m.openVacancy !== false,
       skipHidden: m.skipHidden !== false,
       preset: PRESETS[m.preset] ? m.preset : 'balanced',
       limit: clamp(Math.round(toNum(m.limit, DEFAULTS.limit)), 1, 500)
@@ -698,7 +697,7 @@
     isLoopActive = false;
     setRunning(false);
     releaseInstanceLock(TAB_ID);
-    const statusKey = isError ? 'error' : (code === 'STOPPED_BY_USER' ? 'stopped' : code.toLowerCase());
+    const statusKey = code === 'DAILY_LIMIT_REACHED' ? 'done' : (isError ? 'error' : (code === 'STOPPED_BY_USER' ? 'stopped' : code.toLowerCase()));
     setStatus(statusKey, code, details);
     if (logMsg) log(logMsg, isError, code, details);
   }
@@ -714,6 +713,12 @@
 
   const haltForCaptcha = () => haltEngine('CAPTCHA_DETECTED', 'Captcha detected on page. Automation halted.');
   const haltForRateLimit = () => haltEngine('RATE_LIMITED', 'Rate limit detected. Automation halted.');
+  const haltForDailyLimit = (msg = 'Достигнут суточный лимит HeadHunter: не более 200 откликов за 24 часа. Автоматизация остановлена.') => {
+    try {
+      storage.localSet(KEYS.dailyLimitReached, Date.now());
+    } catch (_) {}
+    terminateRun('DAILY_LIMIT_REACHED', msg, { limit: 200, period: '24h' }, true);
+  };
   const haltForLostInstanceLock = () => {
     const isBlocked = storage.isLocalBlocked();
     haltEngine(isBlocked ? 'STORAGE_BLOCKED' : 'TAB_LOCK_LOST', isBlocked ? 'Storage access blocked. Lost tab lock.' : 'Active tab lock lost.');
@@ -743,29 +748,16 @@
     }
   }
 
+  const REVIEW_SELECTORS = '[data-qa*="review" i], [data-qa*="feedback" i], [data-qa*="big-widget" i], [data-qa*="dream" i], [class*="review" i], [class*="feedback" i], [class*="dream" i], a[href*="/reviews" i], a[href*="BigWidget" i]';
+
   function isReviewOrFeedbackElement(el) {
     if (!el || el === globalThis.document || el === globalThis.document?.body || el === globalThis.document?.documentElement) {
       return false;
     }
-    // 1. Element itself or any ancestor matches review, feedback, or Dream Job widget
-    if (el.closest?.(
-      '[data-qa*="review" i], [data-qa*="feedback" i], [data-qa*="employer-review" i], ' +
-      '[data-qa*="review-card" i], [data-qa*="reviews-slider" i], [data-qa*="all-reviews" i], ' +
-      '[data-qa*="big-widget" i], [class*="review" i], [class*="feedback" i], ' +
-      '[class*="dreamjob" i], [class*="dream-job" i], [data-qa*="dream-job" i], [data-qa*="dreamjob" i], ' +
-      'a[href*="/reviews"], a[href*="BigWidget"], [data-qa="employer-reviews-stars"]'
-    )) {
-      return true;
+    if (el.closest?.(REVIEW_SELECTORS)) return true;
+    if (el.matches?.('[role="dialog"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i]')) {
+      return Boolean(el.querySelector?.(REVIEW_SELECTORS));
     }
-
-    // 2. If element is a modal, dialog or popup container, check if it contains reviews or Dream Job
-    const isModalOrDialog = el.matches?.('[role="dialog"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i]');
-    if (isModalOrDialog) {
-      if (el.querySelector?.('[data-qa*="employer-review" i], [data-qa*="review-card" i], [data-qa*="reviews-slider" i], [data-qa*="all-reviews" i], [data-qa*="dream-job" i], a[href*="hhtmFrom=BigWidget"], a[href*="/reviews"]')) {
-        return true;
-      }
-    }
-
     return false;
   }
 
@@ -775,6 +767,32 @@
       if (isReviewOrFeedbackElement(el)) continue;
       const txt = (el.innerText || el.textContent || el.value || '').trim();
       if (txt.length <= maxLen && regex.test(txt)) return el;
+    }
+    return null;
+  }
+
+  function detectRelocationWarning(root = globalThis.document) {
+    const scope = root || globalThis.document;
+    const direct = q('[data-qa="relocation-warning-confirm"]', scope);
+    if (direct && isVisible(direct) && !isReviewOrFeedbackElement(direct)) return direct;
+
+    const alert = q('[data-qa="magritte-alert"], [role="dialog"]', scope);
+    if (alert && isVisible(alert) && !isReviewOrFeedbackElement(alert)) {
+      const confirmBtn = q('[data-qa="relocation-warning-confirm"]', alert)
+        || findPatternElement(alert, 'button, [role="button"]', /^вс[её]\s*равно(?:\s*откликнуться)?$/i, 35);
+      if (confirmBtn && isVisible(confirmBtn)) return confirmBtn;
+    }
+
+    const title = q('[data-qa="relocation-warning-title"]', scope)
+      || findPatternElement(scope, 'h1, h2, h3, div, p, span', /откликаетесь\s+на\s+вакансию\s+в\s+другой\s+стране|в\s+другой\s+стране/i, 80);
+    if (title && isVisible(title)) {
+      const container = title.closest?.('[data-qa="magritte-alert"], [role="dialog"]') || title.parentElement;
+      if (container && !isReviewOrFeedbackElement(container)) {
+        const confirmBtn = q('[data-qa="relocation-warning-confirm"]', container)
+          || findPatternElement(container, 'button, [role="button"]', /^вс[её]\s*равно(?:\s*откликнуться)?$/i, 35)
+          || findPatternElement(container, 'button, [role="button"]', /^(?:откликнуться|подтвердить)$/i, 35);
+        if (confirmBtn && isVisible(confirmBtn)) return confirmBtn;
+      }
     }
     return null;
   }
@@ -789,24 +807,45 @@
     attachCoverInModal: coverBtnHeuristic,
     letterSubmit: (r) => {
       const el = findPatternElement(r, 'button, [role="button"], input[type="submit"]', /^(отправить|сохранить|отправить отклик|откликнуться|продолжить|выбрать|send|submit|apply)$/i, 50)
-        || findPatternElement(r, 'button, [role="button"], input[type="submit"]', /отправить|сохранить|откликнуться|send|submit|apply/i, 50)
-        || q('button[type="submit"], [data-qa*="response-submit" i], [data-qa="vacancy-response-submit"]', r);
+        || findPatternElement(r, 'button, [role="button"], input[type="submit"]', /отправить|сохранить|откликнуться|send|submit|apply/i, 50);
       if (el && !el.closest?.('[data-qa*="vacancy-response-link"]')) return el;
       return null;
     },
-    relocationBtn: (r) => {
-      const direct = q('[data-qa="relocation-warning-confirm"]', r);
-      if (direct && isVisible(direct) && !isReviewOrFeedbackElement(direct)) return direct;
-      const alert = q('[data-qa="magritte-alert"], [role="dialog"]', r);
-      if (alert && !isReviewOrFeedbackElement(alert)) {
-        return findPatternElement(alert, 'button, [role="button"]', /^вс[её]\s*равно(?:\s*откликнуться)?$/i, 35);
-      }
-      return null;
-    },
+    relocationBtn: (r) => detectRelocationWarning(r),
     rejectWarning: (r) => findPatternElement(r, 'div, p, span, section', /не соответствует|отказ|не подходит|warning|reject/i, 250),
     responseChat: (r) => findPatternElement(r, 'a, button', /чат|перейти в чат|сообщения|chat/i, 60),
     pagerNext: (r) => findPatternElement(r, 'a, button', /дальше|впер[её]д|следующая|next/i, 60)
   };
+
+  async function selectResumeIfRequired(scope, runId) {
+    const root = scope || globalThis.document?.body;
+    let radios = qa('input[type="radio"][name*="resume" i], [data-qa*="select-resume" i] input[type="radio"], [data-qa*="resume" i] input[type="radio"]', root);
+    if (!radios.length && q('[data-qa*="resume" i], [class*="resume" i]', root)) {
+      radios = qa('input[type="radio"]', root);
+    }
+    if (radios.length > 0) {
+      const isChecked = radios.some(r => r.checked || r.getAttribute('aria-checked') === 'true');
+      if (!isChecked) {
+        log(`Обнаружен выбор резюме (${radios.length} вар.). Выбираем первое...`, false, 'RESUME_SELECT', { optionsCount: radios.length });
+        const target = radios[0].closest?.('label') || radios[0];
+        await clickElement(target);
+        await actionPause();
+        return isRunCurrent(runId);
+      }
+    } else {
+      const cards = qa('[data-qa*="resume-item" i], [data-qa*="resume-card" i], [class*="resume-item" i]', root);
+      if (cards.length > 0) {
+        const isSelected = cards.some(c => c.getAttribute('aria-selected') === 'true' || /selected|active/i.test(c.className || ''));
+        if (!isSelected) {
+          log(`Обнаружены карточки резюме (${cards.length}). Выбираем первую...`, false, 'RESUME_CARD_SELECT', { cardsCount: cards.length });
+          await clickElement(cards[0]);
+          await actionPause();
+          return isRunCurrent(runId);
+        }
+      }
+    }
+    return true;
+  }
 
   function queryExact(key, root) {
     return (key in SELECTORS) ? q(SELECTORS[key], root) : null;
@@ -969,34 +1008,25 @@
     const pointerDownOpts = { ...downOpts, pointerId: 1, pointerType: 'mouse', isPrimary: true };
     const pointerUpOpts = { ...upOpts, pointerId: 1, pointerType: 'mouse', isPrimary: true };
 
-    const innerTarget = el.querySelector?.('span, [class*="label" i], [class*="text" i], [class*="content" i]');
-    if (innerTarget && innerTarget !== el) {
+    const dispatchPointerSequence = (target) => {
+      if (!target) return;
       if (typeof PointerEvent !== 'undefined') {
-        try { innerTarget.dispatchEvent(new PointerEvent('pointerdown', pointerDownOpts)); } catch (_) {}
+        try { target.dispatchEvent(new PointerEvent('pointerdown', pointerDownOpts)); } catch (_) {}
       }
       if (typeof MouseEvent !== 'undefined') {
-        try { innerTarget.dispatchEvent(new MouseEvent('mousedown', downOpts)); } catch (_) {}
+        try { target.dispatchEvent(new MouseEvent('mousedown', downOpts)); } catch (_) {}
       }
       if (typeof PointerEvent !== 'undefined') {
-        try { innerTarget.dispatchEvent(new PointerEvent('pointerup', pointerUpOpts)); } catch (_) {}
+        try { target.dispatchEvent(new PointerEvent('pointerup', pointerUpOpts)); } catch (_) {}
       }
       if (typeof MouseEvent !== 'undefined') {
-        try { innerTarget.dispatchEvent(new MouseEvent('mouseup', upOpts)); } catch (_) {}
+        try { target.dispatchEvent(new MouseEvent('mouseup', upOpts)); } catch (_) {}
       }
-    }
+    };
 
-    if (typeof PointerEvent !== 'undefined') {
-      try { el.dispatchEvent(new PointerEvent('pointerdown', pointerDownOpts)); } catch (_) {}
-    }
-    if (typeof MouseEvent !== 'undefined') {
-      try { el.dispatchEvent(new MouseEvent('mousedown', downOpts)); } catch (_) {}
-    }
-    if (typeof PointerEvent !== 'undefined') {
-      try { el.dispatchEvent(new PointerEvent('pointerup', pointerUpOpts)); } catch (_) {}
-    }
-    if (typeof MouseEvent !== 'undefined') {
-      try { el.dispatchEvent(new MouseEvent('mouseup', upOpts)); } catch (_) {}
-    }
+    const innerTarget = el.querySelector?.('span, [class*="label" i], [class*="text" i], [class*="content" i]');
+    if (innerTarget && innerTarget !== el) dispatchPointerSequence(innerTarget);
+    dispatchPointerSequence(el);
 
     let clickDispatched = false;
     if (typeof el.click === 'function') {
@@ -1111,15 +1141,74 @@
     return /(?:подтвердите,?\s*что\s*вы\s*не\s*робот|введите\s*символы\s*с\s*картинки|вы\s+не\s+робот|not\s+a\s+robot|необычн\w*\s+активн|unusual\s+(?:activity|traffic))/i.test(bodyText);
   }
 
+  const DAILY_LIMIT_REGEX = /(?:исчерпали\s+лимит\s+откликов|не\s+более\s+200\s+откликов|в\s+течение\s+24\s+часов\s+можно\s+совершить\s+не\s+более|лимит\s+откликов[,\s]+попробуйте\s+отправить\s+отклик\s+позднее|лимит\s+откликов.*попробуйте|24\s+часов?\s+можно\s+совершить\s+не\s+более|вы\s+исчерпали\s+лимит|daily\s+application\s+limit|reached\s+(?:the\s+)?limit\s+of\s+(?:200\s+)?applications)/i;
+
+  function detectDailyLimit(root = globalThis.document) {
+    if (!root) return false;
+
+    // 1. Check all notification, toast, alert, snackbar and modal scopes first
+    const notificationSelectors = [
+      '[role="alert"]',
+      '[role="status"]',
+      '[data-qa*="notification" i]',
+      '[class*="notification" i]',
+      '[data-qa*="toast" i]',
+      '[class*="toast" i]',
+      '[data-qa*="snackbar" i]',
+      '[class*="snackbar" i]',
+      '[data-qa*="popup" i]',
+      '[class*="popup" i]',
+      '[data-qa*="modal" i]',
+      '[class*="modal" i]',
+      '[data-qa*="bloko-notification" i]',
+      '[data-qa="bottom-sheet-content"]'
+    ].join(', ');
+
+    const candidates = qa(notificationSelectors, root);
+    for (const el of candidates) {
+      if (isVisible(el)) {
+        const text = (el.textContent || el.innerText || '').trim();
+        if (text && DAILY_LIMIT_REGEX.test(text)) {
+          return true;
+        }
+      }
+    }
+
+    // 2. Check top-level overlay containers and last appended elements of document.body
+    const body = root.body || (root.nodeType === 9 ? root.body : root);
+    if (body && body.children) {
+      const children = Array.from(body.children);
+      const startIdx = Math.max(0, children.length - 20);
+      for (let i = children.length - 1; i >= startIdx; i--) {
+        const child = children[i];
+        if (isVisible(child)) {
+          const txt = (child.textContent || '').trim();
+          if (txt && DAILY_LIMIT_REGEX.test(txt)) {
+            return true;
+          }
+        }
+      }
+
+      // 3. Fallback check across root textContent
+      const fullText = (body.textContent || '');
+      if (DAILY_LIMIT_REGEX.test(fullText)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function detectRateLimit() {
     const doc = globalThis.document, loc = globalThis.location;
     if (!doc) return false;
+    if (detectDailyLimit(doc)) return true;
     if (loc && /\/error|\/blocked|\/forbidden|\/denied|\/rate-limit/i.test(loc.pathname)) return true;
     if (doc.title && /(?:429|503|error\s+(?:429|503)|доступ\s+ограничен|too\s+many\s+requests|service\s+unavailable)/i.test(doc.title)) return true;
-    if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]')) {
+    if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]', doc)) {
       return true;
     }
-    const bodyText = (doc.body?.textContent || doc.documentElement?.textContent || '').slice(0, 3000);
+    const bodyText = (doc.body?.textContent || doc.documentElement?.textContent || '');
     return /(?:слишком\s*много\s*запросов|429\s*Too\s*Many\s*Requests|503\s*Service\s*Unavailable|доступ\s*(?:временно\s*)?ограничен|access\s*(?:temporarily\s*)?denied|error\s+429|error\s+503)/i.test(bodyText);
   }
 
@@ -1187,6 +1276,7 @@
   function detectModalBlockReason(modalScope = null) {
     const modal = modalScope || qa('[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]').find(m => isVisible(m) && !isReviewOrFeedbackElement(m)) || null;
     if (!modal) return null;
+    if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
     const text = (modal.textContent || modal.innerText || '').slice(0, 3000);
     if (/резюме\s*скрыто|resume\s*is\s*hidden/i.test(text)) return 'RESUME_HIDDEN';
     if (/не\s*соответствует\s*требованиям|отказ|reject/i.test(text)) return 'REJECT_WARNING';
@@ -1196,52 +1286,21 @@
     return null;
   }
 
-  function detectRelocationWarning() {
-    // 1. Direct standard data-qa selector
-    const direct = q('[data-qa="relocation-warning-confirm"]');
-    if (direct && isVisible(direct) && !isReviewOrFeedbackElement(direct)) return direct;
-
-    // 2. Alert container with relocation warning
-    const alert = q('[data-qa="magritte-alert"]');
-    if (alert && isVisible(alert) && !isReviewOrFeedbackElement(alert)) {
-      const confirmBtn = q('[data-qa="relocation-warning-confirm"]', alert)
-        || findPatternElement(alert, 'button, [role="button"]', /^вс[её]\s*равно(?:\s*откликнуться)?$/i, 35);
-      if (confirmBtn && isVisible(confirmBtn)) return confirmBtn;
-    }
-
-    // 3. Explicit relocation warning title
-    const title = q('[data-qa="relocation-warning-title"]')
-      || findPatternElement(null, 'h1, h2, h3, div, p, span', /откликаетесь\s+на\s+вакансию\s+в\s+другой\s+стране|в\s+другой\s+стране/i, 80);
-    if (title && isVisible(title)) {
-      const scope = title.closest?.('[data-qa="magritte-alert"], [role="dialog"]') || title.parentElement;
-      if (scope && !isReviewOrFeedbackElement(scope)) {
-        const confirmBtn = q('[data-qa="relocation-warning-confirm"]', scope)
-          || findPatternElement(scope, 'button, [role="button"]', /^вс[её]\s*равно(?:\s*откликнуться)?$/i, 35)
-          || findPatternElement(scope, 'button, [role="button"]', /^(?:откликнуться|подтвердить)$/i, 35);
-        if (confirmBtn && isVisible(confirmBtn)) return confirmBtn;
-      }
-    }
-    return null;
-  }
 
   function detectResponseOutcomeInRoot(root, includeExactSelectors) {
     if (!root || isReviewOrFeedbackElement(root)) return null;
+    if (detectDailyLimit(root) || detectDailyLimit()) return 'DAILY_LIMIT';
     if (detectCaptcha()) return 'CAPTCHA';
     if (detectRateLimit()) return 'RATE_LIMIT';
     if (hasReliableRejectWarning()) return 'REJECT_WARNING';
     if (detectRelocationWarning()) return 'RELOCATION_WARNING';
 
     const isResumeModal = Boolean(
-      q('[data-qa*="resume" i], [class*="resume" i], input[type="radio"][name*="resume" i], [data-qa*="vacancy-response" i]', root) ||
-      /выберите\s+(?:подходящее\s+)?резюме|выбор\s+резюме|откликнуться\s+с\s+резюме|каким\s+резюме|резюме\s+для\s+отклика/i.test(root.textContent || '')
-    );
-    const hasResponseSubmit = Boolean(
-      query('letterSubmit', root) ||
-      q('button[data-qa*="submit" i], button[type="submit"], [data-qa*="response-submit" i], [data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit"]', root) ||
-      findPatternElement(root, 'button, [role="button"], a, input[type="submit"]', /^(?:откликнуться|выбрать|продолжить|отправить(?:\s*отклик)?)$/i, 35)
+      q('input[type="radio"][name*="resume" i], [data-qa*="select-resume" i], [data-qa*="resume-item" i]', root) ||
+      /(?:выберите|выбор)\s+(?:подходящее\s+)?резюме|резюме\s+для\s+отклика/i.test(root.textContent || '')
     );
 
-    if (query('letterTextarea', root) || query('attachCoverInModal', root) || query('letterSubmit', root) || q('[data-qa="vacancy-response-popup-form"]', root) || (isResumeModal && hasResponseSubmit) || isResumeModal) {
+    if (query('letterTextarea', root) || query('attachCoverInModal', root) || query('letterSubmit', root) || q('[data-qa="vacancy-response-popup-form"]', root) || isResumeModal) {
       return 'MODAL_OPEN';
     }
     if (includeExactSelectors && (query('attachCoverBtn', root) || query('responseChat', root) || hasResponseTextConfirmation(root))) {
@@ -1251,6 +1310,9 @@
   }
 
   function detectResponseOutcomeOnce({ allowDocumentStrongText = false } = {}) {
+    // 0. Daily limit reached check
+    if (detectDailyLimit()) return 'DAILY_LIMIT';
+
     // 1. Relocation warning alert has absolute top priority
     if (detectRelocationWarning()) return 'RELOCATION_WARNING';
 
@@ -1352,8 +1414,7 @@
       if (!isRunCurrent(runId)) return false;
     }
     const submit = query('letterSubmit', scope)
-      || q('button[data-qa*="submit" i], button[type="submit"], [data-qa*="response-submit" i], [data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit"]', scope)
-      || findPatternElement(scope, 'button, [role="button"], a, input[type="submit"]', /^(?:откликнуться|отправить(?:\s*отклик)?|продолжить|сохранить|выбрать|send|submit|apply)$/i, 40);
+      || q('button[type="submit"]', scope);
     if (!submit) {
       log('Кнопка отправки формы сопроводительного письма не найдена', true, 'SUBMIT_BTN_NOT_FOUND');
       return false;
@@ -1429,7 +1490,9 @@
 
   async function handleScenarioB(modal, runId = currentRunId) {
     log('Scenario B: Response modal opened', false, 'SCENARIO_B');
+    if (detectDailyLimit(modal) || detectDailyLimit()) { haltForDailyLimit(); return 'BLOCKED'; }
     const blockReason = detectModalBlockReason(modal);
+    if (blockReason === 'DAILY_LIMIT') { haltForDailyLimit(); return 'BLOCKED'; }
     if (blockReason === 'CAPTCHA') { haltForCaptcha(); return 'CAPTCHA'; }
     if (blockReason === 'RATE_LIMIT') { haltForRateLimit(); return 'BLOCKED'; }
     if (blockReason === 'TEST_REQUIRED' || blockReason === 'RESUME_HIDDEN') return blockReason;
@@ -1440,32 +1503,8 @@
       return 'SKIP';
     }
 
-    // Support resume selection in modal (e.g. accounts with multiple resumes)
-    const radios = qa('input[type="radio"]', modal);
-    if (radios.length > 0) {
-      const isChecked = radios.some(r => r.checked || r.getAttribute('aria-checked') === 'true');
-      if (!isChecked) {
-        log(`В модальном окне обнаружен выбор резюме (${radios.length} вариантов). Выбираем первое доступное...`, false, 'RESUME_SELECT', { optionsCount: radios.length });
-        const firstRadio = radios[0];
-        const clickable = firstRadio.closest?.('label') || firstRadio;
-        await clickElement(clickable);
-        await actionPause();
-        if (!isRunCurrent(runId)) return 'STOPPED';
-      } else {
-        log('В модальном окне резюме уже выбрано по умолчанию', false, 'RESUME_ALREADY_SELECTED');
-      }
-    } else {
-      const resumeCards = qa('[data-qa*="resume-item" i], [data-qa*="resume-card" i], [class*="resume-item" i]', modal);
-      if (resumeCards.length > 0) {
-        const isSelected = resumeCards.some(c => c.getAttribute('aria-selected') === 'true' || /selected|active/i.test(c.className || ''));
-        if (!isSelected) {
-          log(`В модальном окне обнаружены карточки резюме (${resumeCards.length}). Выбираем первое доступное...`, false, 'RESUME_CARD_SELECT', { cardsCount: resumeCards.length });
-          await clickElement(resumeCards[0]);
-          await actionPause();
-          if (!isRunCurrent(runId)) return 'STOPPED';
-        }
-      }
-    }
+    const resumeOk = await selectResumeIfRequired(modal, runId);
+    if (!resumeOk || !isRunCurrent(runId)) return 'STOPPED';
 
     const attachCoverToggle = query('attachCoverInModal', modal)
       || findPatternElement(modal, 'button, [role="button"], a', /добавить\s+сопроводительное|написать\s+письмо/i, 35);
@@ -1483,12 +1522,25 @@
       return 'FAIL';
     }
 
-    const confirmed = await waitForCondition(() => isResponseConfirmed(), 6000, activeAbortController?.signal, 'подтверждение отклика после отправки модалки');
+    const confirmed = await waitForCondition(
+      () => {
+        if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
+        return isResponseConfirmed();
+      },
+      6000,
+      activeAbortController?.signal,
+      'подтверждение отклика после отправки модалки'
+    );
+    if (confirmed === 'DAILY_LIMIT' || detectDailyLimit()) {
+      haltForDailyLimit();
+      return 'BLOCKED';
+    }
     return confirmed ? 'OK' : 'FAIL';
   }
 
   async function dispatchOutcome(outcome, vid, runId, relocAttempts = 0) {
     if (!outcome) return 'FAIL';
+    if (outcome === 'DAILY_LIMIT') { haltForDailyLimit(); return 'BLOCKED'; }
     if (outcome === 'RESPONSE_FORM') return 'RESPONSE_PAGE';
     if (outcome === 'CAPTCHA') { haltForCaptcha(); return 'CAPTCHA'; }
     if (outcome === 'RATE_LIMIT') { haltForRateLimit(); return 'BLOCKED'; }
@@ -1652,6 +1704,11 @@
       const title = parseVacancyTitle();
       log(`Загружена страница вакансии #${vid}: ${title}`, false, 'VACANCY_PAGE_LOADED', { vid, title, url: pageUrl });
 
+      if (detectDailyLimit()) {
+        haltForDailyLimit();
+        return 'BLOCKED';
+      }
+
       if (detectAlreadyApplied()) {
         log(`На вакансию #${vid} уже был отправлен отклик ранее`, false, 'ALREADY_APPLIED', { vid });
         if (vid) skipVacancy(vid, 'already_applied', runId);
@@ -1691,11 +1748,20 @@
       };
 
       let outcome = await waitForCondition(
-        () => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()),
+        () => {
+          if (detectDailyLimit()) return 'DAILY_LIMIT';
+          if (Page.isResponseForm()) return 'RESPONSE_FORM';
+          return detectResponseOutcomeOnce();
+        },
         3500,
         activeAbortController?.signal,
         inspectOutcome
       );
+
+      if (outcome === 'DAILY_LIMIT' || detectDailyLimit()) {
+        haltForDailyLimit();
+        return 'BLOCKED';
+      }
 
       // Direct Link Navigation Fallback: if no modal opened within 3.5s and button links to response page
       if (!outcome && !Page.isResponseForm()) {
@@ -1716,7 +1782,11 @@
 
       if (!outcome) {
         outcome = await waitForCondition(
-          () => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()),
+          () => {
+            if (detectDailyLimit()) return 'DAILY_LIMIT';
+            if (Page.isResponseForm()) return 'RESPONSE_FORM';
+            return detectResponseOutcomeOnce();
+          },
           4500,
           activeAbortController?.signal,
           inspectOutcome
@@ -1768,32 +1838,8 @@
         return returnToList(vid, { markProcessed: true, runId });
       }
 
-      // Resume selection support (for multi-resume profiles)
-      const radios = qa('input[type="radio"][name*="resume" i], [data-qa*="resume" i] input[type="radio"], input[type="radio"]');
-      if (radios.length > 0) {
-        const isChecked = radios.some(r => r.checked || r.getAttribute('aria-checked') === 'true');
-        if (!isChecked) {
-          log(`На странице отклика обнаружен выбор резюме (${radios.length} вариантов). Выбираем первое доступное...`, false, 'RESUME_SELECT', { vid, optionsCount: radios.length });
-          const firstRadio = radios[0];
-          const clickable = firstRadio.closest?.('label') || firstRadio;
-          await clickElement(clickable);
-          await actionPause();
-          if (!isRunCurrent(runId)) return;
-        } else {
-          log('На странице отклика резюме уже выбрано по умолчанию', false, 'RESUME_ALREADY_SELECTED', { vid });
-        }
-      } else {
-        const resumeCards = qa('[data-qa*="resume-item" i], [data-qa*="resume-card" i], [class*="resume-item" i]');
-        if (resumeCards.length > 0) {
-          const isSelected = resumeCards.some(c => c.getAttribute('aria-selected') === 'true' || /selected|active/i.test(c.className || ''));
-          if (!isSelected) {
-            log(`На странице отклика обнаружены карточки резюме (${resumeCards.length}). Выбираем первое доступное...`, false, 'RESUME_CARD_SELECT', { vid, cardsCount: resumeCards.length });
-            await clickElement(resumeCards[0]);
-            await actionPause();
-            if (!isRunCurrent(runId)) return;
-          }
-        }
-      }
+      const resumeOk = await selectResumeIfRequired(globalThis.document?.body, runId);
+      if (!resumeOk || !isRunCurrent(runId)) return;
 
       // Cover letter toggle support
       const coverToggle = query('attachCoverInModal')
@@ -1806,8 +1852,7 @@
       }
 
       const submitBtn = await waitForCondition(
-        () => query('letterSubmit')
-          || q('button[data-qa*="submit" i], button[type="submit"], [data-qa*="response-submit" i], [data-qa="vacancy-response-submit"]'),
+        () => query('letterSubmit') || q('button[type="submit"]'),
         4000,
         activeAbortController?.signal,
         `поиск кнопки отправки отклика #${vid}`
@@ -1821,16 +1866,27 @@
       const submitted = await submitCoverLetterForm(null, runId);
       if (!isRunCurrent(runId)) return;
       if (!submitted) {
+        if (detectDailyLimit()) {
+          haltForDailyLimit();
+          return;
+        }
         log('Не удалось нажать кнопку отправки формы отклика', true, 'SUBMIT_FAILED', { vid });
         saveCurrentForManual(vid, 'submit-form-failed', runId);
         return returnToList(vid, { markProcessed: true, runId });
       }
       const confirmed = await waitForCondition(
-        () => isResponseConfirmed({ allowDocumentStrongText: true }),
+        () => {
+          if (detectDailyLimit()) return 'DAILY_LIMIT';
+          return isResponseConfirmed({ allowDocumentStrongText: true });
+        },
         6000,
         activeAbortController?.signal,
         `подтверждение отправки отклика #${vid}`
       );
+      if (confirmed === 'DAILY_LIMIT' || detectDailyLimit()) {
+        haltForDailyLimit();
+        return;
+      }
       log(confirmed ? `Отклик подтвержден на странице вакансии #${vid}` : `Не удалось подтвердить отправку отклика #${vid}`, !confirmed, confirmed ? 'APPLICATION_CONFIRMED' : 'SUBMIT_UNCONFIRMED', { vid });
       if (confirmed) commitSuccess(vid, runId); else saveCurrentForManual(vid, 'unconfirmed', runId);
       returnToList(vid, { markProcessed: true, runId });
@@ -1854,19 +1910,18 @@
     return getLastAttemptID() || getVacancyID(globalThis.document?.body);
   }
 
-  async function processVacancy(btn, runId = currentRunId) {
-    if (!isRunCurrent(runId)) return 'STOPPED';
-    const vid = getStableVacancyId(btn);
-    setLastAttemptID(vid);
-    if (Page.isVacancy()) return await handleVacancyPage(vid, runId);
-    if (Page.isSearch() && globalThis.location) setReturnUrl(globalThis.location.href);
-    const card = getVacancyCard(btn);
-    events.emit('entity', { vid, title: card ? readSerpCardTitle(query('vacancyLink', card)) : '', action: 'processing' });
-    await clickElement(btn);
+  async function navigateToNextSearchPage(nextBtn, runId) {
+    if (!nextBtn) return;
     await actionPause();
-    if (!isRunCurrent(runId)) return 'STOPPED';
-    const outcome = await waitForCondition(() => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()), 8000, activeAbortController?.signal);
-    return await dispatchOutcome(outcome, vid, runId);
+    if (!isRunCurrent(runId)) return;
+    const href = nextBtn.getAttribute?.('href') || nextBtn.href;
+    if (href && globalThis.location) {
+      setReturnUrl(href);
+      flushTelemetryBeforeNav();
+      try { globalThis.location.assign(href); } catch (_) { globalThis.location.href = href; }
+    } else {
+      clickElement(nextBtn);
+    }
   }
 
   // --- 15. Main Execution Loop ---
@@ -1906,10 +1961,11 @@
     if (!wasRunning) {
       resetSentCount();
       resetStats();
-      log(`Run started in "${config.preset}" preset (Limit: ${config.limit})`, false, 'RUN_INITIATED', { preset: config.preset, limit: config.limit });
+      log(`════════ НОВЫЙ ЗАПУСК СЕССИИ (Пресет: ${config.preset}, Лимит: ${config.limit}) ════════`, false, 'RUN_INITIATED', { preset: config.preset, limit: config.limit });
     }
 
     try {
+      if (detectDailyLimit()) return haltForDailyLimit();
       if (detectCaptcha()) return haltForCaptcha();
       if (detectRateLimit()) return haltForRateLimit();
 
@@ -1925,9 +1981,12 @@
 
       if (Page.isVacancy()) {
         log('Processing single vacancy page', false, 'ON_VACANCY_PAGE');
-        const res = await processVacancy(null, runId);
+        const vid = getStableVacancyId();
+        setLastAttemptID(vid);
+        const res = await handleVacancyPage(vid, runId);
         if (runId !== currentRunId) return;
         if (res === 'STOPPED' || stopSignal) return finalizeRun(runId, 'stopped', 'Processing stopped on vacancy page');
+        if (res === 'BLOCKED') return;
         if (res === 'CAPTCHA') { haltForCaptcha(); return; }
         if (res === 'RESPONSE_PAGE' || Page.isResponseForm()) {
           isLoopActive = false;
@@ -1967,16 +2026,7 @@
           const nextBtn = query('pagerNext');
           if (anyAlreadyApplied && nextBtn) {
             log('Все вакансии на странице уже имеют отклики. Переход на следующую страницу...', false, 'PAGINATION_ALL_APPLIED');
-            await actionPause();
-            if (!isRunCurrent(runId)) return;
-            const href = nextBtn.getAttribute?.('href') || nextBtn.href;
-            if (href && globalThis.location) {
-              setReturnUrl(href);
-              flushTelemetryBeforeNav();
-              try { globalThis.location.assign(href); } catch (_) { globalThis.location.href = href; }
-            } else {
-              clickElement(nextBtn);
-            }
+            await navigateToNextSearchPage(nextBtn, runId);
             return;
           }
           notifySelectorFailure('applyBtn', cards[0], { cardsCount: cards.length });
@@ -1994,110 +2044,39 @@
         const nextBtn = query('pagerNext');
         if (nextBtn) {
           log('Все вакансии на текущей странице обработаны. Переход к следующей странице (пагинация)...', false, 'PAGINATION_NEXT');
-          await actionPause();
-          if (!isRunCurrent(runId)) return;
-          const href = nextBtn.getAttribute?.('href') || nextBtn.href;
-          if (href && globalThis.location) {
-            setReturnUrl(href);
-            flushTelemetryBeforeNav();
-            try { globalThis.location.assign(href); } catch (_) { globalThis.location.href = href; }
-          } else {
-            clickElement(nextBtn);
-          }
+          await navigateToNextSearchPage(nextBtn, runId);
           return;
         }
         const finalSent = getSentCount();
         return finalizeRun(runId, 'done', `Все вакансии в выдаче обработаны. Всего отправлено: ${finalSent}`);
       }
 
-      if (config.openVacancy) {
-        const btn = targets[0];
-        const card = getVacancyCard(btn);
-        const link = card ? query('vacancyLink', card) : null;
-        const vid = getStableVacancyId(btn);
-        const title = card ? readSerpCardTitle(link) : '';
-        const origin = globalThis.location?.origin || 'https://hh.ru';
-        const targetUrl = link?.href ? (new URL(link.href, origin)).href : (vid && String(vid).startsWith('v_') ? `${origin}/vacancy/${String(vid).slice(2)}` : null);
+      const btn = targets[0];
+      const card = getVacancyCard(btn);
+      const link = card ? query('vacancyLink', card) : null;
+      const vid = getStableVacancyId(btn);
+      const title = card ? readSerpCardTitle(link) : '';
+      const origin = globalThis.location?.origin || 'https://hh.ru';
+      const targetUrl = link?.href ? (new URL(link.href, origin)).href : (vid && String(vid).startsWith('v_') ? `${origin}/vacancy/${String(vid).slice(2)}` : null);
 
-        if (!targetUrl) {
-          log(`Не удалось определить URL для вакансии #${vid}`, true, 'VACANCY_URL_NOT_FOUND', { vid });
-          skipVacancy(vid, 'no_url', runId);
-          return;
-        }
-
-        setLastAttemptID(vid);
-        if (globalThis.location) setReturnUrl(globalThis.location.href);
-        events.emit('entity', { vid, title, url: targetUrl, action: 'viewing' });
-        log(`Переход к вакансии #${vid} («${title}»)...`, false, 'OPEN_VACANCY', { vid, title, url: targetUrl });
-        await vacancyPause();
-        if (stopSignal || runId !== currentRunId) return;
-
-        flushTelemetryBeforeNav();
-        try {
-          globalThis.location.assign(targetUrl);
-        } catch (_) {
-          globalThis.location.href = targetUrl;
-        }
+      if (!targetUrl) {
+        log(`Не удалось определить URL для вакансии #${vid}`, true, 'VACANCY_URL_NOT_FOUND', { vid });
+        skipVacancy(vid, 'no_url', runId);
         return;
       }
 
-      let rescanCount = 0;
-      while (targets.length > 0) {
-        if (stopSignal || runId !== currentRunId) break;
-        if (detectCaptcha()) return haltForCaptcha();
-        if (detectRateLimit()) return haltForRateLimit();
+      setLastAttemptID(vid);
+      if (globalThis.location) setReturnUrl(globalThis.location.href);
+      events.emit('entity', { vid, title, url: targetUrl, action: 'viewing' });
+      log(`Переход к вакансии #${vid} («${title}»)...`, false, 'OPEN_VACANCY', { vid, title, url: targetUrl });
+      await vacancyPause();
+      if (stopSignal || runId !== currentRunId) return;
 
-        const btn = targets.shift();
-        const sent = getSentCount();
-        if (sent >= config.limit) return finalizeRun(runId, 'done', `Application limit reached: ${config.limit}`);
-        if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
-
-        const doc = globalThis.document;
-        if (!doc?.body?.contains(btn)) {
-          if (rescanCount++ < 3) {
-            const curProcessed = getProcessedIDs();
-            targets = queryAll('applyBtn').filter(b => (config.skipHidden && !isVisible(b) ? false : !curProcessed.has(getVacancyID(b))));
-            continue;
-          }
-          break;
-        }
-
-        await vacancyPause();
-        if (stopSignal || runId !== currentRunId) break;
-        if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
-
-        const result = await processVacancy(btn, runId);
-        if (runId !== currentRunId) return;
-        if (result === 'STOPPED' || stopSignal) return finalizeRun(runId, 'stopped', 'Processing stopped');
-        if (result === 'CAPTCHA') { haltForCaptcha(); return; }
-
-        if (result === 'RESPONSE_PAGE' || Page.isResponseForm()) {
-          isLoopActive = false;
-          setStatus('running', 'RESPONSE_PAGE');
-          log('Response page encountered: breaking search loop and transitioning to response page submission', false, 'RESPONSE_PAGE_HANDOFF');
-          const vid = getStableVacancyId(btn) || getLastAttemptID();
-          if (Page.isResponseForm() && !handlingResponsePage) {
-            handlingResponsePage = true;
-            setTrapLock(45000, runId);
-            submitResponsePage(vid, runId);
-          }
-          return;
-        }
-
-        if (result === 'NAVIGATED') {
-          isLoopActive = false;
-          return;
-        }
-
-        if (result === 'FAIL') {
-          skipVacancy(getStableVacancyId(btn), 'action_failed', runId);
-        }
-      }
-
-      if (stopSignal || runId !== currentRunId) return finalizeRun(runId, 'stopped', 'Processing stopped');
-      if (!Page.isResponseForm()) {
-        const finalSent = getSentCount();
-        finalizeRun(runId, 'done', `Run completed. Total sent in session: ${finalSent}`);
+      flushTelemetryBeforeNav();
+      try {
+        globalThis.location.assign(targetUrl);
+      } catch (_) {
+        globalThis.location.href = targetUrl;
       }
     } catch (e) {
       finalizeRun(runId, 'error', `Main loop error: ${(e && e.message) || e}`);
@@ -2107,6 +2086,7 @@
   // --- 16. Watchdog & Recovery ---
   function watchdogTick() {
     if (!isRunning()) return;
+    if (detectDailyLimit()) return haltForDailyLimit();
     if (detectCaptcha()) return haltForCaptcha();
     if (detectRateLimit()) return haltForRateLimit();
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
@@ -2126,7 +2106,6 @@
       }
       log('Watchdog detected test/questions on response page. Saving to manual queue.', false, 'QUESTIONS_WATCHDOG');
       if (saveCurrentForManual(vid, 'watchdog-test-page', currentRunId)) {
-        if (vid) { markVacancyProcessed(vid, currentRunId); clearLastAttemptID(); }
         returnToList(vid, { markProcessed: true, runId: currentRunId });
       }
     } else {
@@ -2218,12 +2197,19 @@
     removeManualItem: (vid) => ManualQueue.remove(vid),
     clearManualQueue: () => ManualQueue.clear(),
     getLogHistory: () => parseJson(storage.localGet(KEYS.logHistory), []),
+    saveLogHistory(logs) {
+      if (Array.isArray(logs)) {
+        return storage.localSet(KEYS.logHistory, JSON.stringify(logs.slice(0, 2000)));
+      }
+      return false;
+    },
     clearLogHistory() {
       storage.localRemove(KEYS.logHistory);
       log('История логов очищена', false, 'LOGS_CLEARED');
       return true;
     },
     getEarlyLogs: () => earlyLogsBuffer.slice(),
+    detectDailyLimit: () => detectDailyLimit(),
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
     once: (evt, fn) => events.once(evt, fn),
@@ -2243,6 +2229,10 @@
     });
 
     if (isRunning()) {
+      if (detectDailyLimit()) {
+        haltForDailyLimit();
+        return;
+      }
       const lock = readInstanceLock();
       const now = Date.now();
       if (lock && isLiveLock(lock, now) && lock.tabId !== TAB_ID) {
@@ -2410,6 +2400,53 @@
     const origin = (typeof globalThis !== 'undefined' && globalThis.location?.origin) || 'https://hh.ru';
     return clean ? `${origin}/vacancy/${clean}` : '';
   }
+
+  const STORAGE_KEY_LOG_HISTORY = 'hh_apply_assistant_s1_log_history';
+
+  function parseJsonSafe(raw, fallback) {
+    if (!raw || typeof raw !== 'string') return fallback;
+    try { return JSON.parse(raw); } catch (_) { return fallback; }
+  }
+
+  function getStoredLogs(assistant = null) {
+    try {
+      const a = assistant || globalThis.HHApplyAssistant || (globalThis.window && globalThis.window.HHApplyAssistant);
+      if (a && typeof a.getLogHistory === 'function') {
+        const h = a.getLogHistory();
+        if (Array.isArray(h) && h.length > 0) return h;
+      }
+      if (typeof localStorage !== 'undefined') {
+        const raw = localStorage.getItem(STORAGE_KEY_LOG_HISTORY);
+        const parsed = parseJsonSafe(raw, null);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  function setStoredLogs(logs, assistant = null) {
+    try {
+      if (!Array.isArray(logs)) return;
+      const a = assistant || globalThis.HHApplyAssistant || (globalThis.window && globalThis.window.HHApplyAssistant);
+      if (a && typeof a.saveLogHistory === 'function') {
+        a.saveLogHistory(logs);
+      } else if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY_LOG_HISTORY, JSON.stringify(logs.slice(0, 2000)));
+      }
+    } catch (_) {}
+  }
+
+  function removeStoredLogs(assistant = null) {
+    try {
+      const a = assistant || globalThis.HHApplyAssistant || (globalThis.window && globalThis.window.HHApplyAssistant);
+      if (a && typeof a.clearLogHistory === 'function') {
+        a.clearLogHistory();
+      } else if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(STORAGE_KEY_LOG_HISTORY);
+      }
+    } catch (_) {}
+  }
+
   // --- 2. SVG Icons ---
 
   const ICONS = {
@@ -3963,7 +4000,6 @@
         limit: 50,
         preset: 'balanced',
         useCover: true,
-        openVacancy: true,
         coverText: '',
         skipHidden: true
       };
@@ -3997,12 +4033,7 @@
     }
 
     connectedCallback() {
-      try {
-        const savedLogs = parseJson(storage.localGet(KEYS.logHistory), []);
-        if (Array.isArray(savedLogs) && savedLogs.length > 0) {
-          this._liveFeed = savedLogs.slice(0, 2000);
-        }
-      } catch (_) {}
+      this._liveFeed = getStoredLogs(this._assistant);
 
       this._render();
       this._restorePosition();
@@ -4028,11 +4059,9 @@
         clearTimeout(this._persistLogsTimer);
         this._persistLogsTimer = null;
       }
-      try {
-        if (this._liveFeed && this._liveFeed.length > 0) {
-          storage.localSet(KEYS.logHistory, JSON.stringify(this._liveFeed.slice(0, 2000)));
-        }
-      } catch (_) {}
+      if (this._liveFeed && this._liveFeed.length > 0) {
+        setStoredLogs(this._liveFeed, this._assistant);
+      }
     }
 
     disconnectedCallback() {
@@ -4129,6 +4158,13 @@
         );
       }
 
+      if ((!this._liveFeed || this._liveFeed.length === 0) && typeof assistant.getLogHistory === 'function') {
+        const hist = assistant.getLogHistory();
+        if (Array.isArray(hist) && hist.length > 0) {
+          this._liveFeed = hist.slice(0, 2000);
+        }
+      }
+
       // Replay any early logs emitted by engine before HUD mounted
       if (typeof assistant.getEarlyLogs === 'function') {
         const early = assistant.getEarlyLogs();
@@ -4159,14 +4195,19 @@
     updateStatus(status, code) {
       let nextStatus = status || 'idle';
       let nextCode = code || 'IDLE';
-      const lim = this._progress ? this._progress.limit : ((this._config && this._config.limit) || 50);
-      const sent = this._progress ? this._progress.sent : 0;
-      if (nextStatus === 'running' && sent >= lim && lim > 0) {
-        if (this._assistant && typeof this._assistant.stop === 'function') {
-          this._assistant.stop();
-        }
+      if (code === 'DAILY_LIMIT_REACHED') {
         nextStatus = 'done';
-        nextCode = 'COMPLETED';
+        nextCode = 'DAILY_LIMIT_REACHED';
+      } else {
+        const lim = this._progress ? this._progress.limit : ((this._config && this._config.limit) || 50);
+        const sent = this._progress ? this._progress.sent : 0;
+        if (nextStatus === 'running' && sent >= lim && lim > 0) {
+          if (this._assistant && typeof this._assistant.stop === 'function') {
+            this._assistant.stop();
+          }
+          nextStatus = 'done';
+          nextCode = 'COMPLETED';
+        }
       }
       this._status = { status: nextStatus, code: nextCode };
       this._syncStatus();
@@ -4310,10 +4351,10 @@
       if (!item) return;
       if (!this._liveFeed) this._liveFeed = [];
 
-      // Avoid immediate consecutive duplicate log messages
+      // Avoid immediate consecutive duplicate log messages within the same second
       if (this._liveFeed.length > 0) {
         const prev = this._liveFeed[0];
-        if (prev.msg === item.msg && prev.tag === item.tag && prev.vid === item.vid) {
+        if (prev.msg === item.msg && prev.tag === item.tag && prev.vid === item.vid && prev.time === item.time) {
           return;
         }
       }
@@ -4330,12 +4371,10 @@
       if (this._persistLogsTimer) return;
       this._persistLogsTimer = setTimeout(() => {
         this._persistLogsTimer = null;
-        try {
-          if (this._liveFeed) {
-            storage.localSet(KEYS.logHistory, JSON.stringify(this._liveFeed.slice(0, 2000)));
-          }
-        } catch (_) {}
-      }, 250);
+        if (this._liveFeed) {
+          setStoredLogs(this._liveFeed, this._assistant);
+        }
+      }, 200);
     }
 
     _onEngineLog(payload) {
@@ -4352,12 +4391,15 @@
       if (/SCROLL|READING|VIEW|SCAN/i.test(code)) tagType = 'scan';
       else if (/APPLY|COVER|CONFIRM|SCENARIO/i.test(code)) tagType = 'apply';
       else if (/FILTER|SKIP|ALREADY/i.test(code)) tagType = 'filter';
+      else if (/DAILY_LIMIT|RATE_LIMIT/i.test(code)) tagType = isErr ? 'error' : 'filter';
 
       let sub = '';
       if (typeof ctx === 'string') {
         sub = ctx;
       } else if (ctx && typeof ctx === 'object') {
         const parts = [];
+        if (ctx.limit !== undefined) parts.push(`Лимит: ${ctx.limit}`);
+        if (ctx.period !== undefined) parts.push(`Период: ${ctx.period}`);
         if (ctx.targetY !== undefined) parts.push(`Цель: ${ctx.targetY}px (${ctx.pct ? ctx.pct + '%' : ''})`);
         if (ctx.step !== undefined) parts.push(`Шаг: ${ctx.step}/${ctx.steps}`);
         if (ctx.pauseMs !== undefined) parts.push(`Пауза: ${(ctx.pauseMs / 1000).toFixed(1)}с`);
@@ -5079,7 +5121,7 @@
           clearTimeout(this._persistLogsTimer);
           this._persistLogsTimer = null;
         }
-        storage.localRemove(KEYS.logHistory);
+        removeStoredLogs(this._assistant);
         this._syncLogs();
       } else if (action === 'clear-queue') {
         e.stopPropagation();
@@ -5298,6 +5340,15 @@
       if (this._status.status === 'running') {
         if (typeof this._assistant.stop === 'function') this._assistant.stop();
       } else if (this._status.status === 'done') {
+        if (this._status.code === 'DAILY_LIMIT_REACHED') {
+          if (this._assistant && typeof this._assistant.detectDailyLimit === 'function' && this._assistant.detectDailyLimit()) {
+            this.open();
+            this.setActiveTab('logs');
+            return;
+          }
+          this.updateStatus('idle', 'IDLE');
+          return;
+        }
         const lim = this._progress ? this._progress.limit : ((this._config && this._config.limit) || 50);
         const sent = this._progress ? this._progress.sent : 0;
         if (sent < lim) {
@@ -5651,10 +5702,11 @@
           quickBtn.className = 'hha-btn-quick hha-btn-stop';
           quickBtn.innerHTML = `${ICONS.stop} <span data-el="pill-quick-label">Стоп</span>`;
           quickBtn.title = 'Остановить автоматизацию';
-        } else if (status === 'done') {
+        } else if (status === 'done' || (this._status && this._status.code === 'DAILY_LIMIT_REACHED')) {
           quickBtn.className = 'hha-btn-quick hha-btn-done';
-          quickBtn.innerHTML = `${ICONS.check} <span data-el="pill-quick-label">Готово</span>`;
-          quickBtn.title = 'Лимит достигнут. Кликните для настройки';
+          const isDaily = this._status && this._status.code === 'DAILY_LIMIT_REACHED';
+          quickBtn.innerHTML = `${ICONS.check} <span data-el="pill-quick-label">${isDaily ? 'Лимит 24ч' : 'Готово'}</span>`;
+          quickBtn.title = isDaily ? 'Достигнут суточный лимит HeadHunter (200 откликов за 24 часа)' : 'Лимит достигнут. Кликните для настройки';
         } else if (status === 'error') {
           quickBtn.className = 'hha-btn-quick hha-btn-error';
           quickBtn.innerHTML = `${ICONS.reset} <span data-el="pill-quick-label">Сброс</span>`;
