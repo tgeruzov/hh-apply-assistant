@@ -97,8 +97,7 @@
     tabId: STORAGE_PREFIX + 'tab_id',
     sentCount: STORAGE_PREFIX + 'sent_count',
     stats: STORAGE_PREFIX + 'run_stats',
-    logHistory: STORAGE_PREFIX + 'log_history',
-    dailyLimitReached: STORAGE_PREFIX + 'daily_limit_reached'
+    logHistory: STORAGE_PREFIX + 'log_history'
   };
 
   const PRESETS = {
@@ -697,7 +696,7 @@
     isLoopActive = false;
     setRunning(false);
     releaseInstanceLock(TAB_ID);
-    const statusKey = code === 'DAILY_LIMIT_REACHED' ? 'done' : (isError ? 'error' : (code === 'STOPPED_BY_USER' ? 'stopped' : code.toLowerCase()));
+    const statusKey = isError ? 'error' : (code === 'STOPPED_BY_USER' ? 'stopped' : code.toLowerCase());
     setStatus(statusKey, code, details);
     if (logMsg) log(logMsg, isError, code, details);
   }
@@ -713,12 +712,6 @@
 
   const haltForCaptcha = () => haltEngine('CAPTCHA_DETECTED', 'Captcha detected on page. Automation halted.');
   const haltForRateLimit = () => haltEngine('RATE_LIMITED', 'Rate limit detected. Automation halted.');
-  const haltForDailyLimit = (msg = 'Достигнут суточный лимит HeadHunter: не более 200 откликов за 24 часа. Автоматизация остановлена.') => {
-    try {
-      storage.localSet(KEYS.dailyLimitReached, Date.now());
-    } catch (_) {}
-    terminateRun('DAILY_LIMIT_REACHED', msg, { limit: 200, period: '24h' }, true);
-  };
   const haltForLostInstanceLock = () => {
     const isBlocked = storage.isLocalBlocked();
     haltEngine(isBlocked ? 'STORAGE_BLOCKED' : 'TAB_LOCK_LOST', isBlocked ? 'Storage access blocked. Lost tab lock.' : 'Active tab lock lost.');
@@ -1141,74 +1134,15 @@
     return /(?:подтвердите,?\s*что\s*вы\s*не\s*робот|введите\s*символы\s*с\s*картинки|вы\s+не\s+робот|not\s+a\s+robot|необычн\w*\s+активн|unusual\s+(?:activity|traffic))/i.test(bodyText);
   }
 
-  const DAILY_LIMIT_REGEX = /(?:исчерпали\s+лимит\s+откликов|не\s+более\s+200\s+откликов|в\s+течение\s+24\s+часов\s+можно\s+совершить\s+не\s+более|лимит\s+откликов[,\s]+попробуйте\s+отправить\s+отклик\s+позднее|лимит\s+откликов.*попробуйте|24\s+часов?\s+можно\s+совершить\s+не\s+более|вы\s+исчерпали\s+лимит|daily\s+application\s+limit|reached\s+(?:the\s+)?limit\s+of\s+(?:200\s+)?applications)/i;
-
-  function detectDailyLimit(root = globalThis.document) {
-    if (!root) return false;
-
-    // 1. Check all notification, toast, alert, snackbar and modal scopes first
-    const notificationSelectors = [
-      '[role="alert"]',
-      '[role="status"]',
-      '[data-qa*="notification" i]',
-      '[class*="notification" i]',
-      '[data-qa*="toast" i]',
-      '[class*="toast" i]',
-      '[data-qa*="snackbar" i]',
-      '[class*="snackbar" i]',
-      '[data-qa*="popup" i]',
-      '[class*="popup" i]',
-      '[data-qa*="modal" i]',
-      '[class*="modal" i]',
-      '[data-qa*="bloko-notification" i]',
-      '[data-qa="bottom-sheet-content"]'
-    ].join(', ');
-
-    const candidates = qa(notificationSelectors, root);
-    for (const el of candidates) {
-      if (isVisible(el)) {
-        const text = (el.textContent || el.innerText || '').trim();
-        if (text && DAILY_LIMIT_REGEX.test(text)) {
-          return true;
-        }
-      }
-    }
-
-    // 2. Check top-level overlay containers and last appended elements of document.body
-    const body = root.body || (root.nodeType === 9 ? root.body : root);
-    if (body && body.children) {
-      const children = Array.from(body.children);
-      const startIdx = Math.max(0, children.length - 20);
-      for (let i = children.length - 1; i >= startIdx; i--) {
-        const child = children[i];
-        if (isVisible(child)) {
-          const txt = (child.textContent || '').trim();
-          if (txt && DAILY_LIMIT_REGEX.test(txt)) {
-            return true;
-          }
-        }
-      }
-
-      // 3. Fallback check across root textContent
-      const fullText = (body.textContent || '');
-      if (DAILY_LIMIT_REGEX.test(fullText)) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
   function detectRateLimit() {
     const doc = globalThis.document, loc = globalThis.location;
     if (!doc) return false;
-    if (detectDailyLimit(doc)) return true;
     if (loc && /\/error|\/blocked|\/forbidden|\/denied|\/rate-limit/i.test(loc.pathname)) return true;
     if (doc.title && /(?:429|503|error\s+(?:429|503)|доступ\s+ограничен|too\s+many\s+requests|service\s+unavailable)/i.test(doc.title)) return true;
-    if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]', doc)) {
+    if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]')) {
       return true;
     }
-    const bodyText = (doc.body?.textContent || doc.documentElement?.textContent || '');
+    const bodyText = (doc.body?.textContent || doc.documentElement?.textContent || '').slice(0, 3000);
     return /(?:слишком\s*много\s*запросов|429\s*Too\s*Many\s*Requests|503\s*Service\s*Unavailable|доступ\s*(?:временно\s*)?ограничен|access\s*(?:temporarily\s*)?denied|error\s+429|error\s+503)/i.test(bodyText);
   }
 
@@ -1276,7 +1210,6 @@
   function detectModalBlockReason(modalScope = null) {
     const modal = modalScope || qa('[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]').find(m => isVisible(m) && !isReviewOrFeedbackElement(m)) || null;
     if (!modal) return null;
-    if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
     const text = (modal.textContent || modal.innerText || '').slice(0, 3000);
     if (/резюме\s*скрыто|resume\s*is\s*hidden/i.test(text)) return 'RESUME_HIDDEN';
     if (/не\s*соответствует\s*требованиям|отказ|reject/i.test(text)) return 'REJECT_WARNING';
@@ -1289,7 +1222,6 @@
 
   function detectResponseOutcomeInRoot(root, includeExactSelectors) {
     if (!root || isReviewOrFeedbackElement(root)) return null;
-    if (detectDailyLimit(root) || detectDailyLimit()) return 'DAILY_LIMIT';
     if (detectCaptcha()) return 'CAPTCHA';
     if (detectRateLimit()) return 'RATE_LIMIT';
     if (hasReliableRejectWarning()) return 'REJECT_WARNING';
@@ -1310,9 +1242,6 @@
   }
 
   function detectResponseOutcomeOnce({ allowDocumentStrongText = false } = {}) {
-    // 0. Daily limit reached check
-    if (detectDailyLimit()) return 'DAILY_LIMIT';
-
     // 1. Relocation warning alert has absolute top priority
     if (detectRelocationWarning()) return 'RELOCATION_WARNING';
 
@@ -1490,9 +1419,7 @@
 
   async function handleScenarioB(modal, runId = currentRunId) {
     log('Scenario B: Response modal opened', false, 'SCENARIO_B');
-    if (detectDailyLimit(modal) || detectDailyLimit()) { haltForDailyLimit(); return 'BLOCKED'; }
     const blockReason = detectModalBlockReason(modal);
-    if (blockReason === 'DAILY_LIMIT') { haltForDailyLimit(); return 'BLOCKED'; }
     if (blockReason === 'CAPTCHA') { haltForCaptcha(); return 'CAPTCHA'; }
     if (blockReason === 'RATE_LIMIT') { haltForRateLimit(); return 'BLOCKED'; }
     if (blockReason === 'TEST_REQUIRED' || blockReason === 'RESUME_HIDDEN') return blockReason;
@@ -1522,25 +1449,12 @@
       return 'FAIL';
     }
 
-    const confirmed = await waitForCondition(
-      () => {
-        if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
-        return isResponseConfirmed();
-      },
-      6000,
-      activeAbortController?.signal,
-      'подтверждение отклика после отправки модалки'
-    );
-    if (confirmed === 'DAILY_LIMIT' || detectDailyLimit()) {
-      haltForDailyLimit();
-      return 'BLOCKED';
-    }
+    const confirmed = await waitForCondition(() => isResponseConfirmed(), 6000, activeAbortController?.signal, 'подтверждение отклика после отправки модалки');
     return confirmed ? 'OK' : 'FAIL';
   }
 
   async function dispatchOutcome(outcome, vid, runId, relocAttempts = 0) {
     if (!outcome) return 'FAIL';
-    if (outcome === 'DAILY_LIMIT') { haltForDailyLimit(); return 'BLOCKED'; }
     if (outcome === 'RESPONSE_FORM') return 'RESPONSE_PAGE';
     if (outcome === 'CAPTCHA') { haltForCaptcha(); return 'CAPTCHA'; }
     if (outcome === 'RATE_LIMIT') { haltForRateLimit(); return 'BLOCKED'; }
@@ -1704,11 +1618,6 @@
       const title = parseVacancyTitle();
       log(`Загружена страница вакансии #${vid}: ${title}`, false, 'VACANCY_PAGE_LOADED', { vid, title, url: pageUrl });
 
-      if (detectDailyLimit()) {
-        haltForDailyLimit();
-        return 'BLOCKED';
-      }
-
       if (detectAlreadyApplied()) {
         log(`На вакансию #${vid} уже был отправлен отклик ранее`, false, 'ALREADY_APPLIED', { vid });
         if (vid) skipVacancy(vid, 'already_applied', runId);
@@ -1748,20 +1657,11 @@
       };
 
       let outcome = await waitForCondition(
-        () => {
-          if (detectDailyLimit()) return 'DAILY_LIMIT';
-          if (Page.isResponseForm()) return 'RESPONSE_FORM';
-          return detectResponseOutcomeOnce();
-        },
+        () => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()),
         3500,
         activeAbortController?.signal,
         inspectOutcome
       );
-
-      if (outcome === 'DAILY_LIMIT' || detectDailyLimit()) {
-        haltForDailyLimit();
-        return 'BLOCKED';
-      }
 
       // Direct Link Navigation Fallback: if no modal opened within 3.5s and button links to response page
       if (!outcome && !Page.isResponseForm()) {
@@ -1782,11 +1682,7 @@
 
       if (!outcome) {
         outcome = await waitForCondition(
-          () => {
-            if (detectDailyLimit()) return 'DAILY_LIMIT';
-            if (Page.isResponseForm()) return 'RESPONSE_FORM';
-            return detectResponseOutcomeOnce();
-          },
+          () => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()),
           4500,
           activeAbortController?.signal,
           inspectOutcome
@@ -1866,27 +1762,16 @@
       const submitted = await submitCoverLetterForm(null, runId);
       if (!isRunCurrent(runId)) return;
       if (!submitted) {
-        if (detectDailyLimit()) {
-          haltForDailyLimit();
-          return;
-        }
         log('Не удалось нажать кнопку отправки формы отклика', true, 'SUBMIT_FAILED', { vid });
         saveCurrentForManual(vid, 'submit-form-failed', runId);
         return returnToList(vid, { markProcessed: true, runId });
       }
       const confirmed = await waitForCondition(
-        () => {
-          if (detectDailyLimit()) return 'DAILY_LIMIT';
-          return isResponseConfirmed({ allowDocumentStrongText: true });
-        },
+        () => isResponseConfirmed({ allowDocumentStrongText: true }),
         6000,
         activeAbortController?.signal,
         `подтверждение отправки отклика #${vid}`
       );
-      if (confirmed === 'DAILY_LIMIT' || detectDailyLimit()) {
-        haltForDailyLimit();
-        return;
-      }
       log(confirmed ? `Отклик подтвержден на странице вакансии #${vid}` : `Не удалось подтвердить отправку отклика #${vid}`, !confirmed, confirmed ? 'APPLICATION_CONFIRMED' : 'SUBMIT_UNCONFIRMED', { vid });
       if (confirmed) commitSuccess(vid, runId); else saveCurrentForManual(vid, 'unconfirmed', runId);
       returnToList(vid, { markProcessed: true, runId });
@@ -1965,7 +1850,6 @@
     }
 
     try {
-      if (detectDailyLimit()) return haltForDailyLimit();
       if (detectCaptcha()) return haltForCaptcha();
       if (detectRateLimit()) return haltForRateLimit();
 
@@ -1986,7 +1870,6 @@
         const res = await handleVacancyPage(vid, runId);
         if (runId !== currentRunId) return;
         if (res === 'STOPPED' || stopSignal) return finalizeRun(runId, 'stopped', 'Processing stopped on vacancy page');
-        if (res === 'BLOCKED') return;
         if (res === 'CAPTCHA') { haltForCaptcha(); return; }
         if (res === 'RESPONSE_PAGE' || Page.isResponseForm()) {
           isLoopActive = false;
@@ -2086,7 +1969,6 @@
   // --- 16. Watchdog & Recovery ---
   function watchdogTick() {
     if (!isRunning()) return;
-    if (detectDailyLimit()) return haltForDailyLimit();
     if (detectCaptcha()) return haltForCaptcha();
     if (detectRateLimit()) return haltForRateLimit();
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
@@ -2209,7 +2091,6 @@
       return true;
     },
     getEarlyLogs: () => earlyLogsBuffer.slice(),
-    detectDailyLimit: () => detectDailyLimit(),
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
     once: (evt, fn) => events.once(evt, fn),
@@ -2229,10 +2110,6 @@
     });
 
     if (isRunning()) {
-      if (detectDailyLimit()) {
-        haltForDailyLimit();
-        return;
-      }
       const lock = readInstanceLock();
       const now = Date.now();
       if (lock && isLiveLock(lock, now) && lock.tabId !== TAB_ID) {
@@ -4195,19 +4072,14 @@
     updateStatus(status, code) {
       let nextStatus = status || 'idle';
       let nextCode = code || 'IDLE';
-      if (code === 'DAILY_LIMIT_REACHED') {
-        nextStatus = 'done';
-        nextCode = 'DAILY_LIMIT_REACHED';
-      } else {
-        const lim = this._progress ? this._progress.limit : ((this._config && this._config.limit) || 50);
-        const sent = this._progress ? this._progress.sent : 0;
-        if (nextStatus === 'running' && sent >= lim && lim > 0) {
-          if (this._assistant && typeof this._assistant.stop === 'function') {
-            this._assistant.stop();
-          }
-          nextStatus = 'done';
-          nextCode = 'COMPLETED';
+      const lim = this._progress ? this._progress.limit : ((this._config && this._config.limit) || 50);
+      const sent = this._progress ? this._progress.sent : 0;
+      if (nextStatus === 'running' && sent >= lim && lim > 0) {
+        if (this._assistant && typeof this._assistant.stop === 'function') {
+          this._assistant.stop();
         }
+        nextStatus = 'done';
+        nextCode = 'COMPLETED';
       }
       this._status = { status: nextStatus, code: nextCode };
       this._syncStatus();
@@ -4391,15 +4263,12 @@
       if (/SCROLL|READING|VIEW|SCAN/i.test(code)) tagType = 'scan';
       else if (/APPLY|COVER|CONFIRM|SCENARIO/i.test(code)) tagType = 'apply';
       else if (/FILTER|SKIP|ALREADY/i.test(code)) tagType = 'filter';
-      else if (/DAILY_LIMIT|RATE_LIMIT/i.test(code)) tagType = isErr ? 'error' : 'filter';
 
       let sub = '';
       if (typeof ctx === 'string') {
         sub = ctx;
       } else if (ctx && typeof ctx === 'object') {
         const parts = [];
-        if (ctx.limit !== undefined) parts.push(`Лимит: ${ctx.limit}`);
-        if (ctx.period !== undefined) parts.push(`Период: ${ctx.period}`);
         if (ctx.targetY !== undefined) parts.push(`Цель: ${ctx.targetY}px (${ctx.pct ? ctx.pct + '%' : ''})`);
         if (ctx.step !== undefined) parts.push(`Шаг: ${ctx.step}/${ctx.steps}`);
         if (ctx.pauseMs !== undefined) parts.push(`Пауза: ${(ctx.pauseMs / 1000).toFixed(1)}с`);
@@ -5340,15 +5209,6 @@
       if (this._status.status === 'running') {
         if (typeof this._assistant.stop === 'function') this._assistant.stop();
       } else if (this._status.status === 'done') {
-        if (this._status.code === 'DAILY_LIMIT_REACHED') {
-          if (this._assistant && typeof this._assistant.detectDailyLimit === 'function' && this._assistant.detectDailyLimit()) {
-            this.open();
-            this.setActiveTab('logs');
-            return;
-          }
-          this.updateStatus('idle', 'IDLE');
-          return;
-        }
         const lim = this._progress ? this._progress.limit : ((this._config && this._config.limit) || 50);
         const sent = this._progress ? this._progress.sent : 0;
         if (sent < lim) {
@@ -5702,11 +5562,10 @@
           quickBtn.className = 'hha-btn-quick hha-btn-stop';
           quickBtn.innerHTML = `${ICONS.stop} <span data-el="pill-quick-label">Стоп</span>`;
           quickBtn.title = 'Остановить автоматизацию';
-        } else if (status === 'done' || (this._status && this._status.code === 'DAILY_LIMIT_REACHED')) {
+        } else if (status === 'done') {
           quickBtn.className = 'hha-btn-quick hha-btn-done';
-          const isDaily = this._status && this._status.code === 'DAILY_LIMIT_REACHED';
-          quickBtn.innerHTML = `${ICONS.check} <span data-el="pill-quick-label">${isDaily ? 'Лимит 24ч' : 'Готово'}</span>`;
-          quickBtn.title = isDaily ? 'Достигнут суточный лимит HeadHunter (200 откликов за 24 часа)' : 'Лимит достигнут. Кликните для настройки';
+          quickBtn.innerHTML = `${ICONS.check} <span data-el="pill-quick-label">Готово</span>`;
+          quickBtn.title = 'Лимит достигнут. Кликните для настройки';
         } else if (status === 'error') {
           quickBtn.className = 'hha-btn-quick hha-btn-error';
           quickBtn.innerHTML = `${ICONS.reset} <span data-el="pill-quick-label">Сброс</span>`;
