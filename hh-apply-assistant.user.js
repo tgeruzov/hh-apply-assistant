@@ -14,6 +14,11 @@
 // @run-at       document-idle
 // ==/UserScript==
 
+// --- Global Shared Configuration Constants ---
+const MAX_DAILY_LIMIT = 200;
+const MAX_COVER_LENGTH = 5000;
+const MAX_LOG_HISTORY_MEMORY = 2000;
+
 /**
  * ============================================================================
  * Part 1: Automation Engine (Headless Core)
@@ -97,7 +102,8 @@
     tabId: STORAGE_PREFIX + 'tab_id',
     sentCount: STORAGE_PREFIX + 'sent_count',
     stats: STORAGE_PREFIX + 'run_stats',
-    logHistory: STORAGE_PREFIX + 'log_history'
+    logHistory: STORAGE_PREFIX + 'log_history',
+    dailyLimitReached: STORAGE_PREFIX + 'daily_limit_reached'
   };
 
   const PRESETS = {
@@ -185,7 +191,9 @@
       try {
         s.setItem(key, str);
         return true;
-      } catch (_) {}
+      } catch (e) {
+        console.warn(`[HH] Storage quota exceeded on ${type}Storage (key: ${key}):`, e);
+      }
     }
     (type === 'local' ? memLocal : memSession).set(key, str);
     return !s;
@@ -276,7 +284,7 @@
     };
 
     earlyLogsBuffer.push(payload);
-    if (earlyLogsBuffer.length > 50) earlyLogsBuffer.shift();
+    if (earlyLogsBuffer.length > 500) earlyLogsBuffer.shift();
 
     events.emit('log', payload);
 
@@ -290,11 +298,55 @@
     }
   }
 
+  function sanitizeLogsForPersistence(logs, limit = 100) {
+    if (!Array.isArray(logs)) return [];
+    return logs.slice(0, limit).map(entry => {
+      if (!entry || typeof entry !== 'object') return entry;
+      const { contextSnippet, ...rest } = entry;
+      let cleanContext = rest.context;
+      if (cleanContext && typeof cleanContext === 'object') {
+        const { snippet, contextSnippet: cs, ...ctxRest } = cleanContext;
+        cleanContext = ctxRest;
+      }
+      return {
+        ...rest,
+        contextSnippet: '',
+        context: cleanContext
+      };
+    });
+  }
+
   function flushTelemetryBeforeNav() {
     try {
       const hudEl = globalThis.document?.querySelector('hha-hud');
       if (hudEl && typeof hudEl._flushLogs === 'function') {
         hudEl._flushLogs();
+        return;
+      }
+      if (earlyLogsBuffer.length > 0) {
+        const stored = parseJson(storage.localGet(KEYS.logHistory), []);
+        const existingList = Array.isArray(stored) ? stored : [];
+        const converted = earlyLogsBuffer.map((p, idx) => {
+          const ctx = p.context || {};
+          const cVid = ctx.vid ? String(ctx.vid).replace(/^v_/i, '') : '';
+          const time = new Date(p.timestamp || Date.now()).toTimeString().slice(0, 8);
+          return {
+            id: 'log_flushed_' + (p.timestamp || Date.now()) + '_' + idx,
+            time,
+            tag: p.code || (p.level === 'ERR' ? 'ERROR' : 'INFO'),
+            tagType: p.level === 'ERR' ? 'error' : 'status',
+            msg: String(p.message || ''),
+            sub: typeof ctx === 'string' ? ctx : (ctx.reason || ctx.error || ctx.outcome || ''),
+            vid: cVid,
+            url: ctx.url || '',
+            selector: ctx.selector || '',
+            context: ctx,
+            isDevLog: true
+          };
+        });
+        const combined = sanitizeLogsForPersistence([...converted.reverse(), ...existingList], 100);
+        storage.localSet(KEYS.logHistory, JSON.stringify(combined));
+        earlyLogsBuffer.length = 0;
       }
     } catch (_) {}
   }
@@ -303,11 +355,11 @@
   function normalizeConfig(raw) {
     const m = { ...DEFAULTS, ...(raw || {}) };
     return {
-      coverText: String(m.coverText ?? DEFAULT_COVER_TEXT).slice(0, 5000),
+      coverText: String(m.coverText ?? DEFAULT_COVER_TEXT).slice(0, MAX_COVER_LENGTH),
       useCover: m.useCover !== false,
       skipHidden: m.skipHidden !== false,
       preset: PRESETS[m.preset] ? m.preset : 'balanced',
-      limit: clamp(Math.round(toNum(m.limit, DEFAULTS.limit)), 1, 500)
+      limit: clamp(Math.round(toNum(m.limit, DEFAULTS.limit)), 1, MAX_DAILY_LIMIT)
     };
   }
 
@@ -324,7 +376,7 @@
 
   function ensureCurrentRunLimit() {
     const sent = getSentCount();
-    if (sent > config.limit) persistSettings({ limit: Math.min(500, sent) });
+    if (sent > config.limit) persistSettings({ limit: Math.min(MAX_DAILY_LIMIT, sent) });
   }
 
   const timings = () => PRESETS[config.preset] || PRESETS.balanced;
@@ -334,6 +386,9 @@
   const wait = (ms) => new Promise((resolve) => {
     const sig = activeAbortController?.signal;
     if (stopSignal || sig?.aborted || ms <= 0) return resolve();
+    if (ms >= 800) {
+      log(`Пауза безопасности: ${(ms / 1000).toFixed(1)}с`, false, 'DELAY', { delaySec: Number((ms / 1000).toFixed(1)), delayMs: ms });
+    }
     let timer = null;
     const cleanup = () => {
       if (timer) clearTimeout(timer);
@@ -364,7 +419,7 @@
 
   function bumpStat(field, by = 1) {
     const s = getStats();
-    if (field in s) s[field] = (s[field] || 0) + by;
+    if (field in s && field !== 'attempts') s[field] = (s[field] || 0) + by;
     s.attempts = (s.attempts || 0) + by;
     saveStats(s);
   }
@@ -374,9 +429,14 @@
   }
 
   // --- 8. Manual Queue Domain ---
+  function cleanVid(vid) {
+    return vid ? String(vid).trim().replace(/^v_/i, '') : '';
+  }
+
   function normalizeManualEntry(entry) {
     if (!entry) return null;
-    const vid = String(entry.vid || entry.id || '').trim();
+    const rawVid = String(entry.vid || entry.id || '').trim();
+    const vid = cleanVid(rawVid);
     if (!vid) return null;
     return {
       vid,
@@ -403,19 +463,20 @@
     },
     add(entry) {
       const item = normalizeManualEntry(entry);
-      if (!item) return false;
+      if (!item) return { success: false, isNew: false };
       const queue = this.get();
       const idx = queue.findIndex(it => it.vid === item.vid);
+      const isNew = idx < 0;
       if (idx >= 0) queue[idx] = { ...queue[idx], ...item };
       else queue.unshift(item);
       const ok = storage.localSet(KEYS.manualList, JSON.stringify(queue));
-      events.emit('manualQueue', { action: idx >= 0 ? 'update' : 'add', item, queue });
-      return ok;
+      events.emit('manualQueue', { action: isNew ? 'add' : 'update', item, queue });
+      return { success: Boolean(ok), isNew: Boolean(isNew) };
     },
     remove(vid) {
       const queue = this.get();
-      const targetVid = String(vid || '').replace(/^v_/, '');
-      const filtered = queue.filter(it => String(it.vid || '').replace(/^v_/, '') !== targetVid);
+      const targetVid = cleanVid(vid);
+      const filtered = queue.filter(it => cleanVid(it.vid) !== targetVid);
       if (filtered.length !== queue.length) {
         storage.localSet(KEYS.manualList, JSON.stringify(filtered));
         events.emit('manualQueue', { action: 'remove', item: { vid }, queue: filtered });
@@ -636,14 +697,14 @@
     return true;
   }
 
-  function releaseInstanceLock(tabId) {
-    releaseWebLock();
+  async function releaseInstanceLock(tabId) {
     const cur = readInstanceLock();
     if (cur && cur.tabId === tabId) {
       storage.localRemove(KEYS.instanceLock);
     }
     currentLeaseId = null;
     instanceLeaseVerified = false;
+    await releaseWebLock();
     return true;
   }
 
@@ -671,6 +732,7 @@
   let resumeTimer = null;
   let activeAbortController = null;
   let handlingResponsePage = false;
+  let isNavigating = false;
 
   const isRunCurrent = (runId) => !stopSignal && (runId === undefined || runId === null || runId === currentRunId) && isRunning();
 
@@ -686,6 +748,7 @@
   function terminateRun(code, logMsg = '', details = {}, isError = false) {
     currentRunId++;
     stopSignal = true;
+    isNavigating = false;
     if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
     handlingResponsePage = false;
     clearTrapLock();
@@ -696,7 +759,7 @@
     isLoopActive = false;
     setRunning(false);
     releaseInstanceLock(TAB_ID);
-    const statusKey = isError ? 'error' : (code === 'STOPPED_BY_USER' ? 'stopped' : code.toLowerCase());
+    const statusKey = (code === 'DAILY_LIMIT_REACHED' || code === 'TARGET_LIMIT_REACHED' || code === 'DONE') ? 'done' : (isError ? 'error' : (code === 'STOPPED_BY_USER' ? 'stopped' : code.toLowerCase()));
     setStatus(statusKey, code, details);
     if (logMsg) log(logMsg, isError, code, details);
   }
@@ -712,6 +775,12 @@
 
   const haltForCaptcha = () => haltEngine('CAPTCHA_DETECTED', 'Captcha detected on page. Automation halted.');
   const haltForRateLimit = () => haltEngine('RATE_LIMITED', 'Rate limit detected. Automation halted.');
+  const haltForDailyLimit = (msg = `Достигнут суточный лимит HeadHunter: не более ${MAX_DAILY_LIMIT} откликов за 24 часа. Автоматизация остановлена.`) => {
+    try {
+      storage.localSet(KEYS.dailyLimitReached, Date.now());
+    } catch (_) {}
+    terminateRun('DAILY_LIMIT_REACHED', msg, { limit: MAX_DAILY_LIMIT, period: '24h' }, true);
+  };
   const haltForLostInstanceLock = () => {
     const isBlocked = storage.isLocalBlocked();
     haltEngine(isBlocked ? 'STORAGE_BLOCKED' : 'TAB_LOCK_LOST', isBlocked ? 'Storage access blocked. Lost tab lock.' : 'Active tab lock lost.');
@@ -805,7 +874,11 @@
       return null;
     },
     relocationBtn: (r) => detectRelocationWarning(r),
-    rejectWarning: (r) => findPatternElement(r, 'div, p, span, section', /не соответствует|отказ|не подходит|warning|reject/i, 250),
+    rejectWarning: (r) => {
+      const scope = (r && r !== globalThis.document && r !== globalThis.document?.body) ? r : q('[data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"], [data-qa="bottom-sheet-content"], [role="alert"]');
+      if (!scope) return null;
+      return findPatternElement(scope, 'div, p, span, section', /не соответствует|(?:^|[\s.,!?:;«»'"()—–-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;«»'"()—–-]|$)|не подходит|warning|reject/i, 250);
+    },
     responseChat: (r) => findPatternElement(r, 'a, button', /чат|перейти в чат|сообщения|chat/i, 60),
     pagerNext: (r) => findPatternElement(r, 'a, button', /дальше|впер[её]д|следующая|next/i, 60)
   };
@@ -824,6 +897,8 @@
         await clickElement(target);
         await actionPause();
         return isRunCurrent(runId);
+      } else {
+        log('Резюме уже выбрано по умолчанию (активно). Пропускаем клик выбора резюме.', false, 'RESUME_ALREADY_SELECTED', { optionsCount: radios.length });
       }
     } else {
       const cards = qa('[data-qa*="resume-item" i], [data-qa*="resume-card" i], [class*="resume-item" i]', root);
@@ -834,7 +909,11 @@
           await clickElement(cards[0]);
           await actionPause();
           return isRunCurrent(runId);
+        } else {
+          log('Карточка резюме уже активна. Пропускаем клик выбора резюме.', false, 'RESUME_CARD_ALREADY_ACTIVE', { cardsCount: cards.length });
         }
+      } else {
+        log('Выбор резюме в диалоге не требуется (список резюме отсутствует).', false, 'RESUME_NOT_REQUIRED');
       }
     }
     return true;
@@ -886,24 +965,18 @@
     const msg = `Не найден селектор: ${key} (${selectorName})`;
     const sub = `Ожидался CSS: ${expectedCss}`;
 
-    events.emit('entity', {
-      action: 'error',
-      tagType: 'error',
-      category: 'error',
-      tag: 'ERROR',
-      metaBadge: 'DOM_ERR',
+    log(msg, true, 'DOM_SELECTOR_NOT_FOUND', {
+      key,
       selector: key,
       selectorName,
       expectedCss,
       heuristic,
+      snippet,
       contextSnippet: snippet,
       url,
-      msg,
       sub,
       ...extra
     });
-
-    log(msg, true, 'DOM_SELECTOR_NOT_FOUND', { key, expectedCss, heuristic, url });
   }
 
   function getVacancyCard(node) {
@@ -928,14 +1001,24 @@
     return m ? String(m[1] || m[2] || m[3]) : null;
   }
 
+  function hashString(str) {
+    let hash = 2166136261 >>> 0;
+    const s = String(str || '');
+    for (let i = 0; i < s.length; i++) {
+      hash ^= s.charCodeAt(i);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return hash.toString(36);
+  }
+
   function getVacancyID(node) {
     const card = getVacancyCard(node);
     const link = card ? query('vacancyLink', card) : null;
     const href = link?.href || node?.href || node?.getAttribute?.('href') || '';
     const id = getVacancyIDFromHref(href);
     if (id) return 'v_' + id;
-    const cardId = card?.dataset?.id || (card?.innerText ? card.innerText.slice(0, 80).trim() : '');
-    return 'v_' + (cardId ? encodeURIComponent(cardId).slice(0, 32) : Math.random().toString(36).slice(2, 10));
+    const cardId = card?.dataset?.id || (card?.innerText ? card.innerText.slice(0, 80).trim() : '') || String(node?.className || 'unknown');
+    return 'v_' + hashString(cardId);
   }
 
   // --- Form Input Dispatch ---
@@ -974,7 +1057,7 @@
       try { el.target = '_self'; } catch (_) {}
     }
     const tag = (el.tagName || '').toLowerCase();
-    const qa = el.getAttribute?.('data-qa') || '';
+    const dataQa = el.getAttribute?.('data-qa') || '';
     const href = el.getAttribute?.('href') || el.href || '';
     const cls = (el.className && typeof el.className === 'string' ? el.className.trim() : '') || '';
     const textSnippet = collapseSpaces(el.innerText || el.textContent || '').slice(0, 50);
@@ -982,9 +1065,9 @@
     const rect = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null;
     const rectInfo = rect ? `${Math.round(rect.width)}x${Math.round(rect.height)} at (${Math.round(rect.left)},${Math.round(rect.top)})` : 'unknown';
 
-    log(`Клик по элементу: <${tag}${qa ? ` data-qa="${qa}"` : ''}${href ? ` href="${href}"` : ''}> "${textSnippet}" [${rectInfo}]`, false, 'ELEMENT_CLICK', {
+    log(`Клик по элементу: <${tag}${dataQa ? ` data-qa="${dataQa}"` : ''}${href ? ` href="${href}"` : ''}> "${textSnippet}" [${rectInfo}]`, false, 'ELEMENT_CLICK', {
       tag,
-      qa: qa || undefined,
+      qa: dataQa || undefined,
       href: href ? href.slice(0, 150) : undefined,
       class: cls ? cls.slice(0, 80) : undefined,
       text: textSnippet,
@@ -1050,6 +1133,16 @@
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         if (observer) observer.disconnect();
         if (signal) signal.removeEventListener('abort', onAbort);
+        if (diagnosticName) {
+          const elapsed = Date.now() - startTime;
+          const diagContext = typeof diagnosticName === 'function' ? diagnosticName() : null;
+          const label = typeof diagnosticName === 'string' ? diagnosticName : (diagContext?.label || 'условие');
+          if (res) {
+            log(`Условие успешно выполнено: ${label} за ${(elapsed / 1000).toFixed(1)}с`, false, 'WAIT_RESOLVED', { label, elapsedMs: elapsed, ...(diagContext || {}) });
+          } else {
+            log(`Таймаут ожидания условия: ${label} (${(timeout / 1000).toFixed(1)}с истекли)`, false, 'WAIT_TIMEOUT', { label, elapsedMs: timeout, ...(diagContext || {}) });
+          }
+        }
         resolve(res);
       };
       const onAbort = () => cleanup(false);
@@ -1069,7 +1162,7 @@
       if (typeof MutationObserver !== 'undefined' && doc) {
         try {
           observer = new MutationObserver(check);
-          observer.observe(doc.documentElement || doc, { childList: true, subtree: true, attributes: true });
+          observer.observe(doc.documentElement || doc, { childList: true, subtree: true });
         } catch (_) {}
       }
 
@@ -1107,6 +1200,7 @@
   };
 
   function parseVacancyTitle() {
+    if (Page.isSearch()) return '';
     const h1 = q('h1');
     if (h1 && isVisible(h1)) return collapseSpaces(h1.innerText || h1.textContent);
     const og = q('meta[property="og:title"]');
@@ -1134,15 +1228,74 @@
     return /(?:подтвердите,?\s*что\s*вы\s*не\s*робот|введите\s*символы\s*с\s*картинки|вы\s+не\s+робот|not\s+a\s+robot|необычн\w*\s+активн|unusual\s+(?:activity|traffic))/i.test(bodyText);
   }
 
+  const DAILY_LIMIT_REGEX = /(?:исчерпали\s+лимит\s+откликов|не\s+более\s+200\s+откликов|в\s+течение\s+24\s+часов\s+можно\s+совершить\s+не\s+более|лимит\s+откликов[,\s]+попробуйте\s+отправить\s+отклик\s+позднее|лимит\s+откликов.*попробуйте|24\s+часов?\s+можно\s+совершить\s+не\s+более|вы\s+исчерпали\s+лимит|daily\s+application\s+limit|reached\s+(?:the\s+)?limit\s+of\s+(?:200\s+)?applications)/i;
+
+  function detectDailyLimit(root = globalThis.document) {
+    if (!root) return false;
+
+    // 1. Check all notification, toast, alert, snackbar and modal scopes first
+    const notificationSelectors = [
+      '[role="alert"]',
+      '[role="status"]',
+      '[data-qa*="notification" i]',
+      '[class*="notification" i]',
+      '[data-qa*="toast" i]',
+      '[class*="toast" i]',
+      '[data-qa*="snackbar" i]',
+      '[class*="snackbar" i]',
+      '[data-qa*="popup" i]',
+      '[class*="popup" i]',
+      '[data-qa*="modal" i]',
+      '[class*="modal" i]',
+      '[data-qa*="bloko-notification" i]',
+      '[data-qa="bottom-sheet-content"]'
+    ].join(', ');
+
+    const candidates = qa(notificationSelectors, root);
+    for (const el of candidates) {
+      if (isVisible(el)) {
+        const text = (el.textContent || el.innerText || '').trim();
+        if (text && DAILY_LIMIT_REGEX.test(text)) {
+          return true;
+        }
+      }
+    }
+
+    // 2. Check top-level overlay containers and last appended elements of document.body
+    const body = root.body || (root.nodeType === 9 ? root.body : root);
+    if (body && body.children) {
+      const children = Array.from(body.children);
+      const startIdx = Math.max(0, children.length - 20);
+      for (let i = children.length - 1; i >= startIdx; i--) {
+        const child = children[i];
+        if (isVisible(child)) {
+          const txt = (child.textContent || '').trim();
+          if (txt && DAILY_LIMIT_REGEX.test(txt)) {
+            return true;
+          }
+        }
+      }
+
+      // 3. Fallback check across root textContent
+      const fullText = (body.textContent || '');
+      if (DAILY_LIMIT_REGEX.test(fullText)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function detectRateLimit() {
     const doc = globalThis.document, loc = globalThis.location;
     if (!doc) return false;
+    if (detectDailyLimit(doc)) return true;
     if (loc && /\/error|\/blocked|\/forbidden|\/denied|\/rate-limit/i.test(loc.pathname)) return true;
     if (doc.title && /(?:429|503|error\s+(?:429|503)|доступ\s+ограничен|too\s+many\s+requests|service\s+unavailable)/i.test(doc.title)) return true;
-    if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]')) {
+    if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]', doc)) {
       return true;
     }
-    const bodyText = (doc.body?.textContent || doc.documentElement?.textContent || '').slice(0, 3000);
+    const bodyText = (doc.body?.textContent || doc.documentElement?.textContent || '');
     return /(?:слишком\s*много\s*запросов|429\s*Too\s*Many\s*Requests|503\s*Service\s*Unavailable|доступ\s*(?:временно\s*)?ограничен|access\s*(?:temporarily\s*)?denied|error\s+429|error\s+503)/i.test(bodyText);
   }
 
@@ -1166,7 +1319,12 @@
   };
 
   const getResponseDetectionScope = () => q('[data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]') || globalThis.document?.body || globalThis.document?.documentElement;
-  const hasReliableRejectWarning = () => Boolean(query('rejectWarning') && isVisible(query('rejectWarning')));
+  const hasReliableRejectWarning = (root) => {
+    const scope = (root && root !== globalThis.document && root !== globalThis.document?.body) ? root : q('[data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"], [data-qa="bottom-sheet-content"], [role="alert"]');
+    if (!scope) return false;
+    const el = query('rejectWarning', scope);
+    return Boolean(el && isVisible(el));
+  };
   const hasResponseTextConfirmation = (root) => /(?:отклик отправлен|вы откликнулись|резюме доставлено|резюме отправлено|response sent|applied successfully)/i.test(((root || getResponseDetectionScope())?.textContent || '').slice(0, 4000));
   const hasExactResponseConfirmation = (root) => {
     const scope = root || getResponseDetectionScope();
@@ -1210,9 +1368,10 @@
   function detectModalBlockReason(modalScope = null) {
     const modal = modalScope || qa('[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]').find(m => isVisible(m) && !isReviewOrFeedbackElement(m)) || null;
     if (!modal) return null;
+    if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
     const text = (modal.textContent || modal.innerText || '').slice(0, 3000);
     if (/резюме\s*скрыто|resume\s*is\s*hidden/i.test(text)) return 'RESUME_HIDDEN';
-    if (/не\s*соответствует\s*требованиям|отказ|reject/i.test(text)) return 'REJECT_WARNING';
+    if (/не\s*соответствует\s*требованиям|(?:^|[\s.,!?:;«»'"()—–-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;«»'"()—–-]|(?:\s|$))|reject/i.test(text)) return 'REJECT_WARNING';
     if (/тестирование|анкета|вопросы|questionnaire|test/i.test(text)) return 'TEST_REQUIRED';
     if (detectCaptcha() || /капч[аеы]|captcha|recaptcha|smartcaptcha/i.test(text)) return 'CAPTCHA';
     if (detectRateLimit() || /слишком\s*много\s*запросов|доступ\s*ограничен|rate\s*limit|blocked/i.test(text)) return 'RATE_LIMIT';
@@ -1222,9 +1381,10 @@
 
   function detectResponseOutcomeInRoot(root, includeExactSelectors) {
     if (!root || isReviewOrFeedbackElement(root)) return null;
+    if (detectDailyLimit(root) || detectDailyLimit()) return 'DAILY_LIMIT';
     if (detectCaptcha()) return 'CAPTCHA';
     if (detectRateLimit()) return 'RATE_LIMIT';
-    if (hasReliableRejectWarning()) return 'REJECT_WARNING';
+    if (hasReliableRejectWarning(root)) return 'REJECT_WARNING';
     if (detectRelocationWarning()) return 'RELOCATION_WARNING';
 
     const isResumeModal = Boolean(
@@ -1242,6 +1402,9 @@
   }
 
   function detectResponseOutcomeOnce({ allowDocumentStrongText = false } = {}) {
+    // 0. Daily limit reached check
+    if (detectDailyLimit()) return 'DAILY_LIMIT';
+
     // 1. Relocation warning alert has absolute top priority
     if (detectRelocationWarning()) return 'RELOCATION_WARNING';
 
@@ -1290,12 +1453,27 @@
     log(`Вакансия #${vid} пропущена (${reason})`, false, 'VACANCY_SKIPPED', { vid, reason });
   }
 
-  function saveCurrentForManual(vid, note = '', runId = currentRunId) {
+  function saveCurrentForManual(vid, note = '', runId = currentRunId, customTitle = '') {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
     let url = globalThis.location?.href || '';
     const origin = globalThis.location?.origin || 'https://hh.ru';
-    if ((!url || url.includes('/search/vacancy')) && vid && String(vid).startsWith('v_')) {
-      url = `${origin}/vacancy/${String(vid).slice(2)}`;
+    if ((!url || url.includes('/search/vacancy')) && vid) {
+      const clean = cleanVid(vid);
+      if (clean) url = `${origin}/vacancy/${clean}`;
+    }
+    let title = customTitle || '';
+    if (!title && Page.isSearch() && vid) {
+      const clean = cleanVid(vid);
+      const links = qa('a[data-qa="serp-item__title"], a[data-qa="vacancy-serp__vacancy-title"], a[href*="/vacancy/"]');
+      for (const l of links) {
+        if (getVacancyIDFromHref(l.href) === clean) {
+          title = readSerpCardTitle(l);
+          break;
+        }
+      }
+    }
+    if (!title) {
+      title = parseVacancyTitle();
     }
     const entry = {
       vid: vid || ('v_' + Math.random().toString(36).slice(2, 10)),
@@ -1303,13 +1481,17 @@
       returnUrl: getReturnUrl(),
       reason: note,
       addedAt: Date.now(),
-      title: parseVacancyTitle()
+      title
     };
-    const added = ManualQueue.add(entry);
-    if (added) {
-      bumpStat('manual');
-      events.emit('entity', { vid: entry.vid, title: entry.title, url: entry.url, action: 'manual', reason: note, note });
-      log(`Вакансия #${entry.vid} сохранена в ручную очередь (${note || 'manual'})`, false, 'MANUAL_SAVED', { vid: entry.vid, note, url: entry.url });
+    const res = ManualQueue.add(entry);
+    if (res.success) {
+      if (res.isNew) {
+        bumpStat('manual');
+        events.emit('entity', { vid: entry.vid, title: entry.title, url: entry.url, action: 'manual', reason: note, note });
+        log(`Вакансия #${entry.vid} сохранена в ручную очередь (${note || 'manual'})`, false, 'MANUAL_SAVED', { vid: entry.vid, note, url: entry.url });
+      } else {
+        log(`Вакансия #${entry.vid} обновлена в ручной очереди`, false, 'MANUAL_UPDATED', { vid: entry.vid, note, url: entry.url });
+      }
       return true;
     }
     return false;
@@ -1317,6 +1499,11 @@
 
   function returnToList(vid, { markProcessed = true, runId = currentRunId } = {}) {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
+    if (isNavigating) return false;
+    if (resumeTimer) {
+      clearTimeout(resumeTimer);
+      resumeTimer = null;
+    }
     if (markProcessed && vid) markVacancyProcessed(vid, runId);
     clearLastAttemptID();
     const rawReturn = getReturnUrl();
@@ -1326,6 +1513,8 @@
     flushTelemetryBeforeNav();
     const loc = globalThis.location;
     if (loc && !Page.isSearchList() && loc.href !== returnUrl) {
+      isNavigating = true;
+      setTimeout(() => { isNavigating = false; }, 7000);
       try { loc.assign(returnUrl); } catch (_) { loc.href = returnUrl; }
     }
     return true;
@@ -1341,6 +1530,10 @@
       log(`Текст письма введен, клон синхронизирован, события отправлены`, false, 'FILL_LETTER_DONE', { letterLen });
       await actionPause();
       if (!isRunCurrent(runId)) return false;
+    } else if (!config.useCover) {
+      log('Сопроводительное письмо отключено в настройках пользователя, поле ввода не заполняется', false, 'COVER_DISABLED_BY_CONFIG');
+    } else if (!ta) {
+      log('Поле ввода сопроводительного письма не обнаружено в текущей форме (отправка без письма)', false, 'COVER_TEXTAREA_NOT_FOUND');
     }
     const submit = query('letterSubmit', scope)
       || q('button[type="submit"]', scope);
@@ -1352,6 +1545,9 @@
     if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
       log('Кнопка отправки письма отключена (disabled), ожидаем активации...', false, 'SUBMIT_DISABLED_WAIT');
       await waitForCondition(() => !submit.disabled && submit.getAttribute?.('aria-disabled') !== 'true', 1500, activeAbortController?.signal, 'активация кнопки отправки');
+      if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
+        log('Кнопка отправки письма остается неактивной (disabled) после ожидания, пробуем клик...', true, 'SUBMIT_BTN_STILL_DISABLED');
+      }
     }
 
     const submitQa = submit.getAttribute?.('data-qa') || submit.className || 'button[submit]';
@@ -1359,11 +1555,14 @@
 
     const formId = submit.getAttribute?.('form');
     const form = (formId && globalThis.document?.getElementById(formId)) || submit.form || submit.closest?.('form');
-    await clickElement(submit);
     if (form && typeof form.requestSubmit === 'function') {
       try {
         form.requestSubmit(submit);
-      } catch (_) {}
+      } catch (_) {
+        await clickElement(submit);
+      }
+    } else {
+      await clickElement(submit);
     }
 
     await actionPause();
@@ -1419,12 +1618,14 @@
 
   async function handleScenarioB(modal, runId = currentRunId) {
     log('Scenario B: Response modal opened', false, 'SCENARIO_B');
+    if (detectDailyLimit(modal) || detectDailyLimit()) { haltForDailyLimit(); return 'BLOCKED'; }
     const blockReason = detectModalBlockReason(modal);
+    if (blockReason === 'DAILY_LIMIT') { haltForDailyLimit(); return 'BLOCKED'; }
     if (blockReason === 'CAPTCHA') { haltForCaptcha(); return 'CAPTCHA'; }
     if (blockReason === 'RATE_LIMIT') { haltForRateLimit(); return 'BLOCKED'; }
     if (blockReason === 'TEST_REQUIRED' || blockReason === 'RESUME_HIDDEN') return blockReason;
 
-    if (hasReliableRejectWarning()) {
+    if (hasReliableRejectWarning(modal)) {
       const closeBtn = q('[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]', modal);
       if (closeBtn) clickElement(closeBtn);
       return 'SKIP';
@@ -1449,12 +1650,25 @@
       return 'FAIL';
     }
 
-    const confirmed = await waitForCondition(() => isResponseConfirmed(), 6000, activeAbortController?.signal, 'подтверждение отклика после отправки модалки');
+    const confirmed = await waitForCondition(
+      () => {
+        if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
+        return isResponseConfirmed();
+      },
+      6000,
+      activeAbortController?.signal,
+      'подтверждение отклика после отправки модалки'
+    );
+    if (confirmed === 'DAILY_LIMIT' || detectDailyLimit()) {
+      haltForDailyLimit();
+      return 'BLOCKED';
+    }
     return confirmed ? 'OK' : 'FAIL';
   }
 
   async function dispatchOutcome(outcome, vid, runId, relocAttempts = 0) {
     if (!outcome) return 'FAIL';
+    if (outcome === 'DAILY_LIMIT') { haltForDailyLimit(); return 'BLOCKED'; }
     if (outcome === 'RESPONSE_FORM') return 'RESPONSE_PAGE';
     if (outcome === 'CAPTCHA') { haltForCaptcha(); return 'CAPTCHA'; }
     if (outcome === 'RATE_LIMIT') { haltForRateLimit(); return 'BLOCKED'; }
@@ -1618,12 +1832,18 @@
       const title = parseVacancyTitle();
       log(`Загружена страница вакансии #${vid}: ${title}`, false, 'VACANCY_PAGE_LOADED', { vid, title, url: pageUrl });
 
+      if (detectDailyLimit()) {
+        haltForDailyLimit();
+        return 'BLOCKED';
+      }
+
       if (detectAlreadyApplied()) {
         log(`На вакансию #${vid} уже был отправлен отклик ранее`, false, 'ALREADY_APPLIED', { vid });
         if (vid) skipVacancy(vid, 'already_applied', runId);
         returnToList(vid, { markProcessed: true, runId });
         return 'OK';
       }
+      log(`Вакансия #${vid} доступна для отклика (ранее не откликались)`, false, 'VACANCY_ELIGIBLE', { vid });
 
       // Simulate human-like reading (45-75% scroll with random stops)
       await simulateHumanReading(vid, runId);
@@ -1657,11 +1877,20 @@
       };
 
       let outcome = await waitForCondition(
-        () => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()),
+        () => {
+          if (detectDailyLimit()) return 'DAILY_LIMIT';
+          if (Page.isResponseForm()) return 'RESPONSE_FORM';
+          return detectResponseOutcomeOnce();
+        },
         3500,
         activeAbortController?.signal,
         inspectOutcome
       );
+
+      if (outcome === 'DAILY_LIMIT' || detectDailyLimit()) {
+        haltForDailyLimit();
+        return 'BLOCKED';
+      }
 
       // Direct Link Navigation Fallback: if no modal opened within 3.5s and button links to response page
       if (!outcome && !Page.isResponseForm()) {
@@ -1669,6 +1898,7 @@
         if (directHref && (directHref.includes('/applicant/vacancy_response') || directHref.includes('vacancy_response'))) {
           const fullTarget = directHref.startsWith('http') ? directHref : (new URL(directHref, globalThis.location?.origin || 'https://hh.ru').href);
           log(`Модальное окно не появилось за 3.5с. Запуск прямого перехода по ссылке отклика: ${fullTarget}`, false, 'DIRECT_LINK_FALLBACK', { vid, href: fullTarget });
+          setTrapLock(45000, runId);
           flushTelemetryBeforeNav();
           setLastAttemptID(vid);
           try {
@@ -1677,12 +1907,18 @@
             globalThis.location.href = fullTarget;
           }
           return 'RESPONSE_PAGE';
+        } else {
+          log(`Прямая ссылка на страницу отклика отсутствует (ожидаем открытие модального окна в DOM)`, false, 'NO_DIRECT_LINK_FALLBACK', { vid });
         }
       }
 
       if (!outcome) {
         outcome = await waitForCondition(
-          () => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()),
+          () => {
+            if (detectDailyLimit()) return 'DAILY_LIMIT';
+            if (Page.isResponseForm()) return 'RESPONSE_FORM';
+            return detectResponseOutcomeOnce();
+          },
           4500,
           activeAbortController?.signal,
           inspectOutcome
@@ -1745,6 +1981,10 @@
         await clickElement(coverToggle);
         await actionPause();
         if (!isRunCurrent(runId)) return;
+      } else if (!config.useCover) {
+        log('Сопроводительное письмо отключено в настройках пользователя', false, 'COVER_DISABLED_BY_CONFIG', { vid });
+      } else {
+        log('Переключатель сопроводительного письма не найден на странице отклика (возможно, поле уже активно)', false, 'COVER_TOGGLE_NOT_FOUND', { vid });
       }
 
       const submitBtn = await waitForCondition(
@@ -1762,16 +2002,27 @@
       const submitted = await submitCoverLetterForm(null, runId);
       if (!isRunCurrent(runId)) return;
       if (!submitted) {
+        if (detectDailyLimit()) {
+          haltForDailyLimit();
+          return;
+        }
         log('Не удалось нажать кнопку отправки формы отклика', true, 'SUBMIT_FAILED', { vid });
         saveCurrentForManual(vid, 'submit-form-failed', runId);
         return returnToList(vid, { markProcessed: true, runId });
       }
       const confirmed = await waitForCondition(
-        () => isResponseConfirmed({ allowDocumentStrongText: true }),
+        () => {
+          if (detectDailyLimit()) return 'DAILY_LIMIT';
+          return isResponseConfirmed({ allowDocumentStrongText: true });
+        },
         6000,
         activeAbortController?.signal,
         `подтверждение отправки отклика #${vid}`
       );
+      if (confirmed === 'DAILY_LIMIT' || detectDailyLimit()) {
+        haltForDailyLimit();
+        return;
+      }
       log(confirmed ? `Отклик подтвержден на странице вакансии #${vid}` : `Не удалось подтвердить отправку отклика #${vid}`, !confirmed, confirmed ? 'APPLICATION_CONFIRMED' : 'SUBMIT_UNCONFIRMED', { vid });
       if (confirmed) commitSuccess(vid, runId); else saveCurrentForManual(vid, 'unconfirmed', runId);
       returnToList(vid, { markProcessed: true, runId });
@@ -1811,7 +2062,8 @@
 
   // --- 15. Main Execution Loop ---
   async function startLoop() {
-    if (isLoopActive) return;
+    if (isLoopActive || isNavigating) return;
+    if (Page.isResponseForm() && handlingResponsePage) return;
     const wasRunning = isRunning();
     isLoopActive = true;
     const runId = ++currentRunId;
@@ -1825,7 +2077,7 @@
 
     const acquired = await acquireInstanceLock(TAB_ID);
     if (runId !== currentRunId || stopSignal || !isRunning()) {
-      if (acquired) releaseInstanceLock(TAB_ID);
+      if (acquired) await releaseInstanceLock(TAB_ID);
       return;
     }
     if (!acquired) {
@@ -1850,16 +2102,26 @@
     }
 
     try {
+      log('Запуск предварительной проверки сессии (суточный лимит, капча, блокировки)...', false, 'SESSION_PRECHECK_START');
+      if (detectDailyLimit()) return haltForDailyLimit();
       if (detectCaptcha()) return haltForCaptcha();
       if (detectRateLimit()) return haltForRateLimit();
 
       const initialSent = getSentCount();
-      if (initialSent >= config.limit) return finalizeRun(runId, 'done', `Application limit reached: ${config.limit}`);
+      if (initialSent >= config.limit) return terminateRun('TARGET_LIMIT_REACHED', `Application limit reached: ${config.limit}`, { sent: initialSent, limit: config.limit }, false);
+      log('Предварительная проверка сессии успешно пройдена', false, 'SESSION_PRECHECK_OK', { initialSent, limit: config.limit });
 
       if (Page.isResponseForm()) {
-        if (handlingResponsePage) return;
+        if (handlingResponsePage) {
+          isLoopActive = false;
+          return;
+        }
         const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href) && ('v_' + getVacancyIDFromHref(globalThis.location.href)));
-        await submitResponsePage(vid, runId);
+        try {
+          await submitResponsePage(vid, runId);
+        } finally {
+          isLoopActive = false;
+        }
         return;
       }
 
@@ -1870,15 +2132,21 @@
         const res = await handleVacancyPage(vid, runId);
         if (runId !== currentRunId) return;
         if (res === 'STOPPED' || stopSignal) return finalizeRun(runId, 'stopped', 'Processing stopped on vacancy page');
+        if (res === 'BLOCKED') return;
         if (res === 'CAPTCHA') { haltForCaptcha(); return; }
         if (res === 'RESPONSE_PAGE' || Page.isResponseForm()) {
-          isLoopActive = false;
           setStatus('running', 'RESPONSE_PAGE');
           const vid = getLastAttemptID();
           if (Page.isResponseForm() && !handlingResponsePage) {
             handlingResponsePage = true;
             setTrapLock(45000, runId);
-            submitResponsePage(vid, runId);
+            try {
+              await submitResponsePage(vid, runId);
+            } finally {
+              isLoopActive = false;
+            }
+          } else {
+            isLoopActive = false;
           }
           return;
         }
@@ -1918,9 +2186,27 @@
       }
 
       const processed = getProcessedIDs();
-      let targets = allBtns.filter(b => (config.skipHidden && !isVisible(b) ? false : !processed.has(getVacancyID(b))));
-      log(`Поисковая выдача: найдено ${allBtns.length} вакансий, ожидают обработки: ${targets.length}, отправлено в сеансе: ${initialSent}/${config.limit}`, false, 'VACANCIES_SCANNED', {
-        total: allBtns.length, pending: targets.length, sent: initialSent, limit: config.limit
+      const targets = [];
+      let skippedProcessed = 0;
+      let skippedHidden = 0;
+
+      for (const b of allBtns) {
+        const vid = getVacancyID(b);
+        if (config.skipHidden && !isVisible(b)) {
+          skippedHidden++;
+          log(`Вакансия #${vid} пропущена: кнопка скрыта (skipHidden)`, false, 'VACANCY_SKIPPED', { vid, reason: 'element_hidden' });
+          continue;
+        }
+        if (processed.has(vid)) {
+          skippedProcessed++;
+          log(`Вакансия #${vid} пропущена: уже была обработана ранее`, false, 'VACANCY_SKIPPED', { vid, reason: 'already_processed' });
+          continue;
+        }
+        targets.push(b);
+      }
+
+      log(`Поисковая выдача: найдено кнопок: ${allBtns.length}, готово к обработке: ${targets.length}, пропущено: ${skippedProcessed + skippedHidden} (обработаны: ${skippedProcessed}, скрыты: ${skippedHidden})`, false, 'TARGETS_FILTERED', {
+        total: allBtns.length, pending: targets.length, skippedProcessed, skippedHidden, sent: initialSent, limit: config.limit
       });
 
       if (!targets.length) {
@@ -1930,6 +2216,7 @@
           await navigateToNextSearchPage(nextBtn, runId);
           return;
         }
+        log('Все страницы поисковой выдачи пройдены, новых вакансий не найдено', false, 'PAGINATION_END');
         const finalSent = getSentCount();
         return finalizeRun(runId, 'done', `Все вакансии в выдаче обработаны. Всего отправлено: ${finalSent}`);
       }
@@ -1939,8 +2226,9 @@
       const link = card ? query('vacancyLink', card) : null;
       const vid = getStableVacancyId(btn);
       const title = card ? readSerpCardTitle(link) : '';
+      log(`Выбрана вакансия #${vid} («${title}») для обработки`, false, 'VACANCY_CHOSEN', { vid, title });
       const origin = globalThis.location?.origin || 'https://hh.ru';
-      const targetUrl = link?.href ? (new URL(link.href, origin)).href : (vid && String(vid).startsWith('v_') ? `${origin}/vacancy/${String(vid).slice(2)}` : null);
+      const targetUrl = link?.href ? (new URL(link.href, origin)).href : (cleanVid(vid) ? `${origin}/vacancy/${cleanVid(vid)}` : null);
 
       if (!targetUrl) {
         log(`Не удалось определить URL для вакансии #${vid}`, true, 'VACANCY_URL_NOT_FOUND', { vid });
@@ -1969,11 +2257,14 @@
   // --- 16. Watchdog & Recovery ---
   function watchdogTick() {
     if (!isRunning()) return;
+    if (detectDailyLimit()) return haltForDailyLimit();
     if (detectCaptcha()) return haltForCaptcha();
     if (detectRateLimit()) return haltForRateLimit();
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
 
     if (Page.isResponseForm()) {
+      if (isNavigating || handlingResponsePage) return;
+      if (isLoopActive) return;
       if (getActiveTrapLock()) return;
       if (currentRunId === 0) currentRunId = 1;
       setTrapLock(45000, currentRunId);
@@ -1985,6 +2276,11 @@
         log('Watchdog detected response page, submitting...', false, 'WATCHDOG_RESPONSE_PAGE');
         submitResponsePage(vid, currentRunId);
         return;
+      }
+      handlingResponsePage = true;
+      if (resumeTimer) {
+        clearTimeout(resumeTimer);
+        resumeTimer = null;
       }
       log('Watchdog detected test/questions on response page. Saving to manual queue.', false, 'QUESTIONS_WATCHDOG');
       if (saveCurrentForManual(vid, 'watchdog-test-page', currentRunId)) {
@@ -2022,13 +2318,17 @@
     }
     terminateRun('RUNTIME_TEARDOWN', '', {}, false);
     events.removeAllListeners();
+    sessionLogHistory = [];
   }
+
+  let sessionLogHistory = [];
 
   // --- 17. Public API ---
   const HHApplyAssistant = {
     version: VERSION,
     start: () => startLoop(),
-    stop: () => terminateRun('STOPPED_BY_USER', 'Automation stopped by user', {}, false),
+    stop: (code = 'STOPPED_BY_USER', reason = '') => terminateRun(code, reason || (code === 'STOPPED_BY_USER' ? 'Automation stopped by user' : code), {}, false),
+    completeLimit: (reason = 'Application limit reached') => terminateRun('TARGET_LIMIT_REACHED', reason, { sent: getSentCount(), limit: config.limit }, false),
     getConfig: () => ({ ...config }),
     setConfig: (p) => persistSettings(p),
     getState: () => ({
@@ -2046,15 +2346,16 @@
       lastAttemptId: getLastAttemptID(),
       returnUrl: getReturnUrl()
     }),
-    resetState() {
+    async resetState() {
       if (isLoopActive) terminateRun('STOPPED_BY_USER', 'Stopped for reset', {}, false);
       stopSignal = true;
+      isNavigating = false;
       handlingResponsePage = false;
       if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
       if (activeAbortController) { try { activeAbortController.abort(); } catch (_) {} activeAbortController = null; }
       setRunning(false);
       currentRunId = 0;
-      releaseInstanceLock(TAB_ID);
+      await releaseInstanceLock(TAB_ID);
       clearLastAttemptID();
       clearTrapLock();
       clearReturnUrl();
@@ -2075,22 +2376,27 @@
       return true;
     },
     getManualQueue: () => ManualQueue.get(),
-    addManualItem: (entry) => Boolean(ManualQueue.add(entry)),
+    addManualItem: (entry) => Boolean(ManualQueue.add(entry).success),
     removeManualItem: (vid) => ManualQueue.remove(vid),
     clearManualQueue: () => ManualQueue.clear(),
-    getLogHistory: () => parseJson(storage.localGet(KEYS.logHistory), []),
+    getLogHistory: () => (sessionLogHistory.length > 0 ? sessionLogHistory.slice() : parseJson(storage.localGet(KEYS.logHistory), [])),
     saveLogHistory(logs) {
       if (Array.isArray(logs)) {
-        return storage.localSet(KEYS.logHistory, JSON.stringify(logs.slice(0, 2000)));
+        sessionLogHistory = logs.slice(0, MAX_LOG_HISTORY_MEMORY);
+        const sanitized = sanitizeLogsForPersistence(logs, 100);
+        return storage.localSet(KEYS.logHistory, JSON.stringify(sanitized));
       }
       return false;
     },
     clearLogHistory() {
+      sessionLogHistory = [];
       storage.localRemove(KEYS.logHistory);
       log('История логов очищена', false, 'LOGS_CLEARED');
       return true;
     },
     getEarlyLogs: () => earlyLogsBuffer.slice(),
+    clearEarlyLogs: () => { earlyLogsBuffer.length = 0; },
+    detectDailyLimit: () => detectDailyLimit(),
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
     once: (evt, fn) => events.once(evt, fn),
@@ -2109,7 +2415,17 @@
       running: isRunning(), sent: getSentCount(), limit: config.limit
     });
 
+    const pageType = Page.isSearch() ? 'search' : (Page.isVacancy() ? 'vacancy' : (Page.isResponseForm() ? 'response_form' : 'other'));
+    log(`Тип текущей страницы: ${pageType} (${globalThis.location?.href || 'unknown'})`, false, 'PAGE_RECOGNIZED', {
+      pageType, url: globalThis.location?.href
+    });
+
     if (isRunning()) {
+      log('Автоматизация активна. Подготовка к автоматическому продолжению цикла...', false, 'ENGINE_RESUMING');
+      if (detectDailyLimit()) {
+        haltForDailyLimit();
+        return;
+      }
       const lock = readInstanceLock();
       const now = Date.now();
       if (lock && isLiveLock(lock, now) && lock.tabId !== TAB_ID) {
@@ -2123,6 +2439,8 @@
           if (isRunning()) startLoop();
         }, 1500);
       }
+    } else {
+      log('Автоматизация в режиме ожидания (IDLE). Для запуска нажмите «Старт».', false, 'ENGINE_IDLE');
     }
     if (!Page.isResponseForm()) clearTrapLock();
 
@@ -2150,20 +2468,49 @@
 
   const win = globalThis.window;
   if (win && typeof win.addEventListener === 'function') {
+    function isUserscriptOrigin(filename, stack) {
+      if (!filename && !stack) return false;
+      const combined = `${filename || ''}\n${stack || ''}`;
+      if (/hh\.ru\/(?:js|static|web\/build)|yandex|google|sentry|mail\.ru|criteo|doubleclick/i.test(combined) &&
+          !/hh-apply-assistant|HhaHud|HHApplyAssistant/i.test(combined)) {
+        return false;
+      }
+      const scriptMarkers = [
+        'hh-apply-assistant',
+        'HHApplyAssistant',
+        'HhaHud',
+        'hha-hud',
+        'submitResponsePage',
+        'watchdogTick',
+        'startLoop',
+        'handleVacancyPage',
+        'clickElement',
+        'waitForCondition',
+        'queryAll',
+        'tampermonkey',
+        'violentmonkey',
+        'greasemonkey'
+      ];
+      return scriptMarkers.some(m => combined.includes(m));
+    }
+
     addGlobalListener(win, 'error', (event) => {
-      const msg = event.message || (event.error && event.error.message) || 'Unknown window error';
       const filename = event.filename || '';
+      const stack = (event.error && event.error.stack) || '';
+      if (!isUserscriptOrigin(filename, stack)) return;
+      const msg = event.message || (event.error && event.error.message) || 'Unknown window error';
       const lineno = event.lineno || 0;
       const colno = event.colno || 0;
-      const stack = (event.error && event.error.stack) || '';
       log(`[Глобальная ошибка] ${msg} (${filename}:${lineno}:${colno})`, true, 'GLOBAL_UNCAUGHT_ERROR', {
         error: msg, filename, lineno, colno, stack
       });
     });
     addGlobalListener(win, 'unhandledrejection', (event) => {
       const reason = event.reason;
-      const msg = (reason && (reason.message || reason.stack)) || String(reason) || 'Unhandled promise rejection';
       const stack = (reason && reason.stack) || '';
+      const filename = (reason && (reason.fileName || reason.filename)) || '';
+      if (!isUserscriptOrigin(filename, stack)) return;
+      const msg = (reason && (reason.message || reason.stack)) || String(reason) || 'Unhandled promise rejection';
       log(`[Необработанный Promise rejection] ${msg}`, true, 'GLOBAL_UNHANDLED_REJECTION', {
         error: msg, stack
       });
@@ -2171,6 +2518,7 @@
     addGlobalListener(win, 'pageshow', (e) => {
       if (e.persisted && isRunning()) {
         isLoopActive = false;
+        isNavigating = false;
         handlingResponsePage = false;
         startLoop();
       }
@@ -2268,7 +2616,7 @@
   }
 
   function cleanVid(vid) {
-    return vid ? String(vid).replace(/^v_/, '').trim() : '';
+    return vid ? String(vid).trim().replace(/^v_/i, '') : '';
   }
 
   function toVacancyUrl(vid, url) {
@@ -2308,9 +2656,12 @@
       if (a && typeof a.saveLogHistory === 'function') {
         a.saveLogHistory(logs);
       } else if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(STORAGE_KEY_LOG_HISTORY, JSON.stringify(logs.slice(0, 2000)));
+        const sanitized = sanitizeLogsForPersistence(logs, 100);
+        localStorage.setItem(STORAGE_KEY_LOG_HISTORY, JSON.stringify(sanitized));
       }
-    } catch (_) {}
+    } catch (e) {
+      console.warn('[HH] Failed to persist logs to localStorage:', e);
+    }
   }
 
   function removeStoredLogs(assistant = null) {
@@ -3871,7 +4222,6 @@
       this._collapsedPillWidth = 166;
       this._isAnimating = false;
       this._liveFeed = [];
-      this._stats = { attempts: 0, success: 0, manual: 0, skipped: 0 };
       this._queue = [];
       this._config = {
         limit: 50,
@@ -3954,8 +4304,11 @@
       if (this._onDocClick && typeof document !== 'undefined') {
         document.removeEventListener('click', this._onDocClick);
       }
-      if (this._coverDebounceTimer) clearTimeout(this._coverDebounceTimer);
-      if (this._animTimer) clearTimeout(this._animTimer);
+      if (this._coverDebounceTimer) { clearTimeout(this._coverDebounceTimer); this._coverDebounceTimer = null; }
+      if (this._animTimer) { clearTimeout(this._animTimer); this._animTimer = null; }
+      if (this._badgeClearTimer) { clearTimeout(this._badgeClearTimer); this._badgeClearTimer = null; }
+      if (this._badgeAnimTimer) { clearTimeout(this._badgeAnimTimer); this._badgeAnimTimer = null; }
+      if (this._copyFeedbackTimer) { clearTimeout(this._copyFeedbackTimer); this._copyFeedbackTimer = null; }
       this._flushLogs();
     }
 
@@ -3974,7 +4327,7 @@
           const sent = s.sentCount !== undefined ? s.sentCount : s.sentToday;
           const lim = s.limit !== undefined ? s.limit : s.dailyLimit;
           if (lim !== undefined) {
-            stateLimit = Math.max(1, Math.min(200, parseInt(lim, 10) || 50));
+            stateLimit = Math.max(1, Math.min(MAX_DAILY_LIMIT, parseInt(lim, 10) || 50));
             this._config.limit = stateLimit;
           }
           this.updateStatus(s.status, s.statusCode || s.code);
@@ -3995,18 +4348,6 @@
         }
       }
 
-      if (typeof assistant.getStats === 'function') {
-        const st = assistant.getStats();
-        if (st) {
-          const successVal = (st.success !== undefined ? st.success : st.applied) || 0;
-          this._stats = {
-            ...this._stats,
-            ...st,
-            success: Number(successVal) || 0
-          };
-        }
-      }
-
       if (typeof assistant.getManualQueue === 'function') {
         const q = assistant.getManualQueue();
         if (Array.isArray(q)) this._queue = q;
@@ -4021,7 +4362,6 @@
           assistant.on('progress', (payload) => {
             if (payload) this.updateProgress(payload.sent, payload.limit);
           }),
-          assistant.on('stats', (stats) => this.updateStats(stats)),
           assistant.on('entity', (event) => this.updateLiveFeed(event)),
           assistant.on('log', (payload) => this._onEngineLog(payload)),
           assistant.on('manualQueue', (payload) => {
@@ -4038,7 +4378,7 @@
       if ((!this._liveFeed || this._liveFeed.length === 0) && typeof assistant.getLogHistory === 'function') {
         const hist = assistant.getLogHistory();
         if (Array.isArray(hist) && hist.length > 0) {
-          this._liveFeed = hist.slice(0, 2000);
+          this._liveFeed = hist.slice(0, MAX_LOG_HISTORY_MEMORY);
         }
       }
 
@@ -4049,6 +4389,9 @@
           for (const item of early) {
             this._onEngineLog(item);
           }
+        }
+        if (typeof assistant.clearEarlyLogs === 'function') {
+          assistant.clearEarlyLogs();
         }
       }
 
@@ -4072,14 +4415,24 @@
     updateStatus(status, code) {
       let nextStatus = status || 'idle';
       let nextCode = code || 'IDLE';
-      const lim = this._progress ? this._progress.limit : ((this._config && this._config.limit) || 50);
-      const sent = this._progress ? this._progress.sent : 0;
-      if (nextStatus === 'running' && sent >= lim && lim > 0) {
-        if (this._assistant && typeof this._assistant.stop === 'function') {
-          this._assistant.stop();
-        }
+      if (code === 'DAILY_LIMIT_REACHED') {
+        nextStatus = 'done';
+        nextCode = 'DAILY_LIMIT_REACHED';
+      } else if (code === 'TARGET_LIMIT_REACHED') {
         nextStatus = 'done';
         nextCode = 'COMPLETED';
+      } else {
+        const lim = this._progress ? this._progress.limit : ((this._config && this._config.limit) || 50);
+        const sent = this._progress ? this._progress.sent : 0;
+        if (nextStatus === 'running' && sent >= lim && lim > 0) {
+          if (this._assistant && typeof this._assistant.completeLimit === 'function') {
+            this._assistant.completeLimit();
+          } else if (this._assistant && typeof this._assistant.stop === 'function') {
+            this._assistant.stop('TARGET_LIMIT_REACHED', 'Target limit reached');
+          }
+          nextStatus = 'done';
+          nextCode = 'COMPLETED';
+        }
       }
       this._status = { status: nextStatus, code: nextCode };
       this._syncStatus();
@@ -4087,35 +4440,22 @@
 
     updateProgress(sent, limit) {
       const s = Number(sent) || 0;
-      const l = Math.max(1, Math.min(200, parseInt(limit, 10) || (this._config && this._config.limit) || 50));
+      const l = Math.max(1, Math.min(MAX_DAILY_LIMIT, parseInt(limit, 10) || (this._config && this._config.limit) || 50));
       const displayCurrent = Math.min(Math.max(0, s), l);
       const pct = l > 0 ? Math.min(100, Math.max(0, Math.round((displayCurrent / l) * 100))) : 0;
       this._progress = { sent: s, displayCurrent, limit: l, percentage: pct };
       this._syncProgress();
 
       if (s >= l && this._status && this._status.status === 'running') {
-        if (this._assistant && typeof this._assistant.stop === 'function') {
-          this._assistant.stop();
+        if (this._assistant && typeof this._assistant.completeLimit === 'function') {
+          this._assistant.completeLimit();
+        } else if (this._assistant && typeof this._assistant.stop === 'function') {
+          this._assistant.stop('TARGET_LIMIT_REACHED', 'Target limit reached');
         }
         this.updateStatus('done', 'COMPLETED');
       } else if (s < l && this._status && this._status.status === 'done') {
         this.updateStatus('idle', 'IDLE');
       }
-    }
-
-    updateStats(stats) {
-      if (!stats) return;
-      const successCount = stats.success !== undefined ? stats.success : stats.applied;
-      this._stats = {
-        attempts: stats.attempts !== undefined ? (Number(stats.attempts) || 0) : this._stats.attempts,
-        success: successCount !== undefined ? (Number(successCount) || 0) : this._stats.success,
-        manual: stats.manual !== undefined ? (Number(stats.manual) || 0) : this._stats.manual,
-        skipped: stats.skipped !== undefined ? (Number(stats.skipped) || 0) : this._stats.skipped
-      };
-      }
-
-    getStats() {
-      return { ...this._stats };
     }
 
     updateLiveFeed(event) {
@@ -4232,10 +4572,19 @@
       }
 
       this._liveFeed.unshift(item);
-      if (this._liveFeed.length > 2000) {
-        this._liveFeed.length = 2000;
+      if (this._liveFeed.length > MAX_LOG_HISTORY_MEMORY) {
+        this._liveFeed.length = MAX_LOG_HISTORY_MEMORY;
       }
-      this._persistLogs();
+
+      const isCritical = Boolean(
+        item.tagType === 'error' ||
+        /INITIATED|LIMIT|CLICK|DELIVERED|SUCCESS|FAIL|STOP|NAVIGAT|RETURN|PAGE_LOADED|BEFORE_UNLOAD|BLOCKED|OUTCOME/i.test(item.tag || '')
+      );
+      if (isCritical) {
+        this._flushLogs();
+      } else {
+        this._persistLogs();
+      }
       this._syncLogs();
     }
 
@@ -4263,17 +4612,23 @@
       if (/SCROLL|READING|VIEW|SCAN/i.test(code)) tagType = 'scan';
       else if (/APPLY|COVER|CONFIRM|SCENARIO/i.test(code)) tagType = 'apply';
       else if (/FILTER|SKIP|ALREADY/i.test(code)) tagType = 'filter';
+      else if (/DAILY_LIMIT|RATE_LIMIT/i.test(code)) tagType = isErr ? 'error' : 'filter';
 
       let sub = '';
       if (typeof ctx === 'string') {
         sub = ctx;
       } else if (ctx && typeof ctx === 'object') {
         const parts = [];
+        if (ctx.limit !== undefined) parts.push(`Лимит: ${ctx.limit}`);
+        if (ctx.period !== undefined) parts.push(`Период: ${ctx.period}`);
         if (ctx.targetY !== undefined) parts.push(`Цель: ${ctx.targetY}px (${ctx.pct ? ctx.pct + '%' : ''})`);
         if (ctx.step !== undefined) parts.push(`Шаг: ${ctx.step}/${ctx.steps}`);
         if (ctx.pauseMs !== undefined) parts.push(`Пауза: ${(ctx.pauseMs / 1000).toFixed(1)}с`);
+        if (ctx.delaySec !== undefined) parts.push(`Пауза: ${ctx.delaySec}с`);
         if (ctx.total !== undefined) parts.push(`Всего кнопок: ${ctx.total}`);
         if (ctx.pending !== undefined) parts.push(`К обработке: ${ctx.pending}`);
+        if (ctx.skippedProcessed !== undefined) parts.push(`Обработаны: ${ctx.skippedProcessed}`);
+        if (ctx.skippedHidden !== undefined) parts.push(`Скрыты: ${ctx.skippedHidden}`);
         if (ctx.outcome !== undefined) parts.push(`Исход: ${ctx.outcome}`);
         if (ctx.result !== undefined) parts.push(`Результат: ${ctx.result}`);
         if (ctx.reason !== undefined) parts.push(`Причина: ${ctx.reason}`);
@@ -4285,6 +4640,8 @@
         if (ctx.cardsCount !== undefined) parts.push(`Карточек: ${ctx.cardsCount}`);
         if (ctx.elapsedMs !== undefined) parts.push(`Прошло: ${(ctx.elapsedMs / 1000).toFixed(1)}с${ctx.timeoutMs ? ` / ${(ctx.timeoutMs / 1000).toFixed(1)}с` : ''}`);
         if (ctx.visibleModalsCount !== undefined) parts.push(`Модалок: ${ctx.visibleModalsCount}`);
+        if (ctx.letterLen !== undefined) parts.push(`Письмо: ${ctx.letterLen} симв.`);
+        if (ctx.relocAttempts !== undefined) parts.push(`Попытка: ${ctx.relocAttempts}`);
         if (ctx.href && ctx.href !== url) parts.push(`href: ${ctx.href}`);
         if (ctx.error !== undefined) parts.push(`Ошибка: ${ctx.error}`);
         sub = parts.join(' • ');
@@ -4323,10 +4680,10 @@
         config.limit = config.dailyLimit;
       }
       if (config.limit !== undefined) {
-        config.limit = Math.max(1, Math.min(200, parseInt(config.limit, 10) || 50));
+        config.limit = Math.max(1, Math.min(MAX_DAILY_LIMIT, parseInt(config.limit, 10) || 50));
       }
-      if (typeof config.coverText === 'string' && config.coverText.length > 5000) {
-        config.coverText = config.coverText.slice(0, 5000);
+      if (typeof config.coverText === 'string' && config.coverText.length > MAX_COVER_LENGTH) {
+        config.coverText = config.coverText.slice(0, MAX_COVER_LENGTH);
       }
       this._config = { ...this._config, ...config };
       const nextLimit = typeof this._config.limit === 'number' ? this._config.limit : this._config.dailyLimit;
@@ -4338,18 +4695,12 @@
 
     setTargetLimit(newVal) {
       const parsed = parseInt(newVal, 10);
-      const val = isNaN(parsed) ? 50 : Math.max(1, Math.min(200, parsed));
+      const val = isNaN(parsed) ? 50 : Math.max(1, Math.min(MAX_DAILY_LIMIT, parsed));
       this._config.limit = val;
       if (this._progress) {
         this._progress.limit = val;
       }
       if (this._assistant) {
-        if (this._assistant.state) {
-          this._assistant.state.targetLimit = val;
-          if (this._assistant.state.limit !== undefined) {
-            this._assistant.state.limit = val;
-          }
-        }
         if (typeof this._assistant.setConfig === 'function') {
           this._assistant.setConfig({ limit: val });
         }
@@ -4392,6 +4743,9 @@
         this._updatePosition();
 
         if (this._animTimer) clearTimeout(this._animTimer);
+        if (this._isExpanded && this._activeTab === 'logs') {
+          this._syncLogs();
+        }
         this._animTimer = setTimeout(() => {
           this._isAnimating = false;
           if (root) root.classList.remove('is-animating');
@@ -4437,6 +4791,9 @@
       panels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabName));
 
       this._syncLogActions();
+      if (this._isExpanded && tabName === 'logs') {
+        this._syncLogs();
+      }
       requestAnimationFrame(() => this._updateOverlayScrollbar());
     }
 
@@ -4470,7 +4827,7 @@
       const logHeaderTitle = this._shadow.querySelector('[data-el="log-header-title"]') || this._shadow.querySelector('[data-panel="logs"] .hha-log-header-title');
       if (logHeaderTitle) {
         const logCount = this._liveFeed ? this._liveFeed.length : 0;
-        logHeaderTitle.textContent = logCount > 0 ? `События и отклики (${logCount} / 2000)` : 'События и отклики';
+        logHeaderTitle.textContent = logCount > 0 ? `События и отклики (${logCount} / ${MAX_LOG_HISTORY_MEMORY})` : 'События и отклики';
       }
     }
 
@@ -4568,7 +4925,7 @@
                     <span class="hha-row-label">Лимит откликов</span>
                     <div class="hha-stepper">
                       <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="-5" aria-label="Уменьшить лимит">−</button>
-                      <input type="number" class="hha-stepper-input" data-el="setting-limit" min="1" max="200" step="5" value="50">
+                      <input type="number" class="hha-stepper-input" data-el="setting-limit" min="1" max="${MAX_DAILY_LIMIT}" step="5" value="50">
                       <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="5" aria-label="Увеличить лимит">+</button>
                     </div>
                   </div>
@@ -4593,8 +4950,8 @@
                     </label>
                   </div>
                   <div class="hha-cover-container" data-el="setting-cover-container">
-                    <textarea class="hha-cover-textarea" data-el="setting-cover-text" maxlength="5000" placeholder="Текст сопроводительного письма..."></textarea>
-                    <div class="hha-char-counter" data-el="setting-cover-counter">0 / 5000</div>
+                    <textarea class="hha-cover-textarea" data-el="setting-cover-text" maxlength="${MAX_COVER_LENGTH}" placeholder="Текст сопроводительного письма..."></textarea>
+                    <div class="hha-char-counter" data-el="setting-cover-counter">0 / ${MAX_COVER_LENGTH}</div>
                   </div>
                 </div>
               </div>
@@ -4715,7 +5072,7 @@
       if (limitInput) {
         const normalizeLimit = () => {
           limitInput.classList.remove('is-focused');
-          const val = Math.max(1, Math.min(200, parseInt(limitInput.value, 10) || 50));
+          const val = Math.max(1, Math.min(MAX_DAILY_LIMIT, parseInt(limitInput.value, 10) || 50));
           limitInput.value = val;
           this.setTargetLimit(val);
         };
@@ -4723,7 +5080,7 @@
         limitInput.addEventListener('blur', normalizeLimit);
         limitInput.addEventListener('input', () => {
           const raw = parseInt(limitInput.value, 10);
-          if (!isNaN(raw) && raw >= 1 && raw <= 200) {
+          if (!isNaN(raw) && raw >= 1 && raw <= MAX_DAILY_LIMIT) {
             this.setTargetLimit(raw);
           }
         });
@@ -4749,8 +5106,8 @@
         const updateCharCounter = () => {
           const len = coverTextarea.value.length;
           if (coverCounter) {
-            coverCounter.textContent = `${len} / 5000`;
-            coverCounter.classList.toggle('is-limit', len >= 5000);
+            coverCounter.textContent = `${len} / ${MAX_COVER_LENGTH}`;
+            coverCounter.classList.toggle('is-limit', len >= MAX_COVER_LENGTH);
           }
         };
         const flushCoverText = () => {
@@ -5020,7 +5377,7 @@
         const step = parseInt(actionTarget.dataset.step, 10) || 0;
         const input = this._shadow.querySelector('[data-el="setting-limit"]');
         const cur = parseInt(input ? input.value : this._config.limit, 10) || 50;
-        const next = Math.max(1, Math.min(200, cur + step));
+        const next = Math.max(1, Math.min(MAX_DAILY_LIMIT, cur + step));
         if (input) input.value = next;
         this.setTargetLimit(next);
       } else if (action === 'set-preset') {
@@ -5077,6 +5434,9 @@
         (ctx.href && ctx.href !== item.url) || ctx.tag || ctx.qa || ctx.text || ctx.rect ||
         ctx.optionsCount !== undefined || ctx.cardsCount !== undefined ||
         ctx.elapsedMs !== undefined || ctx.visibleModalsCount !== undefined ||
+        ctx.delaySec !== undefined || ctx.pending !== undefined || ctx.total !== undefined ||
+        ctx.skippedProcessed !== undefined || ctx.skippedHidden !== undefined ||
+        ctx.letterLen !== undefined || ctx.relocAttempts !== undefined || ctx.sent !== undefined ||
         ctx.snippet || ctx.details || ctx.outcome !== undefined || ctx.result !== undefined || ctx.reason !== undefined
       );
 
@@ -5095,6 +5455,15 @@
         if (item.heuristic) parts.push(`  Эвристика: ${item.heuristic}`);
         if (item.employer) parts.push(`  Компания: ${item.employer}`);
         if (ctx.href && ctx.href !== item.url) parts.push(`  Ссылка (href): ${ctx.href}`);
+        if (ctx.delaySec !== undefined) parts.push(`  Пауза безопасности: ${ctx.delaySec}с`);
+        if (ctx.total !== undefined) parts.push(`  Всего кнопок: ${ctx.total}`);
+        if (ctx.pending !== undefined) parts.push(`  К обработке: ${ctx.pending}`);
+        if (ctx.skippedProcessed !== undefined) parts.push(`  Ранее обработаны: ${ctx.skippedProcessed}`);
+        if (ctx.skippedHidden !== undefined) parts.push(`  Скрыты: ${ctx.skippedHidden}`);
+        if (ctx.sent !== undefined) parts.push(`  Отправлено: ${ctx.sent}${ctx.limit ? ` / ${ctx.limit}` : ''}`);
+        if (ctx.preset !== undefined) parts.push(`  Пресет: ${ctx.preset}`);
+        if (ctx.letterLen !== undefined) parts.push(`  Длина письма: ${ctx.letterLen} симв.`);
+        if (ctx.relocAttempts !== undefined) parts.push(`  Попытка релокации: ${ctx.relocAttempts}`);
         if (ctx.outcome !== undefined) parts.push(`  Исход: ${ctx.outcome}`);
         if (ctx.result !== undefined) parts.push(`  Результат: ${ctx.result}`);
         if (ctx.reason !== undefined) parts.push(`  Причина: ${ctx.reason}`);
@@ -5209,6 +5578,15 @@
       if (this._status.status === 'running') {
         if (typeof this._assistant.stop === 'function') this._assistant.stop();
       } else if (this._status.status === 'done') {
+        if (this._status.code === 'DAILY_LIMIT_REACHED') {
+          if (this._assistant && typeof this._assistant.detectDailyLimit === 'function' && this._assistant.detectDailyLimit()) {
+            this.open();
+            this.setActiveTab('logs');
+            return;
+          }
+          this.updateStatus('idle', 'IDLE');
+          return;
+        }
         const lim = this._progress ? this._progress.limit : ((this._config && this._config.limit) || 50);
         const sent = this._progress ? this._progress.sent : 0;
         if (sent < lim) {
@@ -5238,10 +5616,10 @@
 
     _applyConfig(partial) {
       if (partial && partial.limit !== undefined) {
-        partial.limit = Math.max(1, Math.min(200, parseInt(partial.limit, 10) || 50));
+        partial.limit = Math.max(1, Math.min(MAX_DAILY_LIMIT, parseInt(partial.limit, 10) || 50));
       }
-      if (partial && typeof partial.coverText === 'string' && partial.coverText.length > 5000) {
-        partial.coverText = partial.coverText.slice(0, 5000);
+      if (partial && typeof partial.coverText === 'string' && partial.coverText.length > MAX_COVER_LENGTH) {
+        partial.coverText = partial.coverText.slice(0, MAX_COVER_LENGTH);
       }
       this._config = { ...this._config, ...partial };
       const nextLimit = typeof this._config.limit === 'number' ? this._config.limit : this._config.dailyLimit;
@@ -5545,7 +5923,6 @@
     _syncAll() {
       this._syncStatus();
       this._syncProgress();
-      this._syncLogs();
       this._syncConfig();
       this._syncLogs();
     }
@@ -5562,10 +5939,11 @@
           quickBtn.className = 'hha-btn-quick hha-btn-stop';
           quickBtn.innerHTML = `${ICONS.stop} <span data-el="pill-quick-label">Стоп</span>`;
           quickBtn.title = 'Остановить автоматизацию';
-        } else if (status === 'done') {
+        } else if (status === 'done' || (this._status && this._status.code === 'DAILY_LIMIT_REACHED')) {
           quickBtn.className = 'hha-btn-quick hha-btn-done';
-          quickBtn.innerHTML = `${ICONS.check} <span data-el="pill-quick-label">Готово</span>`;
-          quickBtn.title = 'Лимит достигнут. Кликните для настройки';
+          const isDaily = this._status && this._status.code === 'DAILY_LIMIT_REACHED';
+          quickBtn.innerHTML = `${ICONS.check} <span data-el="pill-quick-label">${isDaily ? 'Лимит 24ч' : 'Готово'}</span>`;
+          quickBtn.title = isDaily ? `Достигнут суточный лимит HeadHunter (${MAX_DAILY_LIMIT} откликов за 24 часа)` : 'Лимит достигнут. Кликните для настройки';
         } else if (status === 'error') {
           quickBtn.className = 'hha-btn-quick hha-btn-error';
           quickBtn.innerHTML = `${ICONS.reset} <span data-el="pill-quick-label">Сброс</span>`;
@@ -5583,7 +5961,7 @@
     _syncProgress() {
       if (!this._shadow) return;
       const { sent = 0, displayCurrent, limit = 50 } = this._progress || {};
-      const limitCount = Math.max(1, Math.min(200, parseInt(limit, 10) || 50));
+      const limitCount = Math.max(1, Math.min(MAX_DAILY_LIMIT, parseInt(limit, 10) || 50));
       const cur = displayCurrent !== undefined ? displayCurrent : Math.min(Math.max(0, sent), limitCount);
       const text = `${cur} / ${limitCount}`;
 
@@ -5632,8 +6010,13 @@
 
           if (countChanged && wasVisible) {
             queueBadge.classList.remove('is-popping');
-            void queueBadge.offsetWidth; // force reflow
-            queueBadge.classList.add('is-popping');
+            if (typeof requestAnimationFrame === 'function') {
+              requestAnimationFrame(() => {
+                if (queueBadge) queueBadge.classList.add('is-popping');
+              });
+            } else {
+              queueBadge.classList.add('is-popping');
+            }
           }
         } else {
           queueBadge.style.display = '';
@@ -5730,7 +6113,7 @@
 
       // Render Logs Stream
       const logStream = this._shadow.querySelector('[data-el="log-stream"]');
-      if (logStream) {
+      if (logStream && this._isExpanded && this._activeTab === 'logs') {
         if (this._liveFeed && this._liveFeed.length > 0) {
           const itemsToRender = this._liveFeed.slice(0, 150);
           const html = itemsToRender.map(item => {
@@ -5816,7 +6199,9 @@
         }
       }
 
-      this._updateOverlayScrollbar();
+      if (this._isExpanded && this._activeTab === 'logs') {
+        this._updateOverlayScrollbar();
+      }
     }
 
 
@@ -5859,8 +6244,8 @@
       }
       if (coverCounter) {
         const len = coverTextarea ? coverTextarea.value.length : (c.coverText || '').length;
-        coverCounter.textContent = `${len} / 5000`;
-        coverCounter.classList.toggle('is-limit', len >= 5000);
+        coverCounter.textContent = `${len} / ${MAX_COVER_LENGTH}`;
+        coverCounter.classList.toggle('is-limit', len >= MAX_COVER_LENGTH);
       }
     }
   }
