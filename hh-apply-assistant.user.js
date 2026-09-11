@@ -1199,13 +1199,71 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     isSearch: () => Boolean(globalThis.location && (globalThis.location.href?.includes('/search/vacancy') || globalThis.location.pathname?.startsWith('/search')))
   };
 
-  function parseVacancyTitle() {
+  function isGenericVacancyTitle(text) {
+    if (!text || typeof text !== 'string') return true;
+    const trimmed = text.trim();
+    return /^(?:отклик на вакансию|отклик без резюме|поиск вакансий|работа в |hh\.ru)/i.test(trimmed);
+  }
+
+  function parseVacancyTitle(vid) {
     if (Page.isSearch()) return '';
+    const clean = cleanVid(vid);
+
+    // On response form pages (/applicant/vacancy_response), h1 is usually "Отклик на вакансию".
+    // Look for link to vacancy or specific title attributes.
+    if (Page.isResponseForm()) {
+      const linkToVac = q('a[data-qa="vacancy-response-link-view-topic"], a[href*="/vacancy/"], [data-qa="vacancy-title"], [data-qa*="vacancy-response-header"]');
+      if (linkToVac) {
+        const text = collapseSpaces(linkToVac.innerText || linkToVac.textContent);
+        if (text && !isGenericVacancyTitle(text)) return text;
+      }
+      const header = q('[data-qa="bloko-header-2"], [data-qa="bloko-header-3"], [data-qa*="vacancy-response"] h2');
+      if (header) {
+        const text = collapseSpaces(header.innerText || header.textContent);
+        if (text && !isGenericVacancyTitle(text)) return text;
+      }
+    }
+
+    const titleEl = q('[data-qa="vacancy-title"]');
+    if (titleEl && isVisible(titleEl)) {
+      const text = collapseSpaces(titleEl.innerText || titleEl.textContent);
+      if (text && !isGenericVacancyTitle(text)) return text;
+    }
+
     const h1 = q('h1');
-    if (h1 && isVisible(h1)) return collapseSpaces(h1.innerText || h1.textContent);
+    if (h1 && isVisible(h1)) {
+      const text = collapseSpaces(h1.innerText || h1.textContent);
+      if (text && !isGenericVacancyTitle(text)) return text;
+    }
+
     const og = q('meta[property="og:title"]');
-    if (og) return collapseSpaces(og.getAttribute('content'));
-    return collapseSpaces(globalThis.document?.title);
+    if (og) {
+      const content = collapseSpaces(og.getAttribute('content'));
+      if (content && !isGenericVacancyTitle(content)) {
+        const cleanOg = content.replace(/^Вакансия\s+/i, '').split(/\s+в\s+компании\s+/i)[0].trim();
+        if (cleanOg && !isGenericVacancyTitle(cleanOg)) return cleanOg;
+      }
+    }
+
+    const docTitle = collapseSpaces(globalThis.document?.title);
+    if (docTitle && !isGenericVacancyTitle(docTitle)) {
+      const cleanDoc = docTitle.replace(/\s*—\s*hh\.ru.*$/i, '').replace(/\s*-\s*hh\.ru.*$/i, '').trim();
+      if (cleanDoc && !isGenericVacancyTitle(cleanDoc)) return cleanDoc;
+    }
+
+    return clean ? `Вакансия #${clean}` : '';
+  }
+
+  function parseVacancyEmployer(root = globalThis.document) {
+    if (!root) return '';
+    const el = root.querySelector?.('[data-qa="vacancy-company-name"], [data-qa="vacancy-response-company-name"], [data-qa="vacancy-serp__vacancy-employer"], a[href*="/employer/"], [data-qa*="company-name"]');
+    return el ? collapseSpaces(el.innerText || el.textContent) : '';
+  }
+
+  function parseVacancySalary(root = globalThis.document) {
+    if (!root) return '';
+    const el = root.querySelector?.('[data-qa="vacancy-salary"], [data-qa="vacancy-response-salary"], [data-qa="vacancy-serp__vacancy-compensation"], [data-qa*="vacancy-salary"]');
+    return el ? collapseSpaces(el.innerText || el.textContent) : '';
   }
 
   function readSerpCardTitle(linkEl) {
@@ -1453,44 +1511,56 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     log(`Вакансия #${vid} пропущена (${reason})`, false, 'VACANCY_SKIPPED', { vid, reason });
   }
 
-  function saveCurrentForManual(vid, note = '', runId = currentRunId, customTitle = '') {
+  function saveCurrentForManual(vid, note = '', runId = currentRunId, customTitle = '', customEmployer = '', customSalary = '') {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
-    let url = globalThis.location?.href || '';
     const origin = globalThis.location?.origin || 'https://hh.ru';
-    if ((!url || url.includes('/search/vacancy')) && vid) {
-      const clean = cleanVid(vid);
-      if (clean) url = `${origin}/vacancy/${clean}`;
-    }
+    const clean = cleanVid(vid);
+    const url = clean ? `${origin}/vacancy/${clean}` : (toSafeHhUrl(globalThis.location?.href) || `${origin}/search/vacancy`);
     let title = customTitle || '';
-    if (!title && Page.isSearch() && vid) {
-      const clean = cleanVid(vid);
+    let employer = customEmployer || '';
+    let salary = customSalary || '';
+
+    if (Page.isSearch() && clean) {
       const links = qa('a[data-qa="serp-item__title"], a[data-qa="vacancy-serp__vacancy-title"], a[href*="/vacancy/"]');
       for (const l of links) {
         if (getVacancyIDFromHref(l.href) === clean) {
-          title = readSerpCardTitle(l);
+          if (!title) title = readSerpCardTitle(l);
+          const card = getVacancyCard(l);
+          if (card) {
+            if (!employer) employer = parseVacancyEmployer(card);
+            if (!salary) salary = parseVacancySalary(card);
+          }
           break;
         }
       }
     }
     if (!title) {
-      title = parseVacancyTitle();
+      title = parseVacancyTitle(vid);
+    }
+    if (!employer) {
+      employer = parseVacancyEmployer();
+    }
+    if (!salary) {
+      salary = parseVacancySalary();
     }
     const entry = {
-      vid: vid || ('v_' + Math.random().toString(36).slice(2, 10)),
+      vid: clean || ('v_' + Math.random().toString(36).slice(2, 10)),
       url,
       returnUrl: getReturnUrl(),
       reason: note,
       addedAt: Date.now(),
-      title
+      title: title || (clean ? `Вакансия #${clean}` : 'Вакансия'),
+      employer,
+      salary
     };
     const res = ManualQueue.add(entry);
     if (res.success) {
       if (res.isNew) {
         bumpStat('manual');
-        events.emit('entity', { vid: entry.vid, title: entry.title, url: entry.url, action: 'manual', reason: note, note });
-        log(`Вакансия #${entry.vid} сохранена в ручную очередь (${note || 'manual'})`, false, 'MANUAL_SAVED', { vid: entry.vid, note, url: entry.url });
+        events.emit('entity', { vid: entry.vid, title: entry.title, url: entry.url, employer: entry.employer, salary: entry.salary, action: 'manual', reason: note, note });
+        log(`Вакансия #${entry.vid} сохранена в ручную очередь (${note || 'manual'})`, false, 'MANUAL_SAVED', { vid: entry.vid, title: entry.title, employer: entry.employer, note, url: entry.url });
       } else {
-        log(`Вакансия #${entry.vid} обновлена в ручной очереди`, false, 'MANUAL_UPDATED', { vid: entry.vid, note, url: entry.url });
+        log(`Вакансия #${entry.vid} обновлена в ручной очереди`, false, 'MANUAL_UPDATED', { vid: entry.vid, title: entry.title, note, url: entry.url });
       }
       return true;
     }
@@ -2595,6 +2665,8 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
 
+  const collapseSpaces = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+
   function formatQueueReason(reason) {
     const r = String(reason || '').toLowerCase();
     if (r.includes('test') || r.includes('questionnaire') || r.includes('questions')) {
@@ -2615,15 +2687,39 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     return 'Ручной';
   }
 
+  function formatQueueReasonInfo(reason) {
+    const r = String(reason || '').toLowerCase();
+    if (r.includes('test') || r.includes('questionnaire') || r.includes('questions')) {
+      return { text: 'Тест / анкета', type: 'warning' };
+    }
+    if (r.includes('relocation')) {
+      return { text: 'Релокация', type: 'warning' };
+    }
+    if (r.includes('no-apply') || r.includes('no-submit') || r.includes('redirect')) {
+      return { text: 'Нет кнопки', type: 'neutral' };
+    }
+    if (r.includes('failed') || r.includes('error')) {
+      return { text: 'Ошибка отправки', type: 'error' };
+    }
+    if (r.includes('unconfirmed')) {
+      return { text: 'Не подтверждено', type: 'neutral' };
+    }
+    if (r.includes('already')) {
+      return { text: 'Уже откликались', type: 'neutral' };
+    }
+    return { text: 'Ручной отклик', type: 'info' };
+  }
+
   function cleanVid(vid) {
     return vid ? String(vid).trim().replace(/^v_/i, '') : '';
   }
 
   function toVacancyUrl(vid, url) {
-    if (url) return url;
     const clean = cleanVid(vid);
     const origin = (typeof globalThis !== 'undefined' && globalThis.location?.origin) || 'https://hh.ru';
-    return clean ? `${origin}/vacancy/${clean}` : '';
+    if (clean) return `${origin}/vacancy/${clean}`;
+    if (url && !url.includes('/applicant/vacancy_response')) return url;
+    return url || '';
   }
 
   const STORAGE_KEY_LOG_HISTORY = 'hh_apply_assistant_s1_log_history';
@@ -3413,26 +3509,30 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       line-height: 1.4;
     }
 
-    .hha-log-item {
+    .hha-queue-card {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      padding: 6px 8px;
+      background: #ffffff;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: var(--hha-radius-sm, 8px);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+      box-sizing: border-box;
+      transition: border-color 120ms ease, box-shadow 120ms ease;
+    }
+
+    .hha-queue-card:hover {
+      border-color: rgba(37, 99, 235, 0.28);
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+    }
+
+    .hha-queue-card-top {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 4px 8px;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: var(--hha-radius-xs, 6px);
-      font-size: 11px;
-      gap: 6px;
-      min-height: 28px;
-      box-sizing: border-box;
-    }
-
-    .hha-log-item-left {
-      display: flex;
-      align-items: center;
-      gap: 6px;
+      gap: 8px;
       min-width: 0;
-      flex: 1;
     }
 
     .hha-queue-title-link {
@@ -3442,8 +3542,9 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       flex: 1;
       color: #0f172a;
       text-decoration: none;
-      font-weight: 500;
-      font-size: 11px;
+      font-weight: 600;
+      font-size: 11.5px;
+      line-height: 1.3;
       overflow: hidden;
       cursor: pointer;
       transition: color 100ms ease;
@@ -3451,6 +3552,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
     .hha-queue-title-link:hover {
       color: #2563eb;
+      text-decoration: underline;
     }
 
     .hha-queue-title-text {
@@ -3459,18 +3561,84 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       text-overflow: ellipsis;
     }
 
-    .hha-log-item-right {
+    .hha-queue-card-bottom {
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: 6px;
+      font-size: 10px;
+      color: #64748b;
+      min-width: 0;
+      overflow: hidden;
+      line-height: 1.2;
+    }
+
+    .hha-queue-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      flex-shrink: 0;
+      line-height: 1.3;
+    }
+
+    .hha-queue-badge.badge-warning {
+      background: rgba(245, 158, 11, 0.14);
+      color: #b45309;
+    }
+
+    .hha-queue-badge.badge-error {
+      background: rgba(239, 68, 68, 0.14);
+      color: #b91c1c;
+    }
+
+    .hha-queue-badge.badge-info {
+      background: rgba(59, 130, 246, 0.14);
+      color: #1d4ed8;
+    }
+
+    .hha-queue-badge.badge-neutral {
+      background: rgba(100, 116, 139, 0.12);
+      color: #475569;
+    }
+
+    .hha-queue-employer {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-weight: 500;
+      color: #475569;
+      max-width: 140px;
+    }
+
+    .hha-queue-salary {
+      white-space: nowrap;
+      font-weight: 600;
+      color: #059669;
+      flex-shrink: 0;
+    }
+
+    .hha-queue-meta-divider {
+      color: #cbd5e1;
+      flex-shrink: 0;
+    }
+
+    .hha-queue-vid {
+      white-space: nowrap;
+      color: #94a3b8;
+      font-size: 9px;
+      margin-left: auto;
       flex-shrink: 0;
     }
 
     .hha-log-item-delete {
-      width: 24px;
-      height: 24px;
-      min-width: 24px;
-      min-height: 24px;
+      width: 22px;
+      height: 22px;
+      min-width: 22px;
+      min-height: 22px;
       padding: 0;
       display: inline-flex;
       align-items: center;
@@ -3798,11 +3966,28 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
     .hha-btn-clear-queue {
       color: #64748b;
+      transition: all 120ms ease;
     }
 
     .hha-btn-clear-queue:hover:not(:disabled) {
       background: #fee2e2;
       color: #b91c1c;
+    }
+
+    .hha-btn-clear-queue.is-confirming {
+      width: auto !important;
+      padding: 2px 8px !important;
+      background: #fee2e2 !important;
+      color: #ef4444 !important;
+      border-radius: 6px !important;
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      border: 1px solid rgba(239, 68, 68, 0.3) !important;
+    }
+
+    .hha-btn-clear-queue.is-confirming:hover {
+      background: #ef4444 !important;
+      color: #ffffff !important;
     }
 
     .hha-btn-clear-queue:disabled,
@@ -4251,6 +4436,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       this._copyBtnOrigHtml = null;
       this._copyBtnOrigColor = null;
       this._persistLogsTimer = null;
+      this._queueConfirmTimer = null;
 
       // Bound Event Handlers
       this._onResize = this._onResize.bind(this);
@@ -4262,9 +4448,41 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     connectedCallback() {
       this._liveFeed = getStoredLogs(this._assistant);
 
+      // Restore expanded state and active tab from localStorage across page navigations
+      try {
+        if (typeof localStorage !== 'undefined') {
+          const savedExpanded = localStorage.getItem('hha_hud_expanded_v2');
+          if (savedExpanded !== null) {
+            this._isExpanded = savedExpanded === 'true';
+          }
+          const savedTab = localStorage.getItem('hha_hud_active_tab_v2');
+          if (savedTab && ['settings', 'queue', 'logs'].includes(savedTab)) {
+            this._activeTab = savedTab;
+          }
+        }
+      } catch (_) {}
+
       this._render();
       this._restorePosition();
       this._bindDomEvents();
+
+      // Apply restored tab and expansion state to DOM
+      if (this._shadow) {
+        if (this._activeTab !== 'settings') {
+          this.setActiveTab(this._activeTab);
+        }
+        if (this._isExpanded) {
+          const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
+          const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
+          if (root) root.classList.add('is-expanded');
+          if (statusGroup) {
+            statusGroup.setAttribute('aria-expanded', 'true');
+            statusGroup.setAttribute('aria-label', 'Свернуть панель управления');
+          }
+          this._updatePosition();
+        }
+      }
+
       this._syncAll();
 
       if (typeof window !== 'undefined') {
@@ -4309,6 +4527,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       if (this._badgeClearTimer) { clearTimeout(this._badgeClearTimer); this._badgeClearTimer = null; }
       if (this._badgeAnimTimer) { clearTimeout(this._badgeAnimTimer); this._badgeAnimTimer = null; }
       if (this._copyFeedbackTimer) { clearTimeout(this._copyFeedbackTimer); this._copyFeedbackTimer = null; }
+      if (this._queueConfirmTimer) { clearTimeout(this._queueConfirmTimer); this._queueConfirmTimer = null; }
       this._flushLogs();
     }
 
@@ -4723,6 +4942,12 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       this._isExpanded = next;
       this._isAnimating = true;
 
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('hha_hud_expanded_v2', String(this._isExpanded));
+        }
+      } catch (_) {}
+
       this._hideTooltip();
 
       if (this._shadow) {
@@ -4781,7 +5006,14 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       }
       if (!['settings', 'queue', 'logs'].includes(tabName)) return;
       this._activeTab = tabName;
+      this._resetClearQueueBtn();
       this._hideTooltip();
+
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('hha_hud_active_tab_v2', this._activeTab);
+        }
+      } catch (_) {}
 
       if (!this._shadow) return;
       const tabs = this._shadow.querySelectorAll('.hha-tab-btn');
@@ -4797,9 +5029,25 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       requestAnimationFrame(() => this._updateOverlayScrollbar());
     }
 
+    _resetClearQueueBtn() {
+      if (this._queueConfirmTimer) {
+        clearTimeout(this._queueConfirmTimer);
+        this._queueConfirmTimer = null;
+      }
+      if (!this._shadow) return;
+      const btn = this._shadow.querySelector('[data-action="clear-queue"]') || this._shadow.querySelector('[data-el="clear-queue-btn"]');
+      if (btn) {
+        btn.classList.remove('is-confirming');
+        btn.innerHTML = ICONS.trash;
+      }
+    }
+
     _syncLogActions() {
       if (!this._shadow) return;
       const count = this._queue ? this._queue.length : 0;
+      if (count === 0) {
+        this._resetClearQueueBtn();
+      }
 
       // Clear queue button
       const clearBtn = this._shadow.querySelector('[data-action="clear-queue"]') || this._shadow.querySelector('[data-el="clear-queue-btn"]');
@@ -5354,11 +5602,25 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         if (actionTarget.disabled || (typeof actionTarget.hasAttribute === 'function' && actionTarget.hasAttribute('disabled')) || this._queue.length === 0) {
           return;
         }
-        if (this._assistant && typeof this._assistant.clearManualQueue === 'function') {
-          this._assistant.clearManualQueue();
+        if (this._queueConfirmTimer) {
+          // Second click within confirmation window -> execute clear!
+          clearTimeout(this._queueConfirmTimer);
+          this._queueConfirmTimer = null;
+          this._resetClearQueueBtn();
+          if (this._assistant && typeof this._assistant.clearManualQueue === 'function') {
+            this._assistant.clearManualQueue();
+          } else {
+            this._queue = [];
+            this._syncLogs();
+          }
         } else {
-          this._queue = [];
-          this._syncLogs();
+          // First click -> show inline confirmation "Очистить?"
+          actionTarget.classList.add('is-confirming');
+          actionTarget.innerHTML = '<span class="hha-btn-confirm-text">Очистить?</span>';
+          this._queueConfirmTimer = setTimeout(() => {
+            this._queueConfirmTimer = null;
+            this._resetClearQueueBtn();
+          }, 3000);
         }
       } else if (action === 'delete-queue-item') {
         e.stopPropagation();
@@ -6087,16 +6349,28 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
             const rawVid = item.vid ? String(item.vid) : '';
             const cVid = cleanVid(rawVid);
             const targetUrl = toVacancyUrl(cVid, item.url);
+            let displayTitle = collapseSpaces(item.title || '');
+            if (!displayTitle || /^(?:отклик на вакансию|отклик без резюме)$/i.test(displayTitle)) {
+              displayTitle = cVid ? `Вакансия #${cVid}` : 'Вакансия';
+            }
+            const reasonInfo = formatQueueReasonInfo(item.reason);
+            const employer = collapseSpaces(item.employer || '');
+            const salary = collapseSpaces(item.salary || '');
 
             return `
-              <div class="hha-log-item">
-                <div class="hha-log-item-left">
-                  <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-tooltip="${escapeHtml(item.title || 'Вакансия')}" onclick="event.stopPropagation();">
-                    <span class="hha-queue-title-text">${escapeHtml(item.title || 'Вакансия')}</span>
+              <div class="hha-queue-card">
+                <div class="hha-queue-card-top">
+                  <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-tooltip="${escapeHtml(displayTitle)}" onclick="event.stopPropagation();">
+                    <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
                   </a>
-                </div>
-                <div class="hha-log-item-right">
                   <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить">${ICONS.trash}</button>
+                </div>
+                <div class="hha-queue-card-bottom">
+                  <span class="hha-queue-badge badge-${escapeHtml(reasonInfo.type)}">${escapeHtml(reasonInfo.text)}</span>
+                  ${employer ? `<span class="hha-queue-employer" title="${escapeHtml(employer)}">${escapeHtml(employer)}</span>` : ''}
+                  ${employer && salary ? '<span class="hha-queue-meta-divider">•</span>' : ''}
+                  ${salary ? `<span class="hha-queue-salary">${escapeHtml(salary)}</span>` : ''}
+                  ${cVid ? `<span class="hha-queue-vid">#${escapeHtml(cVid)}</span>` : ''}
                 </div>
               </div>
             `;
