@@ -10,6 +10,7 @@
 // @match        *://*.hh.ru/search/vacancy*
 // @match        *://*.hh.ru/vacancy/*
 // @match        *://*.hh.ru/applicant/vacancy_response*
+// @match        *://*.hh.ru/article/*
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
@@ -17,7 +18,6 @@
 // --- Global Shared Configuration Constants ---
 const MAX_DAILY_LIMIT = 200;
 const MAX_COVER_LENGTH = 5000;
-const MAX_LOG_HISTORY_MEMORY = 2000;
 
 /**
  * ============================================================================
@@ -102,9 +102,16 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     tabId: STORAGE_PREFIX + 'tab_id',
     sentCount: STORAGE_PREFIX + 'sent_count',
     stats: STORAGE_PREFIX + 'run_stats',
-    logHistory: STORAGE_PREFIX + 'log_history',
-    dailyLimitReached: STORAGE_PREFIX + 'daily_limit_reached'
+    dailyLimitReached: STORAGE_PREFIX + 'daily_limit_reached',
+    pendingVacancyMeta: STORAGE_PREFIX + 'pending_vacancy_meta',
+    blacklist: STORAGE_PREFIX + 'blacklist_v1',
+    attempts: STORAGE_PREFIX + 'attempts_v1'
   };
+
+  const MAX_VACANCY_ATTEMPTS = 2;
+  const BLACKLIST_TTL = 24 * 60 * 60 * 1000; // 24 hours
+  const PAGE_WATCHDOG_TIMEOUT = 15000; // 15 seconds
+  const pageLoadedAt = Date.now();
 
   const PRESETS = {
     safe: { delay: [4000, 8000], action: [300, 1000] },
@@ -211,7 +218,9 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
   function isLocalBlocked() {
     try {
       const s = getNativeStore('local');
-      if (s) s.getItem('__test__');
+      if (!s) return true;
+      s.setItem('__hha_test__', '1');
+      s.removeItem('__hha_test__');
       return false;
     } catch (_) {
       return true;
@@ -232,6 +241,14 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
   const toNum = (v, fallback) => { const n = Number(v); return Number.isNaN(n) ? fallback : n; };
   const collapseSpaces = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  const formatCleanSalary = (raw) => {
+    if (!raw) return '';
+    return collapseSpaces(
+      String(raw)
+        .replace(/(?:до\s+вычета\s+(?:налогов|ндфл)|на\s+руки|за\s+месяц|за\s+\d+\s+смен\w*|после\s+вычета|gross|net)/gi, '')
+        .replace(/[,.]\s*$/g, '')
+    );
+  };
   const randBetween = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
   const parseJson = (raw, fallback) => {
     if (!raw || typeof raw !== 'string') return fallback;
@@ -249,107 +266,28 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     }
   }
 
-  // --- 5. Logging & Telemetry ---
-  const earlyLogsBuffer = [];
-
-  function log(msg, isError = false, code = '', context = null) {
-    const level = isError ? 'ERR' : 'INFO';
-    const entryCode = code || (isError ? 'ERROR' : 'INFO');
-    const timestamp = Date.now();
-
+  // --- 5. Error Reporting & Telemetry ---
+  function reportError(msg, code = 'ERROR', details = null) {
+    const entryCode = code || 'ERROR';
+    const message = String(msg || '');
     try {
-      const timeStr = new Date(timestamp).toTimeString().slice(0, 8);
-      const isWarn = /WARN|SKIP|DELAY|SCROLL_SKIP/i.test(entryCode);
-      const isSuccess = /SUCCESS|CONFIRM|DONE|DELIVERED/i.test(entryCode);
-      const color = isError ? '#ef4444' : (isSuccess ? '#10b981' : (isWarn ? '#f59e0b' : '#3b82f6'));
-      const badgeStyle = `background: ${color}; color: #ffffff; font-weight: 700; border-radius: 3px; padding: 1px 5px; font-size: 11px;`;
-      const textStyle = isError ? 'color: #ef4444; font-weight: 600;' : 'color: inherit;';
-      const ctxOutput = context ? (typeof context === 'object' ? context : { detail: context }) : '';
-
-      if (isError) {
-        console.error(`%c[HHA ${timeStr}]%c [${entryCode}] ${msg}`, badgeStyle, textStyle, ctxOutput);
-      } else if (isWarn) {
-        console.warn(`%c[HHA ${timeStr}]%c [${entryCode}] ${msg}`, badgeStyle, textStyle, ctxOutput);
-      } else {
-        console.log(`%c[HHA ${timeStr}]%c [${entryCode}] ${msg}`, badgeStyle, textStyle, ctxOutput);
-      }
+      console.error(`%c[HHA ERROR]%c [${entryCode}] ${message}`, 'background: #ef4444; color: #ffffff; font-weight: 700; border-radius: 3px; padding: 1px 5px; font-size: 11px;', 'color: #ef4444; font-weight: 600;', details || '');
     } catch (_) {}
-
-    const payload = {
-      level,
-      message: String(msg || ''),
+    events.emit('error', {
       code: entryCode,
-      timestamp,
-      context: context || {}
-    };
-
-    earlyLogsBuffer.push(payload);
-    if (earlyLogsBuffer.length > 500) earlyLogsBuffer.shift();
-
-    events.emit('log', payload);
-
-    if (isError) {
-      events.emit('error', {
-        code: entryCode,
-        message: String(msg || ''),
-        fatal: false,
-        details: context
-      });
-    }
-  }
-
-  function sanitizeLogsForPersistence(logs, limit = 100) {
-    if (!Array.isArray(logs)) return [];
-    return logs.slice(0, limit).map(entry => {
-      if (!entry || typeof entry !== 'object') return entry;
-      const { contextSnippet, ...rest } = entry;
-      let cleanContext = rest.context;
-      if (cleanContext && typeof cleanContext === 'object') {
-        const { snippet, contextSnippet: cs, ...ctxRest } = cleanContext;
-        cleanContext = ctxRest;
-      }
-      return {
-        ...rest,
-        contextSnippet: '',
-        context: cleanContext
-      };
+      message,
+      fatal: false,
+      details: details || {}
     });
   }
 
-  function flushTelemetryBeforeNav() {
-    try {
-      const hudEl = globalThis.document?.querySelector('hha-hud');
-      if (hudEl && typeof hudEl._flushLogs === 'function') {
-        hudEl._flushLogs();
-        return;
-      }
-      if (earlyLogsBuffer.length > 0) {
-        const stored = parseJson(storage.localGet(KEYS.logHistory), []);
-        const existingList = Array.isArray(stored) ? stored : [];
-        const converted = earlyLogsBuffer.map((p, idx) => {
-          const ctx = p.context || {};
-          const cVid = ctx.vid ? String(ctx.vid).replace(/^v_/i, '') : '';
-          const time = new Date(p.timestamp || Date.now()).toTimeString().slice(0, 8);
-          return {
-            id: 'log_flushed_' + (p.timestamp || Date.now()) + '_' + idx,
-            time,
-            tag: p.code || (p.level === 'ERR' ? 'ERROR' : 'INFO'),
-            tagType: p.level === 'ERR' ? 'error' : 'status',
-            msg: String(p.message || ''),
-            sub: typeof ctx === 'string' ? ctx : (ctx.reason || ctx.error || ctx.outcome || ''),
-            vid: cVid,
-            url: ctx.url || '',
-            selector: ctx.selector || '',
-            context: ctx,
-            isDevLog: true
-          };
-        });
-        const combined = sanitizeLogsForPersistence([...converted.reverse(), ...existingList], 100);
-        storage.localSet(KEYS.logHistory, JSON.stringify(combined));
-        earlyLogsBuffer.length = 0;
-      }
-    } catch (_) {}
+  function log(msg, isError = false, code = '', context = null) {
+    if (isError) {
+      reportError(msg, code, context);
+    }
   }
+
+  function flushTelemetryBeforeNav() {}
 
   // --- 6. Configuration ---
   function normalizeConfig(raw) {
@@ -386,9 +324,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
   const wait = (ms) => new Promise((resolve) => {
     const sig = activeAbortController?.signal;
     if (stopSignal || sig?.aborted || ms <= 0) return resolve();
-    if (ms >= 800) {
-      log(`Пауза безопасности: ${(ms / 1000).toFixed(1)}с`, false, 'DELAY', { delaySec: Number((ms / 1000).toFixed(1)), delayMs: ms });
-    }
+    
     let timer = null;
     const cleanup = () => {
       if (timer) clearTimeout(timer);
@@ -556,6 +492,90 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     return storage.sessionRemove(KEYS.history);
   }
 
+  // --- Attempts & Blacklist Tracking (Circuit Breaker) ---
+  function getVacancyAttemptsMap() {
+    const raw = storage.sessionGet(KEYS.attempts);
+    return parseJson(raw, {}) || {};
+  }
+
+  function getVacancyAttempts(vid) {
+    if (!vid) return 0;
+    const clean = cleanVid(vid);
+    const map = getVacancyAttemptsMap();
+    return Number(map[clean]) || 0;
+  }
+
+  function recordVacancyAttempt(vid) {
+    if (!vid) return 1;
+    const clean = cleanVid(vid);
+    const map = getVacancyAttemptsMap();
+    const count = (Number(map[clean]) || 0) + 1;
+    map[clean] = count;
+    storage.sessionSet(KEYS.attempts, JSON.stringify(map));
+    return count;
+  }
+
+  function getBlacklistMap() {
+    const raw = storage.localGet(KEYS.blacklist);
+    const map = parseJson(raw, {}) || {};
+    const now = Date.now();
+    let changed = false;
+    for (const k of Object.keys(map)) {
+      const entry = map[k];
+      const ts = typeof entry === 'object' && entry !== null ? Number(entry.ts) : Number(entry);
+      if (!ts || (now - ts) > BLACKLIST_TTL) {
+        delete map[k];
+        changed = true;
+      }
+    }
+    if (changed) {
+      storage.localSet(KEYS.blacklist, JSON.stringify(map));
+    }
+    return map;
+  }
+
+  function isBlacklisted(vid) {
+    if (!vid) return false;
+    const clean = cleanVid(vid);
+    const map = getBlacklistMap();
+    return Boolean(map[clean]);
+  }
+
+  function addToBlacklist(vid, reason = 'apply_failed') {
+    if (!vid) return;
+    const clean = cleanVid(vid);
+    const map = getBlacklistMap();
+    map[clean] = { ts: Date.now(), reason: String(reason || '') };
+    storage.localSet(KEYS.blacklist, JSON.stringify(map));
+  }
+
+  function handleVacancyFailure(vid, reason = 'apply_failed', runId = currentRunId, meta = null) {
+    if (!vid) return returnToList(null, { markProcessed: false, runId });
+    const clean = cleanVid(vid);
+    const attempts = recordVacancyAttempt(clean);
+    bumpStat('attempts');
+
+    if (attempts >= MAX_VACANCY_ATTEMPTS) {
+      addToBlacklist(clean, reason);
+      markVacancyProcessed(clean, runId);
+      markVacancyProcessed('v_' + clean, runId);
+      saveCurrentForManual(
+        clean,
+        reason || 'apply_failed',
+        runId,
+        meta?.title || '',
+        meta?.employer || '',
+        meta?.salary || '',
+        meta?.url || ''
+      );
+      reportError(`Вакансия #${clean} превысила лимит попыток (${attempts}/${MAX_VACANCY_ATTEMPTS}). Отправлена в ручную очередь и заблокирована на 24ч.`, 'MAX_ATTEMPTS_EXCEEDED', { vid: clean, attempts, reason });
+      return returnToList(vid, { markProcessed: true, runId });
+    } else {
+      reportError(`Сбой при отклике на вакансию #${clean} (попытка ${attempts}/${MAX_VACANCY_ATTEMPTS}). Возврат к списку.`, 'VACANCY_ATTEMPT_FAILED', { vid: clean, attempts, reason });
+      return returnToList(vid, { markProcessed: false, runId });
+    }
+  }
+
   const getReturnUrl = () => storage.sessionGet(KEYS.returnUrl) || '';
   const setReturnUrl = (url) => storage.sessionSet(KEYS.returnUrl, url);
   const clearReturnUrl = () => storage.sessionRemove(KEYS.returnUrl);
@@ -563,6 +583,18 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
   const getLastAttemptID = () => storage.sessionGet(KEYS.lastAttempt) || null;
   const setLastAttemptID = (id) => (id ? storage.sessionSet(KEYS.lastAttempt, id) : storage.sessionRemove(KEYS.lastAttempt));
   const clearLastAttemptID = () => storage.sessionRemove(KEYS.lastAttempt);
+
+  const getPendingVacancyMeta = (vid) => {
+    const raw = storage.sessionGet(KEYS.pendingVacancyMeta);
+    if (!raw) return null;
+    const meta = parseJson(raw, null);
+    if (!meta) return null;
+    const cleanTarget = cleanVid(vid);
+    if (cleanTarget && meta.vid && cleanVid(meta.vid) !== cleanTarget) return null;
+    return meta;
+  };
+  const setPendingVacancyMeta = (meta) => (meta ? storage.sessionSet(KEYS.pendingVacancyMeta, JSON.stringify(meta)) : storage.sessionRemove(KEYS.pendingVacancyMeta));
+  const clearPendingVacancyMeta = () => storage.sessionRemove(KEYS.pendingVacancyMeta);
 
   function getActiveTrapLock() {
     const val = storage.sessionGet(KEYS.trapLock);
@@ -761,7 +793,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     releaseInstanceLock(TAB_ID);
     const statusKey = (code === 'DAILY_LIMIT_REACHED' || code === 'TARGET_LIMIT_REACHED' || code === 'DONE') ? 'done' : (isError ? 'error' : (code === 'STOPPED_BY_USER' ? 'stopped' : code.toLowerCase()));
     setStatus(statusKey, code, details);
-    if (logMsg) log(logMsg, isError, code, details);
+    if (logMsg && isError) reportError(logMsg, code, details);
   }
 
   function finalizeRun(runId, statusKey, msg = '') {
@@ -892,28 +924,20 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     if (radios.length > 0) {
       const isChecked = radios.some(r => r.checked || r.getAttribute('aria-checked') === 'true');
       if (!isChecked) {
-        log(`Обнаружен выбор резюме (${radios.length} вар.). Выбираем первое...`, false, 'RESUME_SELECT', { optionsCount: radios.length });
         const target = radios[0].closest?.('label') || radios[0];
         await clickElement(target);
         await actionPause();
         return isRunCurrent(runId);
-      } else {
-        log('Резюме уже выбрано по умолчанию (активно). Пропускаем клик выбора резюме.', false, 'RESUME_ALREADY_SELECTED', { optionsCount: radios.length });
       }
     } else {
       const cards = qa('[data-qa*="resume-item" i], [data-qa*="resume-card" i], [class*="resume-item" i]', root);
       if (cards.length > 0) {
         const isSelected = cards.some(c => c.getAttribute('aria-selected') === 'true' || /selected|active/i.test(c.className || ''));
         if (!isSelected) {
-          log(`Обнаружены карточки резюме (${cards.length}). Выбираем первую...`, false, 'RESUME_CARD_SELECT', { cardsCount: cards.length });
           await clickElement(cards[0]);
           await actionPause();
           return isRunCurrent(runId);
-        } else {
-          log('Карточка резюме уже активна. Пропускаем клик выбора резюме.', false, 'RESUME_CARD_ALREADY_ACTIVE', { cardsCount: cards.length });
         }
-      } else {
-        log('Выбор резюме в диалоге не требуется (список резюме отсутствует).', false, 'RESUME_NOT_REQUIRED');
       }
     }
     return true;
@@ -965,7 +989,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     const msg = `Не найден селектор: ${key} (${selectorName})`;
     const sub = `Ожидался CSS: ${expectedCss}`;
 
-    log(msg, true, 'DOM_SELECTOR_NOT_FOUND', {
+    reportError(msg, 'DOM_SELECTOR_NOT_FOUND', {
       key,
       selector: key,
       selectorName,
@@ -997,8 +1021,12 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
   }
 
   function getVacancyIDFromHref(href) {
-    const m = String(href || '').match(/\/vacancy\/(\d+)|[?&]vacancyId=(\d+)|vacancyId%3D(\d+)/);
-    return m ? String(m[1] || m[2] || m[3]) : null;
+    if (!href) return null;
+    const str = String(href);
+    const redirectMatch = str.match(/[?&](?:vacancyId|utm_redirect_vacancy_id)=(\d+)|(?:vacancyId|utm_redirect_vacancy_id)%3D(\d+)/i);
+    if (redirectMatch) return String(redirectMatch[1] || redirectMatch[2]);
+    const pathMatch = str.match(/\/vacancy\/(\d+)|\/article\/(\d+)/i);
+    return pathMatch ? String(pathMatch[1] || pathMatch[2]) : null;
   }
 
   function hashString(str) {
@@ -1062,19 +1090,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     const cls = (el.className && typeof el.className === 'string' ? el.className.trim() : '') || '';
     const textSnippet = collapseSpaces(el.innerText || el.textContent || '').slice(0, 50);
     const disabled = Boolean(el.disabled || el.getAttribute?.('aria-disabled') === 'true');
-    const rect = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null;
-    const rectInfo = rect ? `${Math.round(rect.width)}x${Math.round(rect.height)} at (${Math.round(rect.left)},${Math.round(rect.top)})` : 'unknown';
-
-    log(`Клик по элементу: <${tag}${dataQa ? ` data-qa="${dataQa}"` : ''}${href ? ` href="${href}"` : ''}> "${textSnippet}" [${rectInfo}]`, false, 'ELEMENT_CLICK', {
-      tag,
-      qa: dataQa || undefined,
-      href: href ? href.slice(0, 150) : undefined,
-      class: cls ? cls.slice(0, 80) : undefined,
-      text: textSnippet,
-      disabled,
-      rect: rectInfo
-    });
-
+    
     try { el.scrollIntoView?.({ block: 'center', behavior: 'auto' }); } catch (_) {}
     try { el.focus?.(); } catch (_) {}
 
@@ -1133,16 +1149,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         if (observer) observer.disconnect();
         if (signal) signal.removeEventListener('abort', onAbort);
-        if (diagnosticName) {
-          const elapsed = Date.now() - startTime;
-          const diagContext = typeof diagnosticName === 'function' ? diagnosticName() : null;
-          const label = typeof diagnosticName === 'string' ? diagnosticName : (diagContext?.label || 'условие');
-          if (res) {
-            log(`Условие успешно выполнено: ${label} за ${(elapsed / 1000).toFixed(1)}с`, false, 'WAIT_RESOLVED', { label, elapsedMs: elapsed, ...(diagContext || {}) });
-          } else {
-            log(`Таймаут ожидания условия: ${label} (${(timeout / 1000).toFixed(1)}с истекли)`, false, 'WAIT_TIMEOUT', { label, elapsedMs: timeout, ...(diagContext || {}) });
-          }
-        }
+        
         resolve(res);
       };
       const onAbort = () => cleanup(false);
@@ -1168,20 +1175,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
       pollTimer = setInterval(check, 100);
 
-      if (diagnosticName && timeout >= 2500) {
-        heartbeatTimer = setInterval(() => {
-          if (stopSignal || signal?.aborted) return;
-          const elapsed = Date.now() - startTime;
-          const diagContext = typeof diagnosticName === 'function' ? diagnosticName() : null;
-          const label = typeof diagnosticName === 'string' ? diagnosticName : (diagContext?.label || 'условие');
-          log(
-            `Ожидание: ${label} (${(elapsed / 1000).toFixed(1)}с / ${(timeout / 1000).toFixed(1)}с)...`,
-            false,
-            'WAIT_HEARTBEAT',
-            { elapsedMs: elapsed, timeoutMs: timeout, ...(diagContext || {}) }
-          );
-        }, 1800);
-      }
+      
 
       timer = setTimeout(() => cleanup(false), timeout);
     });
@@ -1196,8 +1190,28 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     isVacancy: () => Boolean(globalThis.location?.pathname?.startsWith('/vacancy/')),
     isResponseForm: () => Boolean(globalThis.location?.pathname?.startsWith('/applicant/vacancy_response')),
     isSearchList: () => Boolean(globalThis.location?.pathname?.startsWith('/search/vacancy')),
-    isSearch: () => Boolean(globalThis.location && (globalThis.location.href?.includes('/search/vacancy') || globalThis.location.pathname?.startsWith('/search')))
+    isSearch: () => Boolean(globalThis.location && (globalThis.location.href?.includes('/search/vacancy') || globalThis.location.pathname?.startsWith('/search'))),
+    isArticle: () => Boolean(globalThis.location?.pathname?.startsWith('/article/'))
   };
+
+  function isLeadGenRedirect() {
+    if (!globalThis.location) return false;
+    if (Page.isArticle()) return true;
+    const url = globalThis.location.href || '';
+    return /utm_redirect_vacancy_id|utm_source=hh_lead_gen|hhtmFromLabel=vacancy_immediate_redirect/i.test(url);
+  }
+
+  function getLeadGenRedirectVacancyId() {
+    if (!globalThis.location) return null;
+    try {
+      const sp = new URLSearchParams(globalThis.location.search || '');
+      const redirectVid = sp.get('utm_redirect_vacancy_id');
+      if (redirectVid) return 'v_' + cleanVid(redirectVid);
+    } catch (_) {}
+    const hrefId = getVacancyIDFromHref(globalThis.location.href);
+    if (hrefId) return 'v_' + cleanVid(hrefId);
+    return getLastAttemptID();
+  }
 
   function isGenericVacancyTitle(text) {
     if (!text || typeof text !== 'string') return true;
@@ -1251,17 +1265,29 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       if (cleanDoc && !isGenericVacancyTitle(cleanDoc)) return cleanDoc;
     }
 
+    const pendingMeta = getPendingVacancyMeta(clean);
+    if (pendingMeta && pendingMeta.title && !isGenericVacancyTitle(pendingMeta.title)) {
+      return pendingMeta.title;
+    }
+
     return clean ? `Вакансия #${clean}` : '';
   }
 
   function parseVacancyEmployer(root = globalThis.document) {
-    if (!root) return '';
-    const el = root.querySelector?.('[data-qa="vacancy-company-name"], [data-qa="vacancy-response-company-name"], [data-qa="vacancy-serp__vacancy-employer"], a[href*="/employer/"], [data-qa*="company-name"]');
-    return el ? collapseSpaces(el.innerText || el.textContent) : '';
+    if (!root || (root === globalThis.document && Page.isSearch())) return '';
+    const candidates = root.querySelectorAll?.('[data-qa="vacancy-company-name"], [data-qa="vacancy-response-company-name"], [data-qa="vacancy-serp__vacancy-employer"], a[href*="/employer/"], [data-qa*="company-name"]');
+    if (!candidates || candidates.length === 0) return '';
+    for (const el of candidates) {
+      const text = collapseSpaces(el.innerText || el.textContent);
+      if (text && !/^(?:наши\s+вакансии|все\s+вакансии|вакансии\s+компании|отклик\s+на\s+вакансию)$/i.test(text)) {
+        return text;
+      }
+    }
+    return '';
   }
 
   function parseVacancySalary(root = globalThis.document) {
-    if (!root) return '';
+    if (!root || (root === globalThis.document && Page.isSearch())) return '';
     const el = root.querySelector?.('[data-qa="vacancy-salary"], [data-qa="vacancy-response-salary"], [data-qa="vacancy-serp__vacancy-compensation"], [data-qa*="vacancy-salary"]');
     return el ? collapseSpaces(el.innerText || el.textContent) : '';
   }
@@ -1275,9 +1301,20 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     return link ? collapseSpaces(link.innerText || link.textContent) : '';
   }
 
+  const INACCESSIBLE_VACANCY_REGEX = /(?:вам\s+недоступна\s+эта\s+вакансия|войдите\s+как\s+пользователь[,\s]+у\s+которого\s+есть\s+доступ|вакансия\s+(?:закрыта|в\s+архиве|удалена|не\s+найдена)|эта\s+вакансия\s+была\s+удалена|похоже[,\s]+этой\s+вакансии\s+больше\s+нет)/i;
+
+  function detectInaccessibleVacancy(root = globalThis.document) {
+    if (!root || Page.isSearch()) return false;
+    const body = root.body || (root.nodeType === 9 ? root.body : root);
+    if (!body) return false;
+    const text = (body.textContent || '').slice(0, 4000);
+    return INACCESSIBLE_VACANCY_REGEX.test(text);
+  }
+
   function detectCaptcha() {
     const doc = globalThis.document, loc = globalThis.location;
     if (!doc) return false;
+    if (detectInaccessibleVacancy(doc)) return false;
     if (loc && /\/captcha|\/checkpoint|\/nocaptcha/i.test(loc.pathname)) return true;
     if (q('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="captcha" i], iframe[src*="smartcaptcha" i], [data-qa*="captcha" i], .g-recaptcha, .h-captcha, .smart-captcha, [class*="captcha" i], [id*="captcha" i]')) {
       return true;
@@ -1347,7 +1384,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
   function detectRateLimit() {
     const doc = globalThis.document, loc = globalThis.location;
     if (!doc) return false;
-    if (detectDailyLimit(doc)) return true;
     if (loc && /\/error|\/blocked|\/forbidden|\/denied|\/rate-limit/i.test(loc.pathname)) return true;
     if (doc.title && /(?:429|503|error\s+(?:429|503)|доступ\s+ограничен|too\s+many\s+requests|service\s+unavailable)/i.test(doc.title)) return true;
     if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]', doc)) {
@@ -1450,11 +1486,14 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       /(?:выберите|выбор)\s+(?:подходящее\s+)?резюме|резюме\s+для\s+отклика/i.test(root.textContent || '')
     );
 
+    if (includeExactSelectors && query('attachCoverBtn', root)) {
+      return 'ATTACH_COVER';
+    }
+    if (includeExactSelectors && (query('responseChat', root) || hasResponseTextConfirmation(root))) {
+      return 'SUCCESS';
+    }
     if (query('letterTextarea', root) || query('attachCoverInModal', root) || query('letterSubmit', root) || q('[data-qa="vacancy-response-popup-form"]', root) || isResumeModal) {
       return 'MODAL_OPEN';
-    }
-    if (includeExactSelectors && (query('attachCoverBtn', root) || query('responseChat', root) || hasResponseTextConfirmation(root))) {
-      return 'ATTACH_COVER';
     }
     return null;
   }
@@ -1498,8 +1537,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     incSentCount();
     bumpStat('success');
     markVacancyProcessed(vid, runId);
-    events.emit('entity', { vid, action: 'applied', reason: 'APPLIED' });
-    log(`Отклик успешно доставлен на вакансию #${vid}`, false, 'APPLY_SUCCESS', { vid });
     return true;
   }
 
@@ -1507,15 +1544,13 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
     markVacancyProcessed(vid, runId);
     bumpStat('skipped');
-    events.emit('entity', { vid, action: 'skipped', reason });
-    log(`Вакансия #${vid} пропущена (${reason})`, false, 'VACANCY_SKIPPED', { vid, reason });
   }
 
-  function saveCurrentForManual(vid, note = '', runId = currentRunId, customTitle = '', customEmployer = '', customSalary = '') {
+  function saveCurrentForManual(vid, note = '', runId = currentRunId, customTitle = '', customEmployer = '', customSalary = '', customUrl = '') {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
     const origin = globalThis.location?.origin || 'https://hh.ru';
     const clean = cleanVid(vid);
-    const url = clean ? `${origin}/vacancy/${clean}` : (toSafeHhUrl(globalThis.location?.href) || `${origin}/search/vacancy`);
+    const url = customUrl ? toSafeHhUrl(customUrl) : (clean ? `${origin}/vacancy/${clean}` : (toSafeHhUrl(globalThis.location?.href) || `${origin}/search/vacancy`));
     let title = customTitle || '';
     let employer = customEmployer || '';
     let salary = customSalary || '';
@@ -1534,14 +1569,29 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         }
       }
     }
+    if (!title || isGenericVacancyTitle(title)) {
+      const meta = getPendingVacancyMeta(clean);
+      if (meta && meta.title && !isGenericVacancyTitle(meta.title)) {
+        title = meta.title;
+        if (!employer && meta.employer) employer = meta.employer;
+        if (!salary && meta.salary) salary = meta.salary;
+      }
+    }
     if (!title) {
       title = parseVacancyTitle(vid);
     }
-    if (!employer) {
+    if (!employer && !Page.isSearch()) {
       employer = parseVacancyEmployer();
     }
-    if (!salary) {
+    if (!salary && !Page.isSearch()) {
       salary = parseVacancySalary();
+    }
+    if (!employer || !salary) {
+      const meta = getPendingVacancyMeta(clean);
+      if (meta) {
+        if (!employer && meta.employer) employer = meta.employer;
+        if (!salary && meta.salary) salary = meta.salary;
+      }
     }
     const entry = {
       vid: clean || ('v_' + Math.random().toString(36).slice(2, 10)),
@@ -1557,10 +1607,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     if (res.success) {
       if (res.isNew) {
         bumpStat('manual');
-        events.emit('entity', { vid: entry.vid, title: entry.title, url: entry.url, employer: entry.employer, salary: entry.salary, action: 'manual', reason: note, note });
-        log(`Вакансия #${entry.vid} сохранена в ручную очередь (${note || 'manual'})`, false, 'MANUAL_SAVED', { vid: entry.vid, title: entry.title, employer: entry.employer, note, url: entry.url });
-      } else {
-        log(`Вакансия #${entry.vid} обновлена в ручной очереди`, false, 'MANUAL_UPDATED', { vid: entry.vid, title: entry.title, note, url: entry.url });
       }
       return true;
     }
@@ -1574,13 +1620,15 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       clearTimeout(resumeTimer);
       resumeTimer = null;
     }
-    if (markProcessed && vid) markVacancyProcessed(vid, runId);
+    if (markProcessed) {
+      if (vid) markVacancyProcessed(vid, runId);
+      const last = getLastAttemptID();
+      if (last && last !== vid) markVacancyProcessed(last, runId);
+    }
     clearLastAttemptID();
     const rawReturn = getReturnUrl();
     const origin = globalThis.location?.origin || 'https://hh.ru';
     const returnUrl = (rawReturn && (rawReturn.includes('/search/vacancy') || rawReturn.startsWith('http') || rawReturn.startsWith('/'))) ? rawReturn : `${origin}/search/vacancy`;
-    log(`Возврат к поисковой выдаче: ${returnUrl}`, false, 'RETURN_TO_LIST', { vid, returnUrl });
-    flushTelemetryBeforeNav();
     const loc = globalThis.location;
     if (loc && !Page.isSearchList() && loc.href !== returnUrl) {
       isNavigating = true;
@@ -1593,35 +1641,23 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
   async function submitCoverLetterForm(scope = null, runId = currentRunId) {
     if (!isRunCurrent(runId)) return false;
     const ta = query('letterTextarea', scope);
-    if (ta && config.useCover) {
-      const letterLen = (config.coverText || '').length;
-      log(`Заполнение сопроводительного письма (${letterLen} симв.) в поле ввода...`, false, 'FILL_LETTER_START', { letterLen });
-      fillTextarea(ta, config.coverText);
-      log(`Текст письма введен, клон синхронизирован, события отправлены`, false, 'FILL_LETTER_DONE', { letterLen });
+    if (ta && config.useCover) {fillTextarea(ta, config.coverText);
       await actionPause();
       if (!isRunCurrent(runId)) return false;
-    } else if (!config.useCover) {
-      log('Сопроводительное письмо отключено в настройках пользователя, поле ввода не заполняется', false, 'COVER_DISABLED_BY_CONFIG');
-    } else if (!ta) {
-      log('Поле ввода сопроводительного письма не обнаружено в текущей форме (отправка без письма)', false, 'COVER_TEXTAREA_NOT_FOUND');
     }
     const submit = query('letterSubmit', scope)
       || q('button[type="submit"]', scope);
     if (!submit) {
-      log('Кнопка отправки формы сопроводительного письма не найдена', true, 'SUBMIT_BTN_NOT_FOUND');
+      reportError('Кнопка отправки формы сопроводительного письма не найдена', 'SUBMIT_BTN_NOT_FOUND');
       return false;
     }
 
     if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
-      log('Кнопка отправки письма отключена (disabled), ожидаем активации...', false, 'SUBMIT_DISABLED_WAIT');
       await waitForCondition(() => !submit.disabled && submit.getAttribute?.('aria-disabled') !== 'true', 1500, activeAbortController?.signal, 'активация кнопки отправки');
       if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
-        log('Кнопка отправки письма остается неактивной (disabled) после ожидания, пробуем клик...', true, 'SUBMIT_BTN_STILL_DISABLED');
+        reportError('Кнопка отправки письма остается неактивной (disabled) после ожидания, пробуем клик...', 'SUBMIT_BTN_STILL_DISABLED');
       }
     }
-
-    const submitQa = submit.getAttribute?.('data-qa') || submit.className || 'button[submit]';
-    log(`Нажатие кнопки отправки письма (${submitQa})...`, false, 'SUBMIT_LETTER_CLICK', { selector: submitQa });
 
     const formId = submit.getAttribute?.('form');
     const form = (formId && globalThis.document?.getElementById(formId)) || submit.form || submit.closest?.('form');
@@ -1641,53 +1677,41 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
   async function handleScenarioA(btn, runId = currentRunId) {
     if (!config.useCover) {
-      log('Сопроводительное письмо отключено в настройках, сценарий A завершен', false, 'COVER_DISABLED');
       return 'OK';
     }
-    log('Сценарий A: Прикрепление сопроводительного письма после прямого отклика', false, 'SCENARIO_A');
     await actionPause();
     if (!isRunCurrent(runId)) return 'STOPPED';
 
     const attachBtn = btn || query('attachCoverBtn');
     if (attachBtn) {
-      const attachQa = attachBtn.getAttribute?.('data-qa') || 'attachCoverBtn';
-      log(`Нажатие кнопки «Приложить сопроводительное письмо» (${attachQa})...`, false, 'ATTACH_COVER_CLICK', { selector: attachQa });
       await clickElement(attachBtn);
     } else {
-      log('Кнопка «Приложить сопроводительное письмо» не найдена', true, 'ATTACH_BTN_NOT_FOUND');
+      reportError('Кнопка «Приложить сопроводительное письмо» не найдена', 'ATTACH_BTN_NOT_FOUND');
       notifySelectorFailure('attachCoverBtn', globalThis.document?.body);
       return isRunCurrent(runId) ? 'OK' : 'STOPPED';
     }
 
     await actionPause();
     if (!isRunCurrent(runId)) return 'STOPPED';
-
-    log('Ожидание появления шторки ввода письма (bottom-sheet)...', false, 'WAIT_LETTER_FORM');
     const ta = await waitForElement('letterTextarea', 5000, activeAbortController?.signal);
     if (!ta) {
-      log('Поле ввода письма не появилось за 5 с', true, 'LETTER_FORM_TIMEOUT');
+      reportError('Поле ввода письма не появилось за 5 с', 'LETTER_FORM_TIMEOUT');
       notifySelectorFailure('letterTextarea', globalThis.document?.body);
       return isRunCurrent(runId) ? 'OK' : 'STOPPED';
     }
 
     const modalScope = q('[data-qa="bottom-sheet-content"], [role="dialog"]') || globalThis.document?.body;
-    log('Шторка письма открыта, отправляем форму...', false, 'SUBMITTING_COVER_SHEET');
     await submitCoverLetterForm(modalScope, runId);
     if (!isRunCurrent(runId)) return 'STOPPED';
-
-    log('Ожидание закрытия шторки письма и подтверждения доставки...', false, 'WAIT_COVER_DELIVERED');
     await waitForCondition(() => {
       const sheet = q('[data-qa="bottom-sheet-content"]');
       const isSheetClosed = !sheet || !isVisible(sheet);
       return isSheetClosed || isResponseConfirmed({ allowDocumentStrongText: true });
     }, 5000, activeAbortController?.signal);
-
-    log('Сопроводительное письмо успешно прикреплено и отправлено!', false, 'COVER_ATTACH_SUCCESS');
     return isRunCurrent(runId) ? 'OK' : 'STOPPED';
   }
 
   async function handleScenarioB(modal, runId = currentRunId) {
-    log('Scenario B: Response modal opened', false, 'SCENARIO_B');
     if (detectDailyLimit(modal) || detectDailyLimit()) { haltForDailyLimit(); return 'BLOCKED'; }
     const blockReason = detectModalBlockReason(modal);
     if (blockReason === 'DAILY_LIMIT') { haltForDailyLimit(); return 'BLOCKED'; }
@@ -1707,7 +1731,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     const attachCoverToggle = query('attachCoverInModal', modal)
       || findPatternElement(modal, 'button, [role="button"], a', /добавить\s+сопроводительное|написать\s+письмо/i, 35);
     if (attachCoverToggle && config.useCover) {
-      log('Нажатие на переключатель сопроводительного письма в модалке...', false, 'COVER_TOGGLE_CLICK');
       await clickElement(attachCoverToggle);
       await actionPause();
       if (!isRunCurrent(runId)) return 'STOPPED';
@@ -1796,26 +1819,21 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
     if (outcome === 'RELOCATION_WARNING') {
       if (relocAttempts >= 2) {
-        log('Превышен лимит попыток подтверждения релокации (loop guard)', true, 'RELOCATION_LOOP_GUARD', { vid, relocAttempts });
+        reportError('Превышен лимит попыток подтверждения релокации (loop guard)', 'RELOCATION_LOOP_GUARD', { vid, relocAttempts });
         if (vid) {
           saveCurrentForManual(vid, 'relocation_loop', runId);
           markVacancyProcessed(vid, runId);
         }
         return 'FAIL';
       }
-      log('Предупреждение о релокации в другую страну: подтверждаем («Все равно откликнуться»)', false, 'RELOCATION_CONFIRM');
       const relocBtn = detectRelocationWarning() || query('relocationBtn');
       if (relocBtn) {
         await clickElement(relocBtn);
-        log('Кнопка «Все равно откликнуться» нажата, ожидаем закрытия алерта...', false, 'RELOCATION_CLICKED');
         await actionPause();
         if (!isRunCurrent(runId)) return 'STOPPED';
 
         await waitForCondition(() => !detectRelocationWarning(), 4000, activeAbortController?.signal);
-
-        log('Предупреждение о релокации закрыто, ожидаем следующего этапа...', false, 'RELOCATION_RESOLVED');
         const nextOutcome = await waitForCondition(() => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()), 8000, activeAbortController?.signal);
-        log(`Следующий этап после релокации: ${nextOutcome || 'TIMEOUT'}`, false, 'RELOCATION_NEXT_OUTCOME', { outcome: nextOutcome });
         if (nextOutcome) {
           return await dispatchOutcome(nextOutcome, vid, runId, relocAttempts + 1);
         }
@@ -1823,7 +1841,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
           if (vid) commitSuccess(vid, runId);
           return 'OK';
         }
-        log('После закрытия предупреждения о релокации исход не подтвержден', true, 'RELOCATION_TIMEOUT', { vid });
+        reportError('После закрытия предупреждения о релокации исход не подтвержден', 'RELOCATION_TIMEOUT', { vid });
         if (vid) {
           saveCurrentForManual(vid, 'relocation_timeout', runId);
           markVacancyProcessed(vid, runId);
@@ -1831,7 +1849,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         return 'FAIL';
       }
       if (vid) {
-        log('Не удалось найти кнопку подтверждения релокации', true, 'RELOCATION_BTN_NOT_FOUND', { vid });
+        reportError('Не удалось найти кнопку подтверждения релокации', 'RELOCATION_BTN_NOT_FOUND', { vid });
         saveCurrentForManual(vid, 'relocation_unconfirmed', runId);
         markVacancyProcessed(vid, runId);
       }
@@ -1851,7 +1869,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     const viewportHeight = win.innerHeight || 800;
     const maxScroll = Math.max(0, totalHeight - viewportHeight);
     if (maxScroll < 150) {
-      log(`Страница короткая (${totalHeight}px), симуляция скролла пропущена`, false, 'SCROLL_SKIP', { vid, totalHeight });
       return;
     }
 
@@ -1867,21 +1884,10 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     const totalDuration = randBetween(minDelay, maxDelay);
     const stepDelay = Math.round(totalDuration / steps);
 
-    const title = parseVacancyTitle();
-    log(`Изучение вакансии (просмотр ~${Math.round(pct * 100)}%, цель: ${targetY}px, шагов: ${steps}, пауза: ${(totalDuration / 1000).toFixed(1)} с)`, false, 'HUMAN_READING', {
-      vid, pct: Math.round(pct * 100), targetY, steps, duration: totalDuration
-    });
-    events.emit('entity', {
-      vid,
-      title,
-      url: globalThis.location?.href || '',
-      action: 'viewing',
-      msg: title ? `${title} (~${Math.round(pct * 100)}%)` : `Изучение вакансии (~${Math.round(pct * 100)}%)`
-    });
+    const title = parseVacancyTitle(vid);
 
     for (let i = 1; i <= steps; i++) {
       if (!isRunCurrent(runId)) {
-        log('Симуляция чтения прервана пользователем', false, 'SCROLL_ABORT', { vid, step: i });
         return;
       }
       const curY = Math.round((targetY / steps) * i);
@@ -1890,17 +1896,20 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       } catch (_) {
         win.scroll?.(0, curY);
       }
-      log(`Чтение шага ${i}/${steps}: скролл до ${curY}px, пауза ${(stepDelay / 1000).toFixed(1)}с`, false, 'SCROLL_STEP', { vid, step: i, steps, targetY: curY, pauseMs: stepDelay });
       await wait(stepDelay);
     }
-    log(`Симуляция чтения вакансии #${vid} завершена`, false, 'SCROLL_DONE', { vid, finalY: targetY });
   }
 
   async function handleVacancyPage(vid, runId = currentRunId) {
     try {
       const pageUrl = globalThis.location?.href || '';
-      const title = parseVacancyTitle();
-      log(`Загружена страница вакансии #${vid}: ${title}`, false, 'VACANCY_PAGE_LOADED', { vid, title, url: pageUrl });
+      const title = parseVacancyTitle(vid);
+
+      if (detectInaccessibleVacancy()) {
+        if (vid) skipVacancy(vid, 'access_denied', runId);
+        returnToList(vid, { markProcessed: true, runId });
+        return 'SKIP';
+      }
 
       if (detectDailyLimit()) {
         haltForDailyLimit();
@@ -1908,39 +1917,27 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       }
 
       if (detectAlreadyApplied()) {
-        log(`На вакансию #${vid} уже был отправлен отклик ранее`, false, 'ALREADY_APPLIED', { vid });
         if (vid) skipVacancy(vid, 'already_applied', runId);
         returnToList(vid, { markProcessed: true, runId });
         return 'OK';
       }
-      log(`Вакансия #${vid} доступна для отклика (ранее не откликались)`, false, 'VACANCY_ELIGIBLE', { vid });
 
       // Simulate human-like reading (45-75% scroll with random stops)
       await simulateHumanReading(vid, runId);
       if (!isRunCurrent(runId)) return 'STOPPED';
-
-      log(`Поиск кнопки отклика на странице вакансии #${vid}...`, false, 'SEARCH_APPLY_BTN', { vid });
       const applyBtn = await waitForCondition(() => query('vacancyApply'), 4000, activeAbortController?.signal, `поиск кнопки отклика #${vid}`);
       if (!applyBtn) {
-        log(`Кнопка «Откликнуться» не найдена на странице вакансии #${vid}`, true, 'NO_APPLY_BUTTON', { vid, url: pageUrl });
+        reportError(`Кнопка «Откликнуться» не найдена на странице вакансии #${vid}`, 'NO_APPLY_BUTTON', { vid, url: pageUrl });
         notifySelectorFailure('vacancyApply', globalThis.document?.body);
         if (vid) saveCurrentForManual(vid, 'no-apply-button', runId);
         returnToList(vid, { markProcessed: true, runId });
         return 'FAIL';
       }
-
-      const applyQa = applyBtn.getAttribute?.('data-qa') || applyBtn.className || 'button';
-      const applyHref = applyBtn.getAttribute?.('href') || applyBtn.href || '';
-      log(`Кнопка «Откликнуться» найдена (${applyQa}${applyHref ? `, href: ${applyHref}` : ''}), нажатие...`, false, 'APPLY_CLICK', {
-        vid, selector: applyQa, href: applyHref
-      });
       await actionPause();
       if (!isRunCurrent(runId)) return 'STOPPED';
       await clickElement(applyBtn);
       await actionPause();
       if (!isRunCurrent(runId)) return 'STOPPED';
-
-      log(`Ожидание исхода отклика (модалка, релокация, форма или подтверждение)...`, false, 'WAIT_OUTCOME', { vid });
       const inspectOutcome = () => {
         const domDiag = inspectOutcomeDomState();
         return { label: `исход отклика #${vid}`, vid, ...domDiag };
@@ -1967,9 +1964,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         const directHref = applyBtn.getAttribute?.('href') || applyBtn.href;
         if (directHref && (directHref.includes('/applicant/vacancy_response') || directHref.includes('vacancy_response'))) {
           const fullTarget = directHref.startsWith('http') ? directHref : (new URL(directHref, globalThis.location?.origin || 'https://hh.ru').href);
-          log(`Модальное окно не появилось за 3.5с. Запуск прямого перехода по ссылке отклика: ${fullTarget}`, false, 'DIRECT_LINK_FALLBACK', { vid, href: fullTarget });
           setTrapLock(45000, runId);
-          flushTelemetryBeforeNav();
           setLastAttemptID(vid);
           try {
             globalThis.location.assign(fullTarget);
@@ -1977,8 +1972,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
             globalThis.location.href = fullTarget;
           }
           return 'RESPONSE_PAGE';
-        } else {
-          log(`Прямая ссылка на страницу отклика отсутствует (ожидаем открытие модального окна в DOM)`, false, 'NO_DIRECT_LINK_FALLBACK', { vid });
         }
       }
 
@@ -1997,45 +1990,34 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
       if (!outcome) {
         const finalDiag = inspectOutcomeDomState();
-        log(`Таймаут ожидания исхода отклика на вакансию #${vid}!`, true, 'OUTCOME_TIMEOUT', { vid, ...finalDiag });
+        reportError(`Таймаут ожидания исхода отклика на вакансию #${vid}!`, 'OUTCOME_TIMEOUT', { vid, ...finalDiag });
       }
 
-      log(`Определен исход отклика: ${outcome || 'TIMEOUT/UNKNOWN'}`, false, 'OUTCOME_DETECTED', { vid, outcome });
-
       const res = await dispatchOutcome(outcome, vid, runId);
-      log(`Результат обработки вакансии #${vid}: ${res}`, false, 'OUTCOME_RESULT', { vid, outcome, result: res });
       if (['OK', 'SKIP', 'TEST_REQUIRED', 'RESUME_HIDDEN'].includes(res)) {
         await actionPause();
         returnToList(vid, { markProcessed: true, runId });
       } else if (res === 'FAIL') {
-        log(`Не удалось завершить отклик на вакансию #${vid} (FAIL), сохраняем в ручную очередь и возвращаемся к поиску...`, true, 'VACANCY_FAILED', { vid });
-        if (vid) saveCurrentForManual(vid, 'apply_failed', runId);
         await actionPause();
-        returnToList(vid, { markProcessed: true, runId });
+        return handleVacancyFailure(vid, 'apply_failed', runId);
       } else if (res !== 'RESPONSE_PAGE' && res !== 'STOPPED' && res !== 'CAPTCHA' && res !== 'BLOCKED') {
-        log(`Неожиданный результат обработки вакансии #${vid}: ${res}. Сохраняем в ручную очередь и возвращаемся к поиску...`, true, 'VACANCY_UNEXPECTED_RESULT', { vid, result: res });
-        if (vid) saveCurrentForManual(vid, `unexpected_${res}`, runId);
         await actionPause();
-        returnToList(vid, { markProcessed: true, runId });
+        return handleVacancyFailure(vid, `unexpected_${res}`, runId);
       }
       return res;
     } catch (e) {
-      log(`Ошибка при обработке страницы вакансии #${vid}: ${(e && e.message) || e}`, true, 'VACANCY_PAGE_ERROR', { vid, error: String(e) });
-      if (vid) saveCurrentForManual(vid, 'vacancy-page-error', runId);
-      returnToList(vid, { markProcessed: true, runId });
-      return 'FAIL';
+      reportError(`Ошибка при обработке страницы вакансии #${vid}: ${(e && e.message) || e}`, 'VACANCY_PAGE_ERROR', { vid, error: String(e) });
+      return handleVacancyFailure(vid, 'vacancy-page-error', runId);
     }
   }
 
   async function submitResponsePage(vid, runId = currentRunId) {
     if (!isRunCurrent(runId)) return;
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
-    log('Handling dedicated vacancy response page', false, 'RESPONSE_PAGE', { vid, url: globalThis.location?.href });
     setStatus('running', 'SUBMITTING_RESPONSE_PAGE');
     handlingResponsePage = true;
     try {
       if (pageLooksLikeTest()) {
-        log('Обнаружен тест или анкета на странице отклика. Перенаправляем в ручную очередь.', false, 'QUESTIONS_DETECTED', { vid });
         saveCurrentForManual(vid, 'test-questionnaire', runId);
         return returnToList(vid, { markProcessed: true, runId });
       }
@@ -2047,14 +2029,9 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       const coverToggle = query('attachCoverInModal')
         || findPatternElement(globalThis.document?.body, 'button, [role="button"], a', /добавить\s+сопроводительное|написать\s+письмо/i, 35);
       if (coverToggle && config.useCover) {
-        log('Нажатие на переключатель сопроводительного письма...', false, 'COVER_TOGGLE_CLICK', { vid });
         await clickElement(coverToggle);
         await actionPause();
         if (!isRunCurrent(runId)) return;
-      } else if (!config.useCover) {
-        log('Сопроводительное письмо отключено в настройках пользователя', false, 'COVER_DISABLED_BY_CONFIG', { vid });
-      } else {
-        log('Переключатель сопроводительного письма не найден на странице отклика (возможно, поле уже активно)', false, 'COVER_TOGGLE_NOT_FOUND', { vid });
       }
 
       const submitBtn = await waitForCondition(
@@ -2076,9 +2053,8 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
           haltForDailyLimit();
           return;
         }
-        log('Не удалось нажать кнопку отправки формы отклика', true, 'SUBMIT_FAILED', { vid });
-        saveCurrentForManual(vid, 'submit-form-failed', runId);
-        return returnToList(vid, { markProcessed: true, runId });
+        reportError('Не удалось нажать кнопку отправки формы отклика', 'SUBMIT_FAILED', { vid });
+        return handleVacancyFailure(vid, 'submit-form-failed', runId);
       }
       const confirmed = await waitForCondition(
         () => {
@@ -2093,13 +2069,15 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         haltForDailyLimit();
         return;
       }
-      log(confirmed ? `Отклик подтвержден на странице вакансии #${vid}` : `Не удалось подтвердить отправку отклика #${vid}`, !confirmed, confirmed ? 'APPLICATION_CONFIRMED' : 'SUBMIT_UNCONFIRMED', { vid });
-      if (confirmed) commitSuccess(vid, runId); else saveCurrentForManual(vid, 'unconfirmed', runId);
+      if (!confirmed) {
+        reportError(`Не удалось подтвердить отправку отклика #${vid}`, 'SUBMIT_UNCONFIRMED', { vid });
+        return handleVacancyFailure(vid, 'unconfirmed', runId);
+      }
+      commitSuccess(vid, runId);
       returnToList(vid, { markProcessed: true, runId });
     } catch (e) {
-      log(`Ошибка при обработке страницы отклика #${vid}: ${(e && e.message) || e}`, true, 'RESPONSE_PAGE_ERROR', { vid, error: String(e) });
-      if (vid) saveCurrentForManual(vid, 'response-page-error', runId);
-      returnToList(vid, { markProcessed: true, runId });
+      reportError(`Ошибка при обработке страницы отклика #${vid}: ${(e && e.message) || e}`, 'RESPONSE_PAGE_ERROR', { vid, error: String(e) });
+      return handleVacancyFailure(vid, 'response-page-error', runId);
     } finally {
       handlingResponsePage = false;
       clearTrapLock();
@@ -2123,7 +2101,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     const href = nextBtn.getAttribute?.('href') || nextBtn.href;
     if (href && globalThis.location) {
       setReturnUrl(href);
-      flushTelemetryBeforeNav();
       try { globalThis.location.assign(href); } catch (_) { globalThis.location.href = href; }
     } else {
       clickElement(nextBtn);
@@ -2160,7 +2137,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         setStatus('idle', isBlocked ? 'STORAGE_BLOCKED' : 'TAB_BUSY', {
           message: isBlocked ? 'Доступ к хранилищу заблокирован.' : 'Другая вкладка уже активна. Остановите её перед запуском здесь.'
         });
-        log(isBlocked ? 'Доступ к хранилищу заблокирован.' : 'Другая вкладка уже выполняет отклики. Запуск в текущей вкладке отменен.', true, isBlocked ? 'STORAGE_BLOCKED' : 'TAB_BUSY');
+        reportError(isBlocked ? 'Доступ к хранилищу заблокирован.' : 'Другая вкладка уже выполняет отклики. Запуск в текущей вкладке отменен.', isBlocked ? 'STORAGE_BLOCKED' : 'TAB_BUSY');
       }
       return;
     }
@@ -2168,18 +2145,21 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     if (!wasRunning) {
       resetSentCount();
       resetStats();
-      log(`════════ НОВЫЙ ЗАПУСК СЕССИИ (Пресет: ${config.preset}, Лимит: ${config.limit}) ════════`, false, 'RUN_INITIATED', { preset: config.preset, limit: config.limit });
     }
 
     try {
-      log('Запуск предварительной проверки сессии (суточный лимит, капча, блокировки)...', false, 'SESSION_PRECHECK_START');
       if (detectDailyLimit()) return haltForDailyLimit();
+      if (detectInaccessibleVacancy()) {
+        const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href) && ('v_' + getVacancyIDFromHref(globalThis.location.href)));
+        if (vid) skipVacancy(vid, 'access_denied', runId);
+        returnToList(vid, { markProcessed: true, runId });
+        return;
+      }
       if (detectCaptcha()) return haltForCaptcha();
       if (detectRateLimit()) return haltForRateLimit();
 
       const initialSent = getSentCount();
       if (initialSent >= config.limit) return terminateRun('TARGET_LIMIT_REACHED', `Application limit reached: ${config.limit}`, { sent: initialSent, limit: config.limit }, false);
-      log('Предварительная проверка сессии успешно пройдена', false, 'SESSION_PRECHECK_OK', { initialSent, limit: config.limit });
 
       if (Page.isResponseForm()) {
         if (handlingResponsePage) {
@@ -2196,9 +2176,14 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       }
 
       if (Page.isVacancy()) {
-        log('Processing single vacancy page', false, 'ON_VACANCY_PAGE');
         const vid = getStableVacancyId();
         setLastAttemptID(vid);
+        const title = parseVacancyTitle(vid);
+        const employer = parseVacancyEmployer();
+        const salary = parseVacancySalary();
+        if (title && !isGenericVacancyTitle(title)) {
+          setPendingVacancyMeta({ vid, title, employer, salary });
+        }
         const res = await handleVacancyPage(vid, runId);
         if (runId !== currentRunId) return;
         if (res === 'STOPPED' || stopSignal) return finalizeRun(runId, 'stopped', 'Processing stopped on vacancy page');
@@ -2231,6 +2216,28 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         return;
       }
 
+      if (Page.isArticle() || isLeadGenRedirect()) {
+        const vid = getLeadGenRedirectVacancyId();
+        const currentUrl = globalThis.location?.href || '';
+        if (vid) {
+          saveCurrentForManual(vid, 'lead_gen_article', runId, '', '', '', currentUrl);
+          skipVacancy(vid, 'lead_gen_article', runId);
+        }
+        setStatus('running', 'WAITING_TO_RETURN');
+        resumeTimer = setTimeout(() => {
+          resumeTimer = null;
+          if (isRunning()) returnToList(vid, { markProcessed: true, runId });
+        }, 1500);
+        return;
+      }
+
+      if (!Page.isSearch()) {
+        const vid = getLastAttemptID();
+        if (vid) skipVacancy(vid, 'unknown_page', runId);
+        returnToList(vid, { markProcessed: true, runId });
+        return;
+      }
+
       if (Page.isSearch() && globalThis.location) setReturnUrl(globalThis.location.href);
 
       let allBtns = queryAll('applyBtn');
@@ -2246,7 +2253,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
           const anyAlreadyApplied = cards.some(c => /(?:вы откликнулись|резюме доставлено|отклик отправлен)/i.test(c.textContent || ''));
           const nextBtn = query('pagerNext');
           if (anyAlreadyApplied && nextBtn) {
-            log('Все вакансии на странице уже имеют отклики. Переход на следующую страницу...', false, 'PAGINATION_ALL_APPLIED');
             await navigateToNextSearchPage(nextBtn, runId);
             return;
           }
@@ -2264,29 +2270,21 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         const vid = getVacancyID(b);
         if (config.skipHidden && !isVisible(b)) {
           skippedHidden++;
-          log(`Вакансия #${vid} пропущена: кнопка скрыта (skipHidden)`, false, 'VACANCY_SKIPPED', { vid, reason: 'element_hidden' });
           continue;
         }
-        if (processed.has(vid)) {
+        if (processed.has(vid) || isBlacklisted(vid)) {
           skippedProcessed++;
-          log(`Вакансия #${vid} пропущена: уже была обработана ранее`, false, 'VACANCY_SKIPPED', { vid, reason: 'already_processed' });
           continue;
         }
         targets.push(b);
       }
 
-      log(`Поисковая выдача: найдено кнопок: ${allBtns.length}, готово к обработке: ${targets.length}, пропущено: ${skippedProcessed + skippedHidden} (обработаны: ${skippedProcessed}, скрыты: ${skippedHidden})`, false, 'TARGETS_FILTERED', {
-        total: allBtns.length, pending: targets.length, skippedProcessed, skippedHidden, sent: initialSent, limit: config.limit
-      });
-
       if (!targets.length) {
         const nextBtn = query('pagerNext');
         if (nextBtn) {
-          log('Все вакансии на текущей странице обработаны. Переход к следующей странице (пагинация)...', false, 'PAGINATION_NEXT');
           await navigateToNextSearchPage(nextBtn, runId);
           return;
         }
-        log('Все страницы поисковой выдачи пройдены, новых вакансий не найдено', false, 'PAGINATION_END');
         const finalSent = getSentCount();
         return finalizeRun(runId, 'done', `Все вакансии в выдаче обработаны. Всего отправлено: ${finalSent}`);
       }
@@ -2296,28 +2294,35 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       const link = card ? query('vacancyLink', card) : null;
       const vid = getStableVacancyId(btn);
       const title = card ? readSerpCardTitle(link) : '';
-      log(`Выбрана вакансия #${vid} («${title}») для обработки`, false, 'VACANCY_CHOSEN', { vid, title });
+      const employer = card ? parseVacancyEmployer(card) : '';
+      const salary = card ? parseVacancySalary(card) : '';
+      setPendingVacancyMeta({ vid, title, employer, salary });
       const origin = globalThis.location?.origin || 'https://hh.ru';
-      const targetUrl = link?.href ? (new URL(link.href, origin)).href : (cleanVid(vid) ? `${origin}/vacancy/${cleanVid(vid)}` : null);
+      const rawTargetUrl = link?.href ? (new URL(link.href, origin)).href : (cleanVid(vid) ? `${origin}/vacancy/${cleanVid(vid)}` : null);
+      const safeTargetUrl = toSafeHhUrl(rawTargetUrl);
 
-      if (!targetUrl) {
-        log(`Не удалось определить URL для вакансии #${vid}`, true, 'VACANCY_URL_NOT_FOUND', { vid });
-        skipVacancy(vid, 'no_url', runId);
+      if (!rawTargetUrl) {
+        reportError(`Не удалось определить URL для вакансии #${vid}`, 'VACANCY_URL_NOT_FOUND', { vid });
+        handleVacancyFailure(vid, 'no_url', runId, { title, employer, salary });
+        return;
+      }
+
+      if (!safeTargetUrl) {
+        reportError(`Вакансия #${vid} ведет на сторонний внешний сайт (${rawTargetUrl}). Сохранена в ручную очередь.`, 'EXTERNAL_VACANCY_URL', { vid, targetUrl: rawTargetUrl });
+        saveCurrentForManual(vid, 'external_site', runId, title, employer, salary, rawTargetUrl);
+        addToBlacklist(vid, 'external_site');
+        skipVacancy(vid, 'external_site', runId);
         return;
       }
 
       setLastAttemptID(vid);
       if (globalThis.location) setReturnUrl(globalThis.location.href);
-      events.emit('entity', { vid, title, url: targetUrl, action: 'viewing' });
-      log(`Переход к вакансии #${vid} («${title}»)...`, false, 'OPEN_VACANCY', { vid, title, url: targetUrl });
       await vacancyPause();
       if (stopSignal || runId !== currentRunId) return;
-
-      flushTelemetryBeforeNav();
       try {
-        globalThis.location.assign(targetUrl);
+        globalThis.location.assign(safeTargetUrl);
       } catch (_) {
-        globalThis.location.href = targetUrl;
+        globalThis.location.href = safeTargetUrl;
       }
     } catch (e) {
       finalizeRun(runId, 'error', `Main loop error: ${(e && e.message) || e}`);
@@ -2328,9 +2333,27 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
   function watchdogTick() {
     if (!isRunning()) return;
     if (detectDailyLimit()) return haltForDailyLimit();
+    if (detectInaccessibleVacancy()) {
+      const vid = getLastAttemptID();
+      if (vid) skipVacancy(vid, 'access_denied', currentRunId);
+      returnToList(vid, { markProcessed: true, runId: currentRunId });
+      return;
+    }
     if (detectCaptcha()) return haltForCaptcha();
     if (detectRateLimit()) return haltForRateLimit();
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
+
+    if (Page.isArticle() || isLeadGenRedirect()) {
+      if (isNavigating) return;
+      const vid = getLeadGenRedirectVacancyId();
+      const currentUrl = globalThis.location?.href || '';
+      if (vid) {
+        saveCurrentForManual(vid, 'lead_gen_article', currentRunId, '', '', '', currentUrl);
+        skipVacancy(vid, 'lead_gen_article', currentRunId);
+      }
+      returnToList(vid, { markProcessed: true, runId: currentRunId });
+      return;
+    }
 
     if (Page.isResponseForm()) {
       if (isNavigating || handlingResponsePage) return;
@@ -2343,7 +2366,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       if (!pageLooksLikeTest()) {
         if (handlingResponsePage) return;
         handlingResponsePage = true;
-        log('Watchdog detected response page, submitting...', false, 'WATCHDOG_RESPONSE_PAGE');
         submitResponsePage(vid, currentRunId);
         return;
       }
@@ -2352,13 +2374,20 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         clearTimeout(resumeTimer);
         resumeTimer = null;
       }
-      log('Watchdog detected test/questions on response page. Saving to manual queue.', false, 'QUESTIONS_WATCHDOG');
       if (saveCurrentForManual(vid, 'watchdog-test-page', currentRunId)) {
         returnToList(vid, { markProcessed: true, runId: currentRunId });
       }
     } else {
       clearTrapLock();
       handlingResponsePage = false;
+    }
+
+    // 15-second hang watchdog for any non-search page
+    if (!Page.isSearch() && !isNavigating && (Date.now() - pageLoadedAt) > PAGE_WATCHDOG_TIMEOUT) {
+      const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href) && ('v_' + getVacancyIDFromHref(globalThis.location.href))) || null;
+      reportError(`Страница не ответила за ${PAGE_WATCHDOG_TIMEOUT / 1000} секунд. Принудительный возврат к поиску.`, 'PAGE_HANG_TIMEOUT', { vid, url: globalThis.location?.href });
+      handleVacancyFailure(vid, 'timeout', currentRunId);
+      return;
     }
   }
 
@@ -2388,10 +2417,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     }
     terminateRun('RUNTIME_TEARDOWN', '', {}, false);
     events.removeAllListeners();
-    sessionLogHistory = [];
   }
-
-  let sessionLogHistory = [];
 
   // --- 17. Public API ---
   const HHApplyAssistant = {
@@ -2429,6 +2455,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       clearLastAttemptID();
       clearTrapLock();
       clearReturnUrl();
+      clearPendingVacancyMeta();
       setStatus('idle', 'IDLE');
       return true;
     },
@@ -2442,31 +2469,13 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       clearProcessedIDs();
       resetSentCount();
       resetStats();
-      log('Application history and sent counters have been reset', false, 'HISTORY_RESET');
       return true;
     },
     getManualQueue: () => ManualQueue.get(),
     addManualItem: (entry) => Boolean(ManualQueue.add(entry).success),
     removeManualItem: (vid) => ManualQueue.remove(vid),
     clearManualQueue: () => ManualQueue.clear(),
-    getLogHistory: () => (sessionLogHistory.length > 0 ? sessionLogHistory.slice() : parseJson(storage.localGet(KEYS.logHistory), [])),
-    saveLogHistory(logs) {
-      if (Array.isArray(logs)) {
-        sessionLogHistory = logs.slice(0, MAX_LOG_HISTORY_MEMORY);
-        const sanitized = sanitizeLogsForPersistence(logs, 100);
-        return storage.localSet(KEYS.logHistory, JSON.stringify(sanitized));
-      }
-      return false;
-    },
-    clearLogHistory() {
-      sessionLogHistory = [];
-      storage.localRemove(KEYS.logHistory);
-      log('История логов очищена', false, 'LOGS_CLEARED');
-      return true;
-    },
-    getEarlyLogs: () => earlyLogsBuffer.slice(),
-    clearEarlyLogs: () => { earlyLogsBuffer.length = 0; },
-    detectDailyLimit: () => detectDailyLimit(),
+        detectDailyLimit: () => detectDailyLimit(),
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
     once: (evt, fn) => events.once(evt, fn),
@@ -2481,17 +2490,8 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         try { watchdogTick(); } catch (e) { console.warn('[HH] Watchdog tick error:', e); }
       }, 1000);
     }
-    log(`HH Apply Assistant Headless Engine v${VERSION} initialized`, false, 'ENGINE_INITIALIZED', {
-      running: isRunning(), sent: getSentCount(), limit: config.limit
-    });
-
-    const pageType = Page.isSearch() ? 'search' : (Page.isVacancy() ? 'vacancy' : (Page.isResponseForm() ? 'response_form' : 'other'));
-    log(`Тип текущей страницы: ${pageType} (${globalThis.location?.href || 'unknown'})`, false, 'PAGE_RECOGNIZED', {
-      pageType, url: globalThis.location?.href
-    });
 
     if (isRunning()) {
-      log('Автоматизация активна. Подготовка к автоматическому продолжению цикла...', false, 'ENGINE_RESUMING');
       if (detectDailyLimit()) {
         haltForDailyLimit();
         return;
@@ -2501,7 +2501,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       if (lock && isLiveLock(lock, now) && lock.tabId !== TAB_ID) {
         setRunning(false);
         setStatus('idle', 'TAB_BUSY', { message: 'Другая вкладка уже активна' });
-        log('Обнаружена активная сессия в другой вкладке. Авто-старт в текущей вкладке отменен.', false, 'TAB_BUSY');
       } else {
         setStatus('running', 'AUTO_STARTING');
         resumeTimer = setTimeout(() => {
@@ -2509,8 +2508,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
           if (isRunning()) startLoop();
         }, 1500);
       }
-    } else {
-      log('Автоматизация в режиме ожидания (IDLE). Для запуска нажмите «Старт».', false, 'ENGINE_IDLE');
     }
     if (!Page.isResponseForm()) clearTrapLock();
 
@@ -2571,7 +2568,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       const msg = event.message || (event.error && event.error.message) || 'Unknown window error';
       const lineno = event.lineno || 0;
       const colno = event.colno || 0;
-      log(`[Глобальная ошибка] ${msg} (${filename}:${lineno}:${colno})`, true, 'GLOBAL_UNCAUGHT_ERROR', {
+      reportError(`[Глобальная ошибка] ${msg} (${filename}:${lineno}:${colno})`, 'GLOBAL_UNCAUGHT_ERROR', {
         error: msg, filename, lineno, colno, stack
       });
     });
@@ -2581,7 +2578,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       const filename = (reason && (reason.fileName || reason.filename)) || '';
       if (!isUserscriptOrigin(filename, stack)) return;
       const msg = (reason && (reason.message || reason.stack)) || String(reason) || 'Unhandled promise rejection';
-      log(`[Необработанный Promise rejection] ${msg}`, true, 'GLOBAL_UNHANDLED_REJECTION', {
+      reportError(`[Необработанный Promise rejection] ${msg}`, 'GLOBAL_UNHANDLED_REJECTION', {
         error: msg, stack
       });
     });
@@ -2597,11 +2594,9 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       try { watchdogTick(); } catch (_) {}
     });
     addGlobalListener(win, 'beforeunload', () => {
-      flushTelemetryBeforeNav();
       if (!isRunning()) releaseInstanceLock(TAB_ID);
     });
     addGlobalListener(win, 'pagehide', () => {
-      flushTelemetryBeforeNav();
     });
   }
 
@@ -2667,8 +2662,66 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
   const collapseSpaces = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 
+  const formatCleanSalary = (raw) => {
+    if (!raw) return '';
+    return collapseSpaces(
+      String(raw)
+        .replace(/(?:до\s+вычета\s+(?:налогов|ндфл)|на\s+руки|за\s+месяц|за\s+\d+\s+смен\w*|после\s+вычета|gross|net)/gi, '')
+        .replace(/[,.]\s*$/g, '')
+    );
+  };
+
+  const ERROR_TITLES = {
+    GLOBAL_UNCAUGHT_ERROR: 'Внутренний сбой интерфейса',
+    GLOBAL_UNHANDLED_REJECTION: 'Сбой асинхронной операции',
+    DOM_SELECTOR_NOT_FOUND: 'Элемент страницы не найден',
+    SUBMIT_BTN_NOT_FOUND: 'Кнопка отправки не найдена',
+    SUBMIT_BTN_STILL_DISABLED: 'Кнопка отправки заблокирована',
+    ATTACH_BTN_NOT_FOUND: 'Кнопка прикрепления письма не найдена',
+    LETTER_FORM_TIMEOUT: 'Форма письма не открылась вовремя',
+    RELOCATION_LOOP_GUARD: 'Зацикливание предупреждения о релокации',
+    RELOCATION_TIMEOUT: 'Таймаут подтверждения релокации',
+    RELOCATION_BTN_NOT_FOUND: 'Кнопка релокации не найдена',
+    NO_APPLY_BUTTON: 'Кнопка отклика недоступна',
+    OUTCOME_TIMEOUT: 'Превышено время ожидания отклика',
+    VACANCY_FAILED: 'Не удалось отправить отклик',
+    VACANCY_UNEXPECTED_RESULT: 'Неожиданный ответ страницы',
+    VACANCY_PAGE_ERROR: 'Ошибка на странице вакансии',
+    SUBMIT_FAILED: 'Сбой при отправке отклика',
+    SUBMIT_UNCONFIRMED: 'Отправка отклика не подтвердилась',
+    RESPONSE_PAGE_ERROR: 'Сбой на странице отклика',
+    STORAGE_BLOCKED: 'Доступ к хранилищу заблокирован',
+    TAB_BUSY: 'Скрипт уже запущен в другой вкладке',
+    VACANCY_URL_NOT_FOUND: 'Не удалось определить ссылку вакансии',
+    DAILY_LIMIT_REACHED: 'Достигнут лимит откликов на сегодня',
+    MAX_ATTEMPTS_EXCEEDED: 'Превышен лимит попыток отклика',
+    VACANCY_ATTEMPT_FAILED: 'Сбой отклика (повторим позже)',
+    PAGE_HANG_TIMEOUT: 'Страница вакансии зависла',
+    EXTERNAL_VACANCY_URL: 'Вакансия ведет на внешний сайт'
+  };
+
+  function formatHumanError(code, rawMessage) {
+    const title = ERROR_TITLES[code];
+    let cleanMsg = String(rawMessage || '').trim();
+    cleanMsg = cleanMsg.replace(/^\[(?:Глобальная ошибка|Необработанный Promise rejection)\]\s*/i, '');
+    cleanMsg = cleanMsg.replace(/\s*\([^)]*(?:userscript\.html|chrome-extension:)[^)]*\)\s*$/i, '');
+    cleanMsg = cleanMsg.replace(/^Uncaught\s+/i, '');
+    cleanMsg = cleanMsg.replace(/^ReferenceError:\s*/i, 'Сбой выполнения: ');
+    cleanMsg = cleanMsg.replace(/^TypeError:\s*/i, 'Ошибка типа данных: ');
+    cleanMsg = collapseSpaces(cleanMsg);
+
+    if (title && cleanMsg) {
+      if (cleanMsg.length > 70 || /^[a-z_]+$/i.test(cleanMsg)) return title;
+      return `${title}: ${cleanMsg}`;
+    }
+    return title || cleanMsg || 'Произошла ошибка при выполнении';
+  }
+
   function formatQueueReason(reason) {
     const r = String(reason || '').toLowerCase();
+    if (r.includes('lead_gen') || r.includes('article') || r.includes('promo')) {
+      return 'Промо / Лид';
+    }
     if (r.includes('test') || r.includes('questionnaire') || r.includes('questions')) {
       return 'Анкета';
     }
@@ -2684,11 +2737,20 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     if (r.includes('unconfirmed')) {
       return 'Проверка';
     }
+    if (r.includes('access_denied') || r.includes('inaccessible')) {
+      return 'Закрыта';
+    }
     return 'Ручной';
   }
 
   function formatQueueReasonInfo(reason) {
     const r = String(reason || '').toLowerCase();
+    if (r.includes('lead_gen') || r.includes('article') || r.includes('promo')) {
+      return { text: 'Промо / Лид', type: 'warning' };
+    }
+    if (r.includes('access_denied') || r.includes('inaccessible')) {
+      return { text: 'Нет доступа', type: 'warning' };
+    }
     if (r.includes('test') || r.includes('questionnaire') || r.includes('questions')) {
       return { text: 'Тест / анкета', type: 'warning' };
     }
@@ -2698,8 +2760,11 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     if (r.includes('no-apply') || r.includes('no-submit') || r.includes('redirect')) {
       return { text: 'Нет кнопки', type: 'neutral' };
     }
-    if (r.includes('failed') || r.includes('error')) {
-      return { text: 'Ошибка отправки', type: 'error' };
+    if (r.includes('external')) {
+      return { text: 'Внешний сайт', type: 'warning' };
+    }
+    if (r.includes('failed') || r.includes('error') || r.includes('max_retries') || r.includes('timeout') || r.includes('hang')) {
+      return { text: 'Сбой отклика', type: 'error' };
     }
     if (r.includes('unconfirmed')) {
       return { text: 'Не подтверждено', type: 'neutral' };
@@ -2722,55 +2787,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     return url || '';
   }
 
-  const STORAGE_KEY_LOG_HISTORY = 'hh_apply_assistant_s1_log_history';
-
-  function parseJsonSafe(raw, fallback) {
-    if (!raw || typeof raw !== 'string') return fallback;
-    try { return JSON.parse(raw); } catch (_) { return fallback; }
-  }
-
-  function getStoredLogs(assistant = null) {
-    try {
-      const a = assistant || globalThis.HHApplyAssistant || (globalThis.window && globalThis.window.HHApplyAssistant);
-      if (a && typeof a.getLogHistory === 'function') {
-        const h = a.getLogHistory();
-        if (Array.isArray(h) && h.length > 0) return h;
-      }
-      if (typeof localStorage !== 'undefined') {
-        const raw = localStorage.getItem(STORAGE_KEY_LOG_HISTORY);
-        const parsed = parseJsonSafe(raw, null);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch (_) {}
-    return [];
-  }
-
-  function setStoredLogs(logs, assistant = null) {
-    try {
-      if (!Array.isArray(logs)) return;
-      const a = assistant || globalThis.HHApplyAssistant || (globalThis.window && globalThis.window.HHApplyAssistant);
-      if (a && typeof a.saveLogHistory === 'function') {
-        a.saveLogHistory(logs);
-      } else if (typeof localStorage !== 'undefined') {
-        const sanitized = sanitizeLogsForPersistence(logs, 100);
-        localStorage.setItem(STORAGE_KEY_LOG_HISTORY, JSON.stringify(sanitized));
-      }
-    } catch (e) {
-      console.warn('[HH] Failed to persist logs to localStorage:', e);
-    }
-  }
-
-  function removeStoredLogs(assistant = null) {
-    try {
-      const a = assistant || globalThis.HHApplyAssistant || (globalThis.window && globalThis.window.HHApplyAssistant);
-      if (a && typeof a.clearLogHistory === 'function') {
-        a.clearLogHistory();
-      } else if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem(STORAGE_KEY_LOG_HISTORY);
-      }
-    } catch (_) {}
-  }
-
   // --- 2. SVG Icons ---
 
   const ICONS = {
@@ -2781,7 +2797,8 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     copy: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
     open: `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`,
     trash: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>`,
-    inboxEmpty: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`
+    alert: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+    inboxEmpty: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`
   };
 
   // --- 3. Shadow DOM Stylesheet ---
@@ -2797,7 +2814,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       font-size: 12px;
       line-height: 1.4;
-      color: #0f172a;
+      color: #1F2328;
       box-sizing: border-box;
       user-select: none;
       -webkit-user-select: none;
@@ -2805,10 +2822,24 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       pointer-events: auto;
       interpolate-size: allow-keywords;
 
+      /* Design Tokens: Colors */
+      --hha-bg-card: #FAFAFA;
+      --hha-bg-inner: #FFFFFF;
+      --hha-border-card: rgba(15, 23, 42, 0.08);
+      --hha-shadow-card: 0 4px 20px rgba(15, 23, 42, 0.10), 0 1px 2px rgba(0, 0, 0, 0.06);
+      --hha-text-main: #1F2328;
+      --hha-text-secondary: #6B7280;
+      --hha-text-muted: #9CA3AF;
+      --hha-accent: #0F6E56;
+      --hha-accent-tint: #E1F5EE;
+      --hha-accent-tint-text: #085041;
+      --hha-destructive: #DC2626;
+      --hha-destructive-bg: #FEE2E2;
+
       /* Design Tokens: Border Radii */
-      --hha-radius-lg: 16px;    /* External overlay container */
-      --hha-radius-md: 10px;    /* Inner cards, groups, tabs track */
-      --hha-radius-sm: 8px;     /* Interactive elements: stepper, textarea, active tab */
+      --hha-radius-lg: 12px;    /* External card / flyout container */
+      --hha-radius-md: 10px;    /* Inner card blocks, tabs track */
+      --hha-radius-sm: 8px;     /* Interactive elements: stepper, buttons, active tab */
       --hha-radius-xs: 6px;     /* Segmented buttons, ghost action icons, log items */
       --hha-radius-micro: 4px;  /* Compact tags, inline inputs, link badges */
       --hha-radius-full: 9999px;/* Dynamic island pill, status chips, badges */
@@ -2858,18 +2889,16 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       width: fit-content;
       min-width: auto;
       max-width: min(390px, calc(100vw - 16px));
-      padding: 2px;
-      gap: 4px;
+      padding: 3px;
+      gap: 5px;
       border-radius: var(--hha-radius-full, 9999px);
-      border: 2px solid rgba(203, 213, 225, 0.9);
-      background: #ffffff;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: #FAFAFA;
       box-sizing: border-box;
       overflow: hidden;
       box-shadow: 
-        inset 0 1px 1px 0 rgba(255, 255, 255, 0.9),
-        inset 0 0 0 1px rgba(255, 255, 255, 0.4),
-        0 4px 16px -2px rgba(15, 23, 42, 0.12),
-        0 2px 6px -1px rgba(15, 23, 42, 0.06);
+        0 4px 20px rgba(15, 23, 42, 0.10),
+        0 1px 2px rgba(0, 0, 0, 0.06);
       cursor: grab;
       touch-action: none;
       white-space: nowrap;
@@ -2885,10 +2914,8 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
     .hha-root.is-expanded .hha-pill {
       box-shadow: 
-        inset 0 1px 1px 0 rgba(255, 255, 255, 0.9),
-        inset 0 0 0 1px rgba(255, 255, 255, 0.4),
-        0 8px 24px -4px rgba(15, 23, 42, 0.16),
-        0 2px 6px -1px rgba(15, 23, 42, 0.08);
+        0 6px 24px rgba(15, 23, 42, 0.14),
+        0 2px 4px rgba(0, 0, 0, 0.08);
     }
 
     .hha-root.is-expanded .hha-pill-queue-badge {
@@ -2899,11 +2926,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       visibility: hidden !important;
       pointer-events: none !important;
       transform: scale(0.85);
-    }
-
-    .hha-pill-status-group:hover,
-    .hha-root.is-expanded .hha-pill-status-group {
-      background: #e2e8f0;
     }
 
     .hha-pill-status-group {
@@ -2919,13 +2941,19 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       height: var(--hha-control-height, 28px);
       min-height: var(--hha-control-height, 28px);
       padding: 0 10px;
-      background: #f1f5f9;
-      border: none;
+      background: #FFFFFF;
+      border: 1px solid rgba(15, 23, 42, 0.06);
       box-sizing: border-box;
       line-height: 1;
       vertical-align: middle;
       outline: none;
-      transition: background 150ms ease;
+      transition: background 150ms ease, border-color 150ms ease;
+    }
+
+    .hha-pill-status-group:hover,
+    .hha-root.is-expanded .hha-pill-status-group {
+      background: #F8FAFC;
+      border-color: rgba(15, 23, 42, 0.12);
     }
 
     .hha-pill-status {
@@ -2953,29 +2981,56 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       left: 0;
       height: 100%;
       width: 0%;
-      background: #dcfce7;
+      background: #E1F5EE;
       border-radius: 0;
       z-index: 1;
       pointer-events: none;
       transition: width 260ms cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    .hha-pill-progress,
-    .hha-current-count {
+    .hha-pill-progress {
       font-size: 12px;
-      font-weight: 600;
-      color: #475569;
+      font-weight: 500;
+      color: #6B7280;
       font-variant-numeric: tabular-nums;
       position: relative;
       z-index: 2;
     }
 
-    .hha-pill-limit-val {
+    .hha-current-count {
       font-weight: 700;
-      font-variant-numeric: tabular-nums;
+      color: #0F6E56;
     }
 
-    /* Pill Contextual Queue Badge (Apple Dynamic Island Fluid Spring Capsule) */
+    .hha-pill-limit-val {
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: #6B7280;
+    }
+
+    .hha-pill-status-group.has-error {
+      border-color: rgba(239, 68, 68, 0.45);
+    }
+
+    .hha-pill-error-dot {
+      display: none;
+      width: 7px;
+      height: 7px;
+      margin-left: 3px;
+      border-radius: 50%;
+      background: #EF4444;
+      box-shadow: 0 0 0 1.5px #FFFFFF, 0 0 5px rgba(239, 68, 68, 0.5);
+      flex-shrink: 0;
+      z-index: 3;
+      animation: hhaErrorDotPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    @keyframes hhaErrorDotPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+
+    /* Pill Contextual Queue Badge */
     .hha-pill-queue-badge {
       display: inline-flex;
       height: var(--hha-control-height, 28px);
@@ -2985,8 +3040,9 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       justify-content: center;
       padding: 0;
       border-radius: var(--hha-radius-full, 9999px);
-      background: #ffedd5;
-      color: #c2410c;
+      background: #E1F5EE;
+      color: #085041;
+      border: 1px solid rgba(15, 110, 86, 0.25);
       font-size: 12px;
       font-weight: 700;
       line-height: 1;
@@ -3000,7 +3056,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       min-width: 0;
       max-width: none;
       opacity: 0;
-      margin-left: -4px; /* absorbs parent gap when hidden */
+      margin-left: -5px;
       overflow: hidden;
       visibility: hidden;
       pointer-events: none;
@@ -3021,12 +3077,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       opacity: 1;
       visibility: visible;
       pointer-events: auto;
-      transition: 
-        width 240ms cubic-bezier(0.16, 1, 0.3, 1),
-        margin-left 240ms cubic-bezier(0.16, 1, 0.3, 1),
-        opacity 180ms ease,
-        transform 100ms ease,
-        visibility 240ms;
     }
 
     .hha-pill-queue-badge.is-wide {
@@ -3035,7 +3085,9 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     }
 
     .hha-pill-queue-badge:hover {
-      background: #fed7aa;
+      background: #C6EBDD;
+      border-color: #0F6E56;
+      color: #085041;
     }
 
     .hha-pill-queue-badge:active {
@@ -3056,7 +3108,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       padding: 0 8px;
       border-radius: var(--hha-radius-full, 9999px);
       border: none;
-      font-weight: 500;
+      font-weight: 600;
       font-size: 12px;
       line-height: 1;
       cursor: pointer;
@@ -3068,59 +3120,67 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       min-height: var(--hha-control-height, 28px);
       box-sizing: border-box;
       vertical-align: middle;
-      transition: background-color 100ms ease, border-color 100ms ease;
+      transition: background-color 100ms ease, border-color 100ms ease, transform 100ms ease;
     }
 
+    /* Unified Accent for Start */
     .hha-btn-start {
-      background: #dcfce7;
-      color: #15803d;
-      border: 1px solid #bbf7d0;
+      background: #0F6E56;
+      color: #FFFFFF;
+      border: 1px solid #085041;
+      box-shadow: 0 1px 2px rgba(15, 110, 86, 0.2);
     }
 
     .hha-btn-start:hover {
-      background: #bbf7d0;
-      border-color: #86efac;
+      background: #085041;
+      border-color: #063b30;
+      color: #FFFFFF;
     }
 
+    .hha-btn-start:active {
+      background: #063b30;
+      transform: scale(0.98);
+    }
+
+    /* Red reserved for Stop action */
     .hha-btn-stop {
-      background: #fee2e2;
-      color: #b91c1c;
-      border: 1px solid #fecaca;
+      background: #DC2626;
+      color: #FFFFFF;
+      border: 1px solid #B91C1C;
+      box-shadow: 0 1px 2px rgba(220, 38, 38, 0.2);
     }
 
     .hha-btn-stop:hover {
-      background: #fecaca;
-      border-color: #fca5a5;
+      background: #B91C1C;
+      border-color: #991B1B;
+      color: #FFFFFF;
     }
 
     .hha-btn-stop:active,
     .hha-btn-stop:focus-visible {
-      background: #fecaca;
-      color: #991b1b;
-      border-color: #f87171;
+      background: #991B1B;
+      color: #FFFFFF;
     }
 
     .hha-btn-done {
-      background: #f1f5f9;
-      color: #475569;
-      border: 1px solid #e2e8f0;
+      background: #F1F5F9;
+      color: #6B7280;
+      border: 1px solid rgba(15, 23, 42, 0.1);
     }
 
     .hha-btn-done:hover {
-      background: #e2e8f0;
-      border-color: #cbd5e1;
-      color: #0f172a;
+      background: #E2E8F0;
+      color: #1F2328;
     }
 
     .hha-btn-error {
-      background: #fee2e2;
-      color: #b91c1c;
-      border: 1px solid #fecaca;
+      background: #DC2626;
+      color: #FFFFFF;
+      border: 1px solid #B91C1C;
     }
 
     .hha-btn-error:hover {
-      background: #fecaca;
-      border-color: #fca5a5;
+      background: #B91C1C;
     }
 
 
@@ -3135,14 +3195,12 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       min-height: 160px;
       max-height: min(420px, calc(100vh - 56px));
       box-sizing: border-box;
-      background: #f1f5f9;
-      border: 2px solid rgba(203, 213, 225, 0.9);
-      border-radius: var(--hha-radius-lg, 16px);
+      background: #FAFAFA;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      border-radius: var(--hha-radius-lg, 12px);
       box-shadow: 
-        inset 0 1px 1px 0 rgba(255, 255, 255, 0.9),
-        inset 0 0 0 1px rgba(255, 255, 255, 0.4),
-        0 20px 40px -6px rgba(15, 23, 42, 0.16),
-        0 8px 16px -4px rgba(15, 23, 42, 0.08);
+        0 4px 20px rgba(15, 23, 42, 0.10),
+        0 1px 2px rgba(0, 0, 0, 0.06);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -3189,13 +3247,13 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     /* ─── 6. TABS (SEGMENTED CONTROL) ─────────────────────────────── */
     .hha-tabs {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      background: #e2e8f0;
-      margin: 6px;
-      padding: 2px;
-      border: 1px solid #cbd5e1;
-      border-radius: var(--hha-radius-md, 10px);
-      gap: 2px;
+      grid-template-columns: repeat(2, 1fr);
+      background: #F1F5F9;
+      margin: 8px 8px 6px 8px;
+      padding: 3px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      border-radius: var(--hha-radius-sm, 8px);
+      gap: 3px;
       flex-shrink: 0;
       box-sizing: border-box;
     }
@@ -3205,28 +3263,25 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 15px;
-      height: 15px;
+      min-width: 16px;
+      height: 16px;
       padding: 0 4px;
       border-radius: var(--hha-radius-full, 9999px);
-      font-size: 9px;
+      font-size: 9.5px;
       font-weight: 700;
       line-height: 1;
       box-sizing: border-box;
       margin-left: 3px;
+      background: #E1F5EE;
+      color: #085041;
+      border: 1px solid rgba(15, 110, 86, 0.25);
+      transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), color 150ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .hha-tab-badge.is-queue {
-      background: #ffedd5;
-      color: #c2410c;
-      border: 1px solid #fed7aa;
-    }
-
-    .hha-tab-badge.is-error {
-      background: #fee2e2;
-      color: #b91c1c;
-      border: 1px solid #fca5a5;
-      animation: hhaBadgePop 180ms cubic-bezier(0.16, 1, 0.3, 1);
+      background: #E1F5EE;
+      color: #085041;
+      border: 1px solid rgba(15, 110, 86, 0.25);
     }
 
     .hha-tab-btn {
@@ -3235,24 +3290,28 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       background: transparent;
       border: none;
       outline: none;
-      border-radius: var(--hha-radius-sm, 8px);
+      border-radius: var(--hha-radius-xs, 6px);
       font-size: 11px;
       font-weight: 500;
-      color: #64748b;
+      color: #6B7280;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background-color 100ms ease, color 100ms ease;
+      transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), color 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 100ms ease;
       box-shadow: none;
       -webkit-appearance: none;
       appearance: none;
     }
 
     .hha-tab-btn:hover {
-      color: #0f172a;
+      color: #1F2328;
+      background: rgba(15, 23, 42, 0.04);
     }
 
+    .hha-tab-btn:active {
+      transform: scale(0.97);
+    }
 
     .hha-pill-status-group:focus-visible,
     .hha-pill-queue-badge:focus-visible,
@@ -3262,24 +3321,39 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     .hha-stepper-input:focus-visible,
     .hha-btn-quick:focus-visible,
     .hha-queue-title-link:focus-visible,
-    .hha-btn-icon:focus-visible,
-    .hha-log-item-delete:focus-visible {
+    .hha-btn-clear-all:focus-visible {
       outline: none;
-      box-shadow: 0 0 0 2px #3b82f6;
+      box-shadow: 0 0 0 2px #E1F5EE, 0 0 0 4px #0F6E56;
     }
 
+    .hha-log-item-delete:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px #FEE2E2, 0 0 0 4px #DC2626;
+    }
+
+    .hha-btn-copy-error:focus-visible,
+    .hha-btn-dismiss-error:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px #FEF2F2, 0 0 0 4px #DC2626;
+    }
+
+    /* Unified Accent for Active Tab */
     .hha-tab-btn.active {
-      background: #ffffff;
-      border: none !important;
-      border-radius: var(--hha-radius-sm, 8px);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-      color: #0f172a;
+      background: #FFFFFF !important;
+      border: 1px solid rgba(15, 23, 42, 0.06) !important;
+      border-radius: var(--hha-radius-xs, 6px);
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+      color: #0F6E56 !important;
       font-weight: 600;
+    }
+
+    .hha-tab-btn.active:active {
+      transform: scale(0.98);
     }
 
     .hha-tab-btn.active:focus-visible {
       outline: none;
-      box-shadow: 0 0 0 2px #3b82f6, 0 1px 2px rgba(0, 0, 0, 0.05);
+      box-shadow: 0 0 0 2px #E1F5EE, 0 0 0 4px #0F6E56;
     }
 
     /* ─── 7. TAB PANELS ───────────────────────────────────────────── */
@@ -3289,7 +3363,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       flex-direction: column;
       overflow: hidden;
       overflow-x: hidden;
-      padding: 0 6px 6px 6px;
+      padding: 0 8px 8px 8px;
       box-sizing: border-box;
       position: relative;
     }
@@ -3307,50 +3381,82 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       overflow-y: auto;
       padding: 0;
       scrollbar-width: thin;
-      scrollbar-color: #cbd5e1 transparent;
+      scrollbar-color: #CBD5E1 transparent;
       position: relative;
+    }
+
+    .hha-panel::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+
+    .hha-panel::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .hha-panel::-webkit-scrollbar-thumb {
+      background: #CBD5E1;
+      border-radius: var(--hha-radius-full, 9999px);
+    }
+
+    .hha-panel::-webkit-scrollbar-thumb:hover {
+      background: #94A3B8;
     }
 
     .hha-panel.active {
       display: flex;
     }
 
-    /* ─── 8. LOG & QUEUE CARD ─────────────────────────────────────── */
-    .hha-log-card {
+    /* ─── 8. QUEUE & LOG CONTAINERS ───────────────────────────────── */
+    /* Tab 2: Queue Card Container (Light) */
+    [data-panel="queue"] .hha-log-card {
       flex: 1;
       min-height: 220px;
       display: flex;
       flex-direction: column;
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: var(--hha-radius-md, 10px);
-      box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.05);
+      background: #FFFFFF;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      border-radius: var(--hha-radius-sm, 8px);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
       padding: 8px 10px;
       box-sizing: border-box;
       overflow: hidden;
       position: relative;
     }
 
-    .hha-log-header {
+    [data-panel="queue"] .hha-log-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       height: 26px;
       padding-bottom: 6px;
-      border-bottom: 1px solid #f1f5f9;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
       width: 100%;
       flex-shrink: 0;
       box-sizing: border-box;
     }
 
-    .hha-log-header-title {
+    [data-panel="queue"] .hha-log-header-title {
       font-size: 11px;
       font-weight: 600;
-      color: #64748b;
+      color: #1F2328;
       letter-spacing: -0.1px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    [data-panel="queue"] .hha-log-empty-text {
+      color: #6B7280;
+      font-size: 11px;
+      font-weight: 500;
+      text-align: center;
+      line-height: 1.4;
+    }
+
+    [data-panel="queue"] .hha-log-empty-icon {
+      color: #9CA3AF;
+      opacity: 0.8;
     }
 
     .hha-log-actions {
@@ -3359,64 +3465,12 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       gap: 4px;
     }
 
-    .hha-btn-icon {
-      width: 24px;
-      height: 24px;
-      min-width: 24px;
-      min-height: 24px;
-      padding: 0;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border: none;
-      background: transparent;
-      border-radius: var(--hha-radius-xs, 6px);
-      font-size: 13px;
-      color: #64748b;
-      cursor: pointer;
-      transition: background 140ms ease, color 140ms ease;
-    }
-
-    .hha-btn-icon:hover {
-      background: #f1f5f9;
-      color: #0f172a;
-    }
-
-    .hha-btn-icon:active {
-      background: #e2e8f0;
-    }
-
-    .hha-btn-ghost {
-      background: transparent;
-      border: none;
-      border-radius: var(--hha-radius-xs, 6px);
-      font-size: 11px;
-      color: #64748b;
-      cursor: pointer;
-      padding: 2px 6px;
-      transition: background 140ms ease, color 140ms ease;
-    }
-
-    .hha-btn-ghost:hover {
-      background: #f1f5f9;
-      color: #0f172a;
-    }
-
-    .hha-btn-ghost:active {
-      background: #e2e8f0;
-    }
-
-    .hha-btn-copy-log,
-    .hha-btn-clear-logs {
-      font-weight: 500;
-    }
-
     .hha-log-stream {
       flex: 1;
       overflow-y: auto;
       overflow-x: hidden;
-      margin-top: 8px;
-      padding-top: 6px;
+      margin-top: 6px;
+      padding-top: 4px;
       padding-bottom: 8px;
       box-sizing: border-box;
       display: flex;
@@ -3432,7 +3486,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       height: 0;
     }
 
-    /* Floating Overlay Scrollbar (macOS / iOS capsule style) */
+    /* Floating Overlay Scrollbar */
     .hha-overlay-scrollbar {
       position: absolute;
       top: 48px;
@@ -3460,16 +3514,16 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       width: 4px;
       min-height: 24px;
       border-radius: var(--hha-radius-full, 9999px);
-      background: rgba(148, 163, 184, 0.6);
       cursor: grab;
       touch-action: none;
+      background: rgba(15, 23, 42, 0.2);
       transition: width 150ms ease, background-color 150ms ease;
     }
 
     .hha-overlay-thumb:hover,
     .hha-overlay-thumb.is-dragging {
       width: 6px;
-      background: rgba(100, 116, 139, 0.85);
+      background: rgba(15, 23, 42, 0.4);
     }
 
     .hha-overlay-thumb.is-dragging {
@@ -3501,21 +3555,15 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       opacity: 0.8;
     }
 
-    .hha-log-empty-text {
-      color: #64748b;
-      font-size: 11px;
-      font-weight: 500;
-      text-align: center;
-      line-height: 1.4;
-    }
 
+    /* Queue Cards */
     .hha-queue-card {
       display: flex;
       flex-direction: column;
-      gap: 3px;
-      padding: 6px 8px;
-      background: #ffffff;
-      border: 1px solid rgba(0, 0, 0, 0.08);
+      gap: 4px;
+      padding: 7px 9px;
+      background: #FAFAFA;
+      border: 1px solid rgba(15, 23, 42, 0.08);
       border-radius: var(--hha-radius-sm, 8px);
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
       box-sizing: border-box;
@@ -3523,8 +3571,8 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     }
 
     .hha-queue-card:hover {
-      border-color: rgba(37, 99, 235, 0.28);
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+      border-color: #0F6E56;
+      box-shadow: 0 2px 8px rgba(15, 110, 86, 0.12);
     }
 
     .hha-queue-card-top {
@@ -3538,9 +3586,10 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     .hha-queue-title-link {
       display: inline-flex;
       align-items: center;
+      gap: 4px;
       min-width: 0;
       flex: 1;
-      color: #0f172a;
+      color: #1F2328;
       text-decoration: none;
       font-weight: 600;
       font-size: 11.5px;
@@ -3551,8 +3600,20 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     }
 
     .hha-queue-title-link:hover {
-      color: #2563eb;
-      text-decoration: underline;
+      color: #0F6E56;
+    }
+
+    .hha-queue-title-link:hover .hha-queue-link-arrow {
+      color: #0F6E56;
+      transform: translate(1px, -1px);
+    }
+
+    .hha-queue-link-arrow {
+      font-size: 11px;
+      line-height: 1;
+      color: #9CA3AF;
+      transition: transform 120ms ease, color 120ms ease;
+      flex-shrink: 0;
     }
 
     .hha-queue-title-text {
@@ -3566,7 +3627,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       align-items: center;
       gap: 6px;
       font-size: 10px;
-      color: #64748b;
+      color: #6B7280;
       min-width: 0;
       overflow: hidden;
       line-height: 1.2;
@@ -3575,34 +3636,45 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     .hha-queue-badge {
       display: inline-flex;
       align-items: center;
-      padding: 1px 5px;
-      border-radius: 4px;
-      font-size: 9px;
+      gap: 3.5px;
+      padding: 2px 7px;
+      border-radius: var(--hha-radius-sm, 8px);
+      font-size: 9.5px;
       font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.02em;
+      letter-spacing: 0.01em;
       flex-shrink: 0;
       line-height: 1.3;
     }
 
-    .hha-queue-badge.badge-warning {
-      background: rgba(245, 158, 11, 0.14);
-      color: #b45309;
+    .hha-queue-badge-dot {
+      font-size: 6px;
+      line-height: 1;
+      opacity: 0.85;
     }
 
+    .hha-queue-badge.badge-warning {
+      background: #FEF3C7;
+      color: #92400E;
+      border: 1px solid #FCD34D;
+    }
+
+    /* Red reserved for error badge */
     .hha-queue-badge.badge-error {
-      background: rgba(239, 68, 68, 0.14);
-      color: #b91c1c;
+      background: #FEE2E2;
+      color: #991B1B;
+      border: 1px solid #FCA5A5;
     }
 
     .hha-queue-badge.badge-info {
-      background: rgba(59, 130, 246, 0.14);
-      color: #1d4ed8;
+      background: #E1F5EE;
+      color: #085041;
+      border: 1px solid #A7F3D0;
     }
 
     .hha-queue-badge.badge-neutral {
-      background: rgba(100, 116, 139, 0.12);
-      color: #475569;
+      background: #F3F4F6;
+      color: #4B5563;
+      border: 1px solid #E5E7EB;
     }
 
     .hha-queue-employer {
@@ -3610,30 +3682,36 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       overflow: hidden;
       text-overflow: ellipsis;
       font-weight: 500;
-      color: #475569;
-      max-width: 140px;
+      color: #6B7280;
+      min-width: 0;
+      max-width: 120px;
+      flex-shrink: 1;
     }
 
     .hha-queue-salary {
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
       font-weight: 600;
-      color: #059669;
-      flex-shrink: 0;
+      color: #0F6E56;
+      min-width: 0;
+      flex-shrink: 1;
     }
 
     .hha-queue-meta-divider {
-      color: #cbd5e1;
+      color: #D1D5DB;
       flex-shrink: 0;
     }
 
     .hha-queue-vid {
       white-space: nowrap;
-      color: #94a3b8;
+      color: #9CA3AF;
       font-size: 9px;
       margin-left: auto;
       flex-shrink: 0;
     }
 
+    /* Delete item: Red strictly reserved for destructive action */
     .hha-log-item-delete {
       width: 22px;
       height: 22px;
@@ -3645,361 +3723,235 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       justify-content: center;
       background: transparent;
       border: none;
-      border-radius: 4px;
-      color: #94a3b8;
+      border-radius: var(--hha-radius-xs, 6px);
+      color: #9CA3AF;
       cursor: pointer;
-      transition: color 100ms ease, background-color 100ms ease;
+      transition: color 150ms cubic-bezier(0.16, 1, 0.3, 1), background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 100ms ease;
     }
 
     .hha-log-item-delete:hover {
-      color: #ef4444;
-      background: #fee2e2;
+      color: #DC2626;
+      background: #FEE2E2;
+    }
+
+    .hha-log-item-delete:active {
+      color: #B91C1C;
+      background: #FECACA;
+      transform: scale(0.90);
     }
 
 
-    /* ─── 9. DEVTOOLS LOG STREAM ──────────────────────────────────── */
-    .hha-log-dev-row {
-      display: flex;
-      flex-direction: column;
-      border-bottom: 1px solid #f1f5f9;
-      background: #ffffff;
+    /* ─── 9. ERROR BANNER & TOAST ALERTS ──────────────────────────── */
+    /* Inline banner inside flyout (above tabs) */
+    .hha-error-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 8px 8px 0 8px;
+      padding: 6px 10px;
+      background: #FEF2F2;
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      border-radius: var(--hha-radius-sm, 8px);
       box-sizing: border-box;
-      transition: background-color 100ms ease;
-      cursor: pointer;
-      user-select: none;
-      border-radius: 3px;
+      flex-shrink: 0;
+      animation: hhaBannerSlide 160ms cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    .hha-log-dev-row:hover {
-      background: #f8fafc;
+    @keyframes hhaBannerSlide {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
-    .hha-log-dev-row.is-expanded {
-      background: #f8fafc;
-    }
-
-    .hha-log-dev-main {
+    .hha-error-banner-main {
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 3px 6px;
-      min-height: 24px;
-      box-sizing: border-box;
-    }
-
-    .hha-log-dev-time {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 10px;
-      color: #94a3b8;
-      flex-shrink: 0;
-      width: 44px;
-      letter-spacing: -0.2px;
-    }
-
-    .hha-log-dev-tag {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 9px;
-      font-weight: 700;
-      padding: 1px 4px;
-      border-radius: var(--hha-radius-micro, 3px);
-      flex-shrink: 0;
-      letter-spacing: 0.2px;
-      line-height: 1.2;
-    }
-
-    .hha-log-dev-tag.tag-scan {
-      background: #eff6ff;
-      color: #2563eb;
-      border: 1px solid #bfdbfe;
-    }
-
-    .hha-log-dev-tag.tag-filter {
-      background: #f5f3ff;
-      color: #7c3aed;
-      border: 1px solid #ddd6fe;
-    }
-
-    .hha-log-dev-tag.tag-apply {
-      background: #ecfdf5;
-      color: #059669;
-      border: 1px solid #a7f3d0;
-    }
-
-    .hha-log-dev-tag.tag-cover {
-      background: #eef2ff;
-      color: #4f46e5;
-      border: 1px solid #c7d2fe;
-    }
-
-    .hha-log-dev-tag.tag-queue {
-      background: #fffbeb;
-      color: #d97706;
-      border: 1px solid #fde68a;
-    }
-
-    .hha-log-dev-tag.tag-delay {
-      background: #f1f5f9;
-      color: #64748b;
-      border: 1px solid #e2e8f0;
-    }
-
-    .hha-log-dev-tag.tag-error {
-      background: #fef2f2;
-      color: #dc2626;
-      border: 1px solid #fecaca;
-    }
-
-    .hha-log-dev-tag.tag-status {
-      background: #f0fdf4;
-      color: #16a34a;
-      border: 1px solid #bbf7d0;
-    }
-
-    .hha-log-dev-msg {
-      flex: 1;
       min-width: 0;
-      color: #1e293b;
+      flex: 1;
+    }
+
+    .hha-error-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #DC2626;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
+    .hha-error-text {
       font-size: 11px;
       font-weight: 500;
+      color: #991B1B;
+      line-height: 1.35;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-    }
-
-
-    .hha-log-dev-arrow {
-      font-size: 10px;
-      color: #94a3b8;
-      transition: transform 150ms ease, color 150ms ease;
-      flex-shrink: 0;
-      transform: rotate(-90deg);
-      display: inline-block;
-      width: 10px;
-      text-align: center;
-    }
-
-    .hha-log-dev-row.is-expanded .hha-log-dev-arrow {
-      transform: rotate(0deg);
-      color: #2563eb;
-    }
-
-    /* Accordion Details Block */
-    .hha-log-dev-details {
-      display: none;
-      padding: 8px 10px 10px 10px;
-      background: #f8fafc;
-      border-top: 1px dashed #e2e8f0;
-      font-size: 10px;
-      box-sizing: border-box;
-      animation: hhaFadeIn 150ms ease;
-    }
-
-    .hha-log-dev-row.is-expanded .hha-log-dev-details {
-      display: block;
-    }
-
-    .hha-log-detail-grid {
-      display: grid;
-      grid-template-columns: minmax(65px, auto) 1fr;
-      gap: 4px 8px;
-      align-items: baseline;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-    }
-
-    .hha-log-detail-key {
-      color: #64748b;
-      font-weight: 600;
-      white-space: nowrap;
-      font-size: 10px;
-    }
-
-    .hha-log-detail-val {
-      color: #0f172a;
-      overflow-wrap: break-word;
-      word-break: normal;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 5px;
-      font-size: 10px;
+      flex: 1;
       min-width: 0;
     }
 
-    .hha-log-detail-note {
-      color: #475569;
-      font-size: 9.5px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      word-break: normal;
-      overflow-wrap: break-word;
-    }
-
-    .hha-log-detail-block {
-      grid-column: 1 / -1;
-      display: flex;
-      flex-direction: column;
-      gap: 3px;
-      margin-top: 2px;
-    }
-
-    .hha-log-detail-block-title {
-      color: #64748b;
-      font-weight: 600;
-      font-size: 10px;
-    }
-
-    .hha-log-detail-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 3px;
-      color: #2563eb;
-      text-decoration: none;
-      padding: 1px 5px;
-      border-radius: 3px;
-      background: rgba(37, 99, 235, 0.08);
-      font-size: 10px;
-      font-weight: 500;
-      border: 1px solid rgba(37, 99, 235, 0.18);
-      line-height: 1.2;
-    }
-
-    .hha-log-detail-link:hover {
-      background: rgba(37, 99, 235, 0.18);
-    }
-
-    .hha-log-detail-url {
-      color: #2563eb;
-      text-decoration: underline;
-      font-size: 10px;
-      overflow-wrap: break-word;
-      word-break: break-all;
-    }
-
-    .hha-code-highlight {
-      color: #b91c1c;
-      background: rgba(239, 68, 68, 0.08);
-      padding: 4px 6px;
-      border-radius: 4px;
-      border: 1px solid rgba(239, 68, 68, 0.2);
-      display: block;
-      width: 100%;
-      box-sizing: border-box;
-      white-space: pre-wrap;
-      overflow-wrap: break-word;
-      word-break: break-all;
-      font-size: 9.5px;
-      line-height: 1.35;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-    }
-
-    .hha-code-heuristic {
-      color: #1e293b;
-      background: #e2e8f0;
-      padding: 4px 6px;
-      border-radius: 4px;
-      border: 1px solid #cbd5e1;
-      display: block;
-      width: 100%;
-      box-sizing: border-box;
-      white-space: pre-wrap;
-      overflow-wrap: break-word;
-      word-break: break-all;
-      font-size: 9.5px;
-      line-height: 1.35;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-    }
-
-    .hha-dom-snippet {
-      margin: 0;
-      padding: 6px 8px;
-      background: #0f172a;
-      color: #f1f5f9;
-      border-radius: 4px;
-      font-size: 9px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-      white-space: pre-wrap;
-      overflow-wrap: break-word;
-      word-break: normal;
-      max-height: 90px;
-      overflow-y: auto;
-      line-height: 1.35;
-    }
-
-    .hha-log-detail-footer {
-      display: flex;
-      justify-content: flex-end;
-      margin-top: 6px;
-      padding-top: 5px;
-      border-top: 1px dashed #e2e8f0;
-    }
-
-    .hha-btn-copy-item {
+    .hha-error-banner-actions {
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      padding: 3px 8px;
+      flex-shrink: 0;
+    }
+
+    .hha-btn-copy-error {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 22px;
+      padding: 0 8px;
       border-radius: var(--hha-radius-xs, 6px);
-      border: 1px solid #cbd5e1;
-      background: #ffffff;
-      color: #475569;
-      font-size: 10px;
-      font-weight: 500;
+      background: #FFFFFF;
+      color: #991B1B;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      font-size: 10.5px;
+      font-weight: 600;
+      line-height: 1;
       cursor: pointer;
-      line-height: 1.2;
-      transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+      box-sizing: border-box;
+      transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 80ms ease;
     }
 
-    .hha-btn-copy-item:hover {
-      background: #f1f5f9;
-      color: #0f172a;
-      border-color: #94a3b8;
+    .hha-btn-copy-error:hover {
+      background: #FEE2E2;
+      border-color: #EF4444;
     }
 
-    .hha-btn-copy-item:active {
-      background: #e2e8f0;
+    .hha-btn-copy-error:active {
+      transform: scale(0.96);
     }
 
-    .hha-btn-copy-item.is-copied {
-      color: #15803d;
-      border-color: #86efac;
-      background: #f0fdf4;
+    .hha-btn-copy-error.is-copied {
+      background: #DCFCE7;
+      color: #166534;
+      border-color: #86EFAC;
     }
 
+    .hha-btn-dismiss-error {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border-radius: var(--hha-radius-micro, 4px);
+      background: transparent;
+      border: none;
+      color: #991B1B;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.65;
+      transition: opacity 120ms ease, background-color 120ms ease;
+    }
+
+    .hha-btn-dismiss-error:hover {
+      opacity: 1;
+      background: rgba(239, 68, 68, 0.12);
+    }
+
+    .hha-btn-dismiss-error:active {
+      transform: scale(0.92);
+    }
+
+    /* Clear all in queue: Red strictly for destructive confirmation */
+    .hha-btn-clear-all,
     .hha-btn-clear-queue {
-      color: #64748b;
-      transition: all 120ms ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 22px;
+      padding: 2px 7px;
+      background: #FFFFFF;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      border-radius: var(--hha-radius-xs, 6px);
+      font-size: 11px;
+      font-weight: 500;
+      color: #6B7280;
+      cursor: pointer;
+      line-height: 1;
+      transition: color 150ms cubic-bezier(0.16, 1, 0.3, 1), background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 100ms ease;
+      white-space: nowrap;
+      margin-right: 2px;
     }
 
+    .hha-btn-clear-all:hover:not(:disabled),
     .hha-btn-clear-queue:hover:not(:disabled) {
-      background: #fee2e2;
-      color: #b91c1c;
+      background: #FEE2E2;
+      border-color: #FCA5A5;
+      color: #DC2626;
     }
 
+    .hha-btn-clear-all:active:not(:disabled),
+    .hha-btn-clear-queue:active:not(:disabled) {
+      transform: scale(0.96);
+      background: #FECACA;
+    }
+
+    .hha-btn-clear-all:hover:not(:disabled) .hha-btn-clear-all-icon {
+      color: #DC2626;
+    }
+
+    .hha-btn-clear-all.is-confirming,
     .hha-btn-clear-queue.is-confirming {
       width: auto !important;
       padding: 2px 8px !important;
-      background: #fee2e2 !important;
-      color: #ef4444 !important;
-      border-radius: 6px !important;
+      background: #DC2626 !important;
+      border-color: #DC2626 !important;
+      color: #FFFFFF !important;
       font-size: 11px !important;
       font-weight: 600 !important;
-      border: 1px solid rgba(239, 68, 68, 0.3) !important;
     }
 
+    .hha-btn-clear-all.is-confirming:hover,
     .hha-btn-clear-queue.is-confirming:hover {
-      background: #ef4444 !important;
-      color: #ffffff !important;
+      background: #B91C1C !important;
+      border-color: #B91C1C !important;
+      color: #FFFFFF !important;
     }
 
+    .hha-btn-clear-all.is-confirming:active,
+    .hha-btn-clear-queue.is-confirming:active {
+      transform: scale(0.96);
+    }
+
+    .hha-btn-clear-all:disabled,
+    .hha-btn-clear-all[disabled],
     .hha-btn-clear-queue:disabled,
     .hha-btn-clear-queue[disabled] {
       display: none !important;
     }
 
+    .hha-btn-clear-all-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 12px;
+      height: 12px;
+      color: inherit;
+    }
+
+    .hha-btn-clear-all-icon svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    .hha-btn-clear-all-text {
+      font-size: 10.5px;
+      line-height: 1;
+    }
+
     /* ─── 10. TOOLTIP ─────────────────────────────────────────────── */
     .hha-tooltip {
       position: absolute;
-      background: #0f172a;
-      color: #ffffff;
+      background: #1F2328;
+      color: #FFFFFF;
       font-size: 11px;
       font-weight: 500;
       line-height: 1.3;
@@ -4009,7 +3961,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       width: max-content;
       white-space: normal;
       word-break: break-word;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
@@ -4024,11 +3976,11 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
     /* ─── 11. SETTINGS CONTROLS ───────────────────────────────────── */
     .hha-card {
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: var(--hha-radius-md, 10px);
-      box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.05);
-      margin-bottom: 6px;
+      background: #FFFFFF;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      border-radius: var(--hha-radius-sm, 8px);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      margin-bottom: 8px;
       overflow: visible;
       box-sizing: border-box;
     }
@@ -4047,7 +3999,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     }
 
     .hha-row + .hha-row {
-      border-top: 1px solid #f1f5f9;
+      border-top: 1px solid rgba(15, 23, 42, 0.06);
     }
 
     .hha-speed-row {
@@ -4057,22 +4009,22 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       padding: 4px 10px;
       min-height: 36px;
       box-sizing: border-box;
-      border-top: 1px solid #f1f5f9;
+      border-top: 1px solid rgba(15, 23, 42, 0.06);
       flex-wrap: nowrap;
     }
 
     .hha-row-label {
       font-size: 13px;
       font-weight: 500;
-      color: #0f172a;
+      color: #1F2328;
     }
 
     .hha-stepper {
       display: inline-flex;
       align-items: stretch;
-      border: 1px solid #e2e8f0;
+      border: 1px solid rgba(15, 23, 42, 0.12);
       border-radius: var(--hha-radius-sm, 8px);
-      background: #ffffff;
+      background: #FFFFFF;
       overflow: hidden;
       height: var(--hha-control-height, 28px);
       box-sizing: border-box;
@@ -4087,34 +4039,36 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       justify-content: center;
       background: transparent;
       border: none;
-      color: #0f172a;
+      color: #1F2328;
       font-size: 14px;
       font-weight: 600;
       cursor: pointer;
       padding: 0;
-      transition: background 140ms ease;
+      transition: background-color 140ms ease, transform 100ms ease;
       user-select: none;
       box-sizing: border-box;
     }
 
     .hha-stepper-btn:hover {
-      background: #f1f5f9;
+      background: #F1F5F9;
     }
 
     .hha-stepper-btn:active {
-      background: #e2e8f0;
+      background: #CBD5E1;
+      transform: scale(0.92);
     }
 
     .hha-stepper-input {
       width: 44px;
       height: var(--hha-control-height, 28px);
       border: none;
-      border-left: 1px solid #e2e8f0;
-      border-right: 1px solid #e2e8f0;
+      border-left: 1px solid rgba(15, 23, 42, 0.12);
+      border-right: 1px solid rgba(15, 23, 42, 0.12);
+      background: transparent;
       text-align: center;
       font-size: 12px;
       font-weight: 600;
-      color: #0f172a;
+      color: #1F2328;
       padding: 0;
       outline: none;
       box-sizing: border-box;
@@ -4123,7 +4077,8 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
     .hha-stepper-input:focus,
     .hha-stepper-input.is-focused {
-      background: #eff6ff;
+      background: #E1F5EE;
+      color: #085041;
     }
 
     .hha-stepper-input::-webkit-outer-spin-button,
@@ -4141,8 +4096,9 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       height: 28px;
       padding: 2px;
       gap: 2px;
-      background: #f1f5f9;
-      border-radius: 8px;
+      background: #F1F5F9;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      border-radius: var(--hha-radius-sm, 8px);
       box-sizing: border-box;
     }
 
@@ -4161,20 +4117,26 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       border: none;
       border-radius: var(--hha-radius-xs, 6px);
       background: transparent;
-      color: #64748b;
+      color: #6B7280;
       cursor: pointer;
       box-sizing: border-box;
-      transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+      transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease, transform 100ms ease;
     }
 
     .hha-segmented-btn:hover {
-      color: #0f172a;
+      color: #1F2328;
     }
 
+    .hha-segmented-btn:active {
+      transform: scale(0.96);
+    }
+
+    /* Unified Accent for active speed preset */
     .hha-segmented-btn.is-active {
-      background: #ffffff !important;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06) !important;
-      color: #0f172a !important;
+      background: #E1F5EE !important;
+      border: 1px solid rgba(15, 110, 86, 0.25) !important;
+      box-shadow: 0 1px 2px rgba(15, 110, 86, 0.1) !important;
+      color: #085041 !important;
       font-weight: 600 !important;
     }
 
@@ -4186,6 +4148,10 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       flex-direction: column;
       margin-bottom: 0;
       overflow: hidden;
+      background: #FFFFFF;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      border-radius: var(--hha-radius-sm, 8px);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
     }
 
     .hha-switch-row {
@@ -4193,10 +4159,10 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       align-items: center;
       padding: 7px 10px 7px 10px;
       box-sizing: border-box;
-      border-bottom: 1px solid #f1f5f9;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
       width: 100%;
       flex-shrink: 0;
-      background: #ffffff;
+      background: #FFFFFF;
     }
 
     .hha-switch-label {
@@ -4213,7 +4179,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       font-size: 12px;
       line-height: 1.35;
       font-weight: 500;
-      color: #0f172a;
+      color: #1F2328;
     }
 
     .hha-switch {
@@ -4240,14 +4206,14 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       left: 0;
       right: 0;
       bottom: 0;
-      background-color: #e2e8f0;
+      background-color: #E2E8F0;
       border-radius: 9999px;
-      box-shadow: inset 0 0 0 1px #cbd5e1;
+      box-shadow: inset 0 0 0 1px #CBD5E1;
       transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .hha-switch-slider:hover {
-      box-shadow: inset 0 0 0 1px #94a3b8;
+      box-shadow: inset 0 0 0 1px #9CA3AF;
     }
 
     .hha-switch-slider::before {
@@ -4257,20 +4223,21 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       width: 16px;
       left: 2px;
       bottom: 2px;
-      background-color: #ffffff;
+      background-color: #FFFFFF;
       border-radius: 50%;
-      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.16), 0 0 1px rgba(15, 23, 42, 0.1);
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.2);
       transition: transform 200ms cubic-bezier(0.34, 1.3, 0.64, 1);
     }
 
+    /* Unified Accent for active switch */
     .hha-switch-input:checked + .hha-switch-slider {
-      background-color: #bbf7d0;
-      box-shadow: inset 0 0 0 1px #86efac;
+      background-color: #0F6E56;
+      box-shadow: inset 0 0 0 1px #085041;
     }
 
     .hha-switch-input:checked + .hha-switch-slider:hover {
-      background-color: #a7f3d0;
-      box-shadow: inset 0 0 0 1px #4ade80;
+      background-color: #085041;
+      box-shadow: inset 0 0 0 1px #063b30;
     }
 
     .hha-switch-input:checked + .hha-switch-slider::before {
@@ -4278,7 +4245,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     }
 
     .hha-switch-input:focus-visible + .hha-switch-slider {
-      box-shadow: 0 0 0 2px #86efac;
+      box-shadow: 0 0 0 2px #E1F5EE, 0 0 0 4px #0F6E56;
     }
 
     .hha-cover-container {
@@ -4289,7 +4256,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       padding: 0;
       box-sizing: border-box;
       position: relative;
-      background: #ffffff;
+      background: #FAFAFA;
     }
 
     .hha-cover-textarea {
@@ -4300,7 +4267,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       background: transparent;
       border: none;
       border-radius: 0;
-      color: #0f172a;
+      color: #1F2328;
       font-size: 12px;
       line-height: 1.45;
       font-family: inherit;
@@ -4311,19 +4278,40 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       box-sizing: border-box;
       box-shadow: none !important;
       scrollbar-width: thin;
-      scrollbar-color: #cbd5e1 transparent;
+      scrollbar-color: #CBD5E1 transparent;
       transition: 
         opacity 180ms ease,
         background-color 180ms ease,
         color 180ms ease;
     }
 
+    .hha-cover-textarea::-webkit-scrollbar {
+      width: 5px;
+    }
+
+    .hha-cover-textarea::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .hha-cover-textarea::-webkit-scrollbar-thumb {
+      background: #CBD5E1;
+      border-radius: var(--hha-radius-full, 9999px);
+    }
+
+    .hha-cover-textarea::-webkit-scrollbar-thumb:hover {
+      background: #94A3B8;
+    }
+
+    .hha-cover-textarea::placeholder {
+      color: #9CA3AF;
+      opacity: 1;
+    }
 
     .hha-cover-textarea:disabled,
     .hha-cover-textarea.is-disabled {
       opacity: 0.55;
-      background: #f8fafc;
-      color: #64748b;
+      background: #F1F5F9;
+      color: #9CA3AF;
       cursor: not-allowed;
     }
 
@@ -4335,28 +4323,29 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       pointer-events: none;
       font-size: 10.5px;
       line-height: 1;
-      color: #94a3b8;
+      color: #6B7280;
       font-weight: 500;
       font-variant-numeric: tabular-nums;
-      background: rgba(255, 255, 255, 0.85);
+      background: rgba(255, 255, 255, 0.88);
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
       padding: 3px 6px;
       border-radius: 6px;
-      border: 1px solid rgba(226, 232, 240, 0.7);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
       transition: color 120ms ease, border-color 120ms ease, opacity 180ms ease;
     }
 
     .hha-cover-textarea:disabled ~ .hha-char-counter,
     .hha-cover-textarea.is-disabled ~ .hha-char-counter {
       opacity: 0.55;
-      background: rgba(248, 250, 252, 0.85);
+      background: rgba(241, 245, 249, 0.85);
     }
 
+    /* Red reserved for limit alert */
     .hha-char-counter.is-limit {
-      color: #e11d48;
-      border-color: rgba(244, 63, 94, 0.4);
+      color: #DC2626;
+      border-color: rgba(220, 38, 38, 0.3);
       font-weight: 600;
     }
 
@@ -4399,15 +4388,15 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
       // UI State
       this._isExpanded = false;
-      this._activeTab = 'settings'; // 'settings' | 'queue' | 'logs'
-      this._expandedLogIds = new Set();
+      this._activeTab = 'settings'; // 'settings' | 'queue'
       const initWinW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
       const initWinH = (typeof window !== 'undefined' && window.innerHeight) || 768;
       this._pillPos = { x: Math.max(8, initWinW - 220), y: Math.max(8, initWinH - 36 - 24) };
       this._collapsedPillWidth = 166;
       this._isAnimating = false;
-      this._liveFeed = [];
       this._queue = [];
+      this._lastErrorPayload = null;
+      this._toastTimer = null;
       this._config = {
         limit: 50,
         preset: 'balanced',
@@ -4432,10 +4421,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       this._animTimer = null;
       this._domEventsBound = false;
       this._onDocClick = null;
-      this._copyFeedbackTimer = null;
-      this._copyBtnOrigHtml = null;
-      this._copyBtnOrigColor = null;
-      this._persistLogsTimer = null;
       this._queueConfirmTimer = null;
 
       // Bound Event Handlers
@@ -4446,7 +4431,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     }
 
     connectedCallback() {
-      this._liveFeed = getStoredLogs(this._assistant);
 
       // Restore expanded state and active tab from localStorage across page navigations
       try {
@@ -4456,7 +4440,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
             this._isExpanded = savedExpanded === 'true';
           }
           const savedTab = localStorage.getItem('hha_hud_active_tab_v2');
-          if (savedTab && ['settings', 'queue', 'logs'].includes(savedTab)) {
+          if (savedTab && ['settings', 'queue'].includes(savedTab)) {
             this._activeTab = savedTab;
           }
         }
@@ -4487,25 +4471,12 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
       if (typeof window !== 'undefined') {
         window.addEventListener('resize', this._onResize, { passive: true });
-        this._onWindowUnload = () => this._flushLogs();
-        window.addEventListener('beforeunload', this._onWindowUnload);
-        window.addEventListener('pagehide', this._onWindowUnload);
       }
 
       // Auto-bind to global assistant if present
       const globalAssistant = globalThis.HHApplyAssistant || (globalThis.window && globalThis.window.HHApplyAssistant);
       if (globalAssistant && !this._assistant) {
         this.bindAssistant(globalAssistant);
-      }
-    }
-
-    _flushLogs() {
-      if (this._persistLogsTimer) {
-        clearTimeout(this._persistLogsTimer);
-        this._persistLogsTimer = null;
-      }
-      if (this._liveFeed && this._liveFeed.length > 0) {
-        setStoredLogs(this._liveFeed, this._assistant);
       }
     }
 
@@ -4526,9 +4497,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       if (this._animTimer) { clearTimeout(this._animTimer); this._animTimer = null; }
       if (this._badgeClearTimer) { clearTimeout(this._badgeClearTimer); this._badgeClearTimer = null; }
       if (this._badgeAnimTimer) { clearTimeout(this._badgeAnimTimer); this._badgeAnimTimer = null; }
-      if (this._copyFeedbackTimer) { clearTimeout(this._copyFeedbackTimer); this._copyFeedbackTimer = null; }
       if (this._queueConfirmTimer) { clearTimeout(this._queueConfirmTimer); this._queueConfirmTimer = null; }
-      this._flushLogs();
     }
 
     // --- Public API ---
@@ -4581,8 +4550,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
           assistant.on('progress', (payload) => {
             if (payload) this.updateProgress(payload.sent, payload.limit);
           }),
-          assistant.on('entity', (event) => this.updateLiveFeed(event)),
-          assistant.on('log', (payload) => this._onEngineLog(payload)),
+          assistant.on('error', (payload) => this._showError(payload)),
           assistant.on('manualQueue', (payload) => {
             const q = payload && Array.isArray(payload.queue) ? payload.queue : payload;
             this.updateQueue(q);
@@ -4594,25 +4562,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         );
       }
 
-      if ((!this._liveFeed || this._liveFeed.length === 0) && typeof assistant.getLogHistory === 'function') {
-        const hist = assistant.getLogHistory();
-        if (Array.isArray(hist) && hist.length > 0) {
-          this._liveFeed = hist.slice(0, MAX_LOG_HISTORY_MEMORY);
-        }
-      }
-
-      // Replay any early logs emitted by engine before HUD mounted
-      if (typeof assistant.getEarlyLogs === 'function') {
-        const early = assistant.getEarlyLogs();
-        if (Array.isArray(early) && early.length > 0) {
-          for (const item of early) {
-            this._onEngineLog(item);
-          }
-        }
-        if (typeof assistant.clearEarlyLogs === 'function') {
-          assistant.clearEarlyLogs();
-        }
-      }
+      
 
       this._syncAll();
     }
@@ -4623,9 +4573,10 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       }
       this._unsubscribers = [];
       this._assistant = null;
-      if (this._copyFeedbackTimer) {
-        clearTimeout(this._copyFeedbackTimer);
-        this._copyFeedbackTimer = null;
+      
+      if (this._toastTimer) {
+        clearTimeout(this._toastTimer);
+        this._toastTimer = null;
       }
       this._copyBtnOrigHtml = null;
       this._copyBtnOrigColor = null;
@@ -4677,220 +4628,12 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       }
     }
 
-    updateLiveFeed(event) {
-      if (!event) return;
-
-      const cVid = cleanVid(event.vid);
-      const url = toVacancyUrl(cVid, event.url);
-      const time = event.time || formatTime(Date.now());
-      const logId = event.id || 'log_' + (++this._logCounter || (this._logCounter = 1)) + '_' + Date.now();
-
-      let tag = event.tag || 'EVENT';
-      let tagType = event.tagType || 'scan';
-      let msg = event.msg || event.title || 'Событие';
-      let sub = event.sub || '';
-      let metaBadge = event.metaBadge || '';
-
-      if (event.action === 'viewing') {
-        tag = 'VIEW';
-        tagType = 'scan';
-        msg = event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия');
-        sub = `Открытие карточки вакансии для просмотра и отклика`;
-        metaBadge = 'просмотр';
-      } else if (event.action === 'processing') {
-        tag = 'APPLY';
-        tagType = 'apply';
-        msg = event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия');
-        sub = `Подготовка к отклику на вакансию #${cVid || 'N/A'}`;
-        metaBadge = 'отклик';
-      } else if (event.action === 'applied' || tagType === 'apply') {
-        tag = 'APPLY';
-        tagType = 'apply';
-        const emp = event.employer ? `${event.employer} • ` : '';
-        msg = `${emp}${event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия')}`;
-        sub = `ID: v_${cVid || 'N/A'}${event.employer ? ` • Компания: ${event.employer}` : ''} • HTTP 200 OK • Отклик успешно доставлен`;
-        metaBadge = '200 OK';
-      } else if (event.action === 'skipped' || tagType === 'filter') {
-        tag = 'FILTER';
-        tagType = 'filter';
-        msg = `${event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия')}`;
-        sub = `Причина отсева: ${event.reason || 'не соответствует фильтрам поиска'}`;
-        metaBadge = 'отсев';
-      } else if (event.action === 'manual' || tagType === 'queue') {
-        tag = 'QUEUE';
-        tagType = 'queue';
-        msg = event.title || (cVid ? `Вакансия #${cVid}` : 'Вакансия');
-        const rReason = formatQueueReason(event.note || event.reason);
-        sub = `Причина: ${rReason}`;
-        metaBadge = '';
-      } else if (event.action === 'error' || tagType === 'error') {
-        tag = event.tag || 'ERROR';
-        tagType = 'error';
-        msg = event.msg || event.reason || event.error || 'Сбой выполнения запроса';
-        sub = event.sub || 'Ошибка API: требуется подтверждение или проверка суточных лимитов';
-        metaBadge = '';
-      } else if (event.action === 'scan' || tagType === 'scan') {
-        tag = 'SCAN';
-        tagType = 'scan';
-        msg = event.msg || `Поиск вакансий (страница ${event.page || 1})`;
-        sub = event.sub || `Найдено элементов в выдаче: ${event.found || 20}`;
-        metaBadge = `${event.found || 20} вак.`;
-      } else if (event.action === 'delay' || tagType === 'delay') {
-        tag = 'DELAY';
-        tagType = 'delay';
-        msg = event.msg || `Анти-спам задержка`;
-        sub = event.sub || `Пауза безопасности перед следующим действием`;
-        metaBadge = event.delay ? `${event.delay}s` : '1.6s';
-      } else if (event.action === 'cover' || tagType === 'cover') {
-        tag = 'COVER';
-        tagType = 'cover';
-        msg = event.msg || `Сопроводительное письмо`;
-        sub = event.sub || `Сгенерировано письмо (${event.chars || 178} симв.)`;
-        metaBadge = `${event.chars || 178} с.`;
-      } else if (event.action === 'status' || tagType === 'status') {
-        tag = 'STATUS';
-        tagType = 'status';
-        msg = event.msg || `Статус цикла: ${event.status || 'активен'}`;
-        sub = event.sub || '';
-        metaBadge = event.status ? String(event.status).toUpperCase() : 'OK';
-      }
-
-      const item = {
-        id: logId,
-        time,
-        tag,
-        tagType,
-        msg,
-        sub,
-        employer: event.employer || '',
-        metaBadge,
-        vid: cVid,
-        url,
-        selector: event.selector || '',
-        selectorName: event.selectorName || '',
-        expectedCss: event.expectedCss || '',
-        heuristic: event.heuristic || '',
-        contextSnippet: event.contextSnippet || '',
-        context: event,
-        isDevLog: true
-      };
-
-      this._appendLogItem(item);
-    }
-
-    _appendLogItem(item) {
-      if (!item) return;
-      if (!this._liveFeed) this._liveFeed = [];
-
-      // Avoid immediate consecutive duplicate log messages within the same second
-      if (this._liveFeed.length > 0) {
-        const prev = this._liveFeed[0];
-        if (prev.msg === item.msg && prev.tag === item.tag && prev.vid === item.vid && prev.time === item.time) {
-          return;
-        }
-      }
-
-      this._liveFeed.unshift(item);
-      if (this._liveFeed.length > MAX_LOG_HISTORY_MEMORY) {
-        this._liveFeed.length = MAX_LOG_HISTORY_MEMORY;
-      }
-
-      const isCritical = Boolean(
-        item.tagType === 'error' ||
-        /INITIATED|LIMIT|CLICK|DELIVERED|SUCCESS|FAIL|STOP|NAVIGAT|RETURN|PAGE_LOADED|BEFORE_UNLOAD|BLOCKED|OUTCOME/i.test(item.tag || '')
-      );
-      if (isCritical) {
-        this._flushLogs();
-      } else {
-        this._persistLogs();
-      }
-      this._syncLogs();
-    }
-
-    _persistLogs() {
-      if (this._persistLogsTimer) return;
-      this._persistLogsTimer = setTimeout(() => {
-        this._persistLogsTimer = null;
-        if (this._liveFeed) {
-          setStoredLogs(this._liveFeed, this._assistant);
-        }
-      }, 200);
-    }
-
-    _onEngineLog(payload) {
-      if (!payload) return;
-      const isErr = payload.level === 'ERR';
-      const code = payload.code || (isErr ? 'ERROR' : 'INFO');
-      const time = formatTime(payload.timestamp || Date.now());
-      const ctx = payload.context || {};
-      const cVid = ctx.vid ? cleanVid(ctx.vid) : '';
-      const url = ctx.url || (cVid ? toVacancyUrl(cVid) : '');
-
-      let tag = code;
-      let tagType = isErr ? 'error' : 'status';
-      if (/SCROLL|READING|VIEW|SCAN/i.test(code)) tagType = 'scan';
-      else if (/APPLY|COVER|CONFIRM|SCENARIO/i.test(code)) tagType = 'apply';
-      else if (/FILTER|SKIP|ALREADY/i.test(code)) tagType = 'filter';
-      else if (/DAILY_LIMIT|RATE_LIMIT/i.test(code)) tagType = isErr ? 'error' : 'filter';
-
-      let sub = '';
-      if (typeof ctx === 'string') {
-        sub = ctx;
-      } else if (ctx && typeof ctx === 'object') {
-        const parts = [];
-        if (ctx.limit !== undefined) parts.push(`Лимит: ${ctx.limit}`);
-        if (ctx.period !== undefined) parts.push(`Период: ${ctx.period}`);
-        if (ctx.targetY !== undefined) parts.push(`Цель: ${ctx.targetY}px (${ctx.pct ? ctx.pct + '%' : ''})`);
-        if (ctx.step !== undefined) parts.push(`Шаг: ${ctx.step}/${ctx.steps}`);
-        if (ctx.pauseMs !== undefined) parts.push(`Пауза: ${(ctx.pauseMs / 1000).toFixed(1)}с`);
-        if (ctx.delaySec !== undefined) parts.push(`Пауза: ${ctx.delaySec}с`);
-        if (ctx.total !== undefined) parts.push(`Всего кнопок: ${ctx.total}`);
-        if (ctx.pending !== undefined) parts.push(`К обработке: ${ctx.pending}`);
-        if (ctx.skippedProcessed !== undefined) parts.push(`Обработаны: ${ctx.skippedProcessed}`);
-        if (ctx.skippedHidden !== undefined) parts.push(`Скрыты: ${ctx.skippedHidden}`);
-        if (ctx.outcome !== undefined) parts.push(`Исход: ${ctx.outcome}`);
-        if (ctx.result !== undefined) parts.push(`Результат: ${ctx.result}`);
-        if (ctx.reason !== undefined) parts.push(`Причина: ${ctx.reason}`);
-        if (ctx.selector !== undefined) parts.push(`Селектор: ${ctx.selector}`);
-        if (ctx.qa !== undefined) parts.push(`data-qa: ${ctx.qa}`);
-        if (ctx.tag !== undefined) parts.push(`<${ctx.tag}>`);
-        if (ctx.text !== undefined) parts.push(`«${ctx.text}»`);
-        if (ctx.optionsCount !== undefined) parts.push(`Вариантов: ${ctx.optionsCount}`);
-        if (ctx.cardsCount !== undefined) parts.push(`Карточек: ${ctx.cardsCount}`);
-        if (ctx.elapsedMs !== undefined) parts.push(`Прошло: ${(ctx.elapsedMs / 1000).toFixed(1)}с${ctx.timeoutMs ? ` / ${(ctx.timeoutMs / 1000).toFixed(1)}с` : ''}`);
-        if (ctx.visibleModalsCount !== undefined) parts.push(`Модалок: ${ctx.visibleModalsCount}`);
-        if (ctx.letterLen !== undefined) parts.push(`Письмо: ${ctx.letterLen} симв.`);
-        if (ctx.relocAttempts !== undefined) parts.push(`Попытка: ${ctx.relocAttempts}`);
-        if (ctx.href && ctx.href !== url) parts.push(`href: ${ctx.href}`);
-        if (ctx.error !== undefined) parts.push(`Ошибка: ${ctx.error}`);
-        sub = parts.join(' • ');
-      }
-
-      const item = {
-        id: 'log_' + (++this._logCounter || (this._logCounter = 1)) + '_' + Date.now(),
-        time,
-        tag,
-        tagType,
-        msg: String(payload.message || ''),
-        sub,
-        vid: cVid,
-        url,
-        selector: ctx.selector || '',
-        selectorName: ctx.selectorName || '',
-        expectedCss: ctx.expectedCss || '',
-        heuristic: ctx.heuristic || '',
-        contextSnippet: ctx.snippet || ctx.contextSnippet || '',
-        context: ctx,
-        isDevLog: true
-      };
-
-      this._appendLogItem(item);
-    }
+    
 
     updateQueue(queue) {
       if (queue && Array.isArray(queue.queue)) queue = queue.queue;
       this._queue = Array.isArray(queue) ? queue : [];
-      this._syncLogs();
+      this._syncQueue();
     }
 
     updateConfig(config) {
@@ -4968,15 +4711,15 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         this._updatePosition();
 
         if (this._animTimer) clearTimeout(this._animTimer);
-        if (this._isExpanded && this._activeTab === 'logs') {
-          this._syncLogs();
+        if (this._isExpanded && this._activeTab === 'queue') {
+          this._syncQueue();
         }
         this._animTimer = setTimeout(() => {
           this._isAnimating = false;
           if (root) root.classList.remove('is-animating');
           if (flyout) flyout.classList.remove('is-animating');
           this._animTimer = null;
-          if (this._isExpanded && this._activeTab === 'logs') {
+          if (this._isExpanded && this._activeTab === 'queue') {
             this._updateOverlayScrollbar();
           }
           if (!this._isExpanded && this._shadow) {
@@ -5001,10 +4744,9 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
     }
 
     setActiveTab(tabName) {
-      if (tabName === 'feed') {
-        tabName = 'logs';
+      if (!['settings', 'queue'].includes(tabName)) {
+        tabName = 'settings';
       }
-      if (!['settings', 'queue', 'logs'].includes(tabName)) return;
       this._activeTab = tabName;
       this._resetClearQueueBtn();
       this._hideTooltip();
@@ -5017,14 +4759,18 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
       if (!this._shadow) return;
       const tabs = this._shadow.querySelectorAll('.hha-tab-btn');
-      tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
+      tabs.forEach(t => {
+        const isActive = t.dataset.tab === tabName;
+        t.classList.toggle('active', isActive);
+        t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      });
 
       const panels = this._shadow.querySelectorAll('.hha-panel');
       panels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabName));
 
-      this._syncLogActions();
-      if (this._isExpanded && tabName === 'logs') {
-        this._syncLogs();
+      this._syncQueueActions();
+      if (this._isExpanded && tabName === 'queue') {
+        this._syncQueue();
       }
       requestAnimationFrame(() => this._updateOverlayScrollbar());
     }
@@ -5038,11 +4784,15 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       const btn = this._shadow.querySelector('[data-action="clear-queue"]') || this._shadow.querySelector('[data-el="clear-queue-btn"]');
       if (btn) {
         btn.classList.remove('is-confirming');
-        btn.innerHTML = ICONS.trash;
+        btn.innerHTML = `<span class="hha-btn-clear-all-icon">${ICONS.trash}</span><span class="hha-btn-clear-all-text">Очистить всё</span>`;
       }
     }
 
     _syncLogActions() {
+      this._syncQueueActions();
+    }
+
+    _syncQueueActions() {
       if (!this._shadow) return;
       const count = this._queue ? this._queue.length : 0;
       if (count === 0) {
@@ -5062,39 +4812,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
           clearBtn.style.display = 'none';
         }
       }
-
-      // Clear logs and Copy buttons
-      const clearLogsBtn = this._shadow.querySelector('[data-action="clear-logs"]') || this._shadow.querySelector('[data-el="clear-logs-btn"]');
-      const hasLogs = Boolean(this._liveFeed && this._liveFeed.length > 0);
-      if (clearLogsBtn) {
-        clearLogsBtn.style.opacity = hasLogs ? '1' : '0.4';
-        clearLogsBtn.style.pointerEvents = hasLogs ? 'auto' : 'none';
-      }
-
-      // Log header title with rolling count
-      const logHeaderTitle = this._shadow.querySelector('[data-el="log-header-title"]') || this._shadow.querySelector('[data-panel="logs"] .hha-log-header-title');
-      if (logHeaderTitle) {
-        const logCount = this._liveFeed ? this._liveFeed.length : 0;
-        logHeaderTitle.textContent = logCount > 0 ? `События и отклики (${logCount} / ${MAX_LOG_HISTORY_MEMORY})` : 'События и отклики';
-      }
-    }
-
-    _toggleLogDetail(logId, rowEl) {
-      if (!logId) return;
-      if (this._expandedLogIds.has(logId)) {
-        this._expandedLogIds.delete(logId);
-        if (rowEl) rowEl.classList.remove('is-expanded');
-      } else {
-        if (this._shadow) {
-          this._shadow.querySelectorAll('.hha-log-dev-row.is-expanded').forEach(r => {
-            r.classList.remove('is-expanded');
-          });
-        }
-        this._expandedLogIds.clear();
-        this._expandedLogIds.add(logId);
-        if (rowEl) rowEl.classList.add('is-expanded');
-      }
-      this._updateOverlayScrollbar();
     }
 
     getPosition() {
@@ -5139,11 +4856,12 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         <style>${STYLES}</style>
         <div class="hha-root" data-el="root">
           <div class="hha-pill" data-el="pill">
-            <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и журнал">
+            <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и очередь">
               <div class="hha-pill-progress-fill" data-el="pill-progress-fill"></div>
               <div class="hha-pill-status">
                 <span class="hha-pill-progress" data-el="pill-progress"><span class="hha-current-count" data-el="pill-current-count">0</span> / <span class="hha-pill-limit-val" data-el="pill-limit-val">50</span></span>
               </div>
+              <span class="hha-pill-error-dot" data-el="pill-error-dot" style="display: none;"></span>
             </div>
             <span class="hha-pill-queue-badge" data-action="open-queue-tab" data-el="pill-queue-badge" data-tooltip="Вакансии с анкетами в очереди" tabindex="0" role="button" aria-label="Очередь вакансий"></span>
             <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="pill-quick-btn">
@@ -5157,11 +4875,22 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
             <!-- Floating Tooltip -->
             <div class="hha-tooltip" data-el="tooltip"></div>
 
-            <!-- Segmented Control Tabs (3 columns) -->
-            <div class="hha-tabs">
-              <button type="button" class="hha-tab-btn active" data-action="switch-tab" data-tab="settings">Настройки</button>
-              <button type="button" class="hha-tab-btn" data-action="switch-tab" data-tab="queue"><span>Очередь</span> <span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
-              <button type="button" class="hha-tab-btn" data-action="switch-tab" data-tab="logs"><span>Логи</span><span class="hha-tab-badge is-error" data-el="log-error-badge" style="display: none;">0</span></button>
+            <!-- Error Banner inside Flyout -->
+            <div class="hha-error-banner" data-el="error-banner" style="display: none;">
+              <div class="hha-error-banner-main">
+                <span class="hha-error-icon">${ICONS.alert}</span>
+                <span class="hha-error-text" data-el="error-banner-text">Ошибка</span>
+              </div>
+              <div class="hha-error-banner-actions">
+                <button type="button" class="hha-btn-copy-error" data-action="copy-last-error" title="Скопировать детали ошибки">Скопировать</button>
+                <button type="button" class="hha-btn-dismiss-error" data-action="dismiss-error" aria-label="Закрыть">✕</button>
+              </div>
+            </div>
+
+            <!-- Segmented Control Tabs (2 columns) -->
+            <div class="hha-tabs" role="tablist" aria-label="Разделы панели">
+              <button type="button" class="hha-tab-btn active" role="tab" aria-selected="true" data-action="switch-tab" data-tab="settings">Настройки</button>
+              <button type="button" class="hha-tab-btn" role="tab" aria-selected="false" data-action="switch-tab" data-tab="queue"><span>Очередь</span> <span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
             </div>
 
             <!-- Panels -->
@@ -5180,9 +4909,9 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
                   <div class="hha-speed-row">
                     <span class="hha-row-label">Скорость</span>
                     <div class="hha-segmented-control">
-                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="safe" data-tooltip="Безопасно: интервал 4–8 с">Безопасно</button>
-                      <button type="button" class="hha-segmented-btn is-active" data-action="set-preset" data-preset="balanced" data-tooltip="Баланс: интервал 2–5 с">Баланс</button>
-                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="fast" data-tooltip="Быстро: интервал 1.5–3 с">Быстро</button>
+                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="safe">Безопасно</button>
+                      <button type="button" class="hha-segmented-btn is-active" data-action="set-preset" data-preset="balanced">Баланс</button>
+                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="fast">Быстро</button>
                     </div>
                   </div>
                 </div>
@@ -5210,7 +4939,10 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
                   <div class="hha-log-header">
                     <span class="hha-log-header-title" data-el="queue-status-text">Очередь откликов</span>
                     <div class="hha-log-actions">
-                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-clear-queue" data-action="clear-queue" data-el="clear-queue-btn" data-tooltip="Очистить очередь" disabled style="display: none;">${ICONS.trash}</button>
+                      <button type="button" class="hha-btn-clear-all" data-action="clear-queue" data-el="clear-queue-btn" data-tooltip="Очистить всю очередь" aria-label="Очистить всю очередь" disabled style="display: none;">
+                        <span class="hha-btn-clear-all-icon">${ICONS.trash}</span>
+                        <span class="hha-btn-clear-all-text">Очистить всё</span>
+                      </button>
                     </div>
                   </div>
                   <div class="hha-log-stream" data-el="queue-stream">
@@ -5221,28 +4953,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
                   </div>
                   <div class="hha-overlay-scrollbar" data-el="queue-scrollbar">
                     <div class="hha-overlay-thumb" data-el="queue-scroll-thumb"></div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Tab 3: Logs (Журнал) -->
-              <div class="hha-panel" data-panel="logs">
-                <div class="hha-log-card">
-                  <div class="hha-log-header">
-                    <span class="hha-log-header-title" data-el="log-header-title">События и отклики</span>
-                    <div class="hha-log-actions">
-                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-clear-logs" data-action="clear-logs" data-el="clear-logs-btn" data-tooltip="Очистить логи">${ICONS.reset}</button>
-                      <button type="button" class="hha-btn-icon hha-btn-ghost hha-btn-copy-log" data-action="copy-logs" data-el="copy-logs-btn" data-tooltip="Скопировать логи">${ICONS.copy}</button>
-                    </div>
-                  </div>
-                  <div class="hha-log-stream" data-el="log-stream">
-                    <div class="hha-log-empty">
-                      <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
-                      <div class="hha-log-empty-text">Нет записей в логах</div>
-                    </div>
-                  </div>
-                  <div class="hha-overlay-scrollbar" data-el="log-scrollbar">
-                    <div class="hha-overlay-thumb" data-el="log-scroll-thumb"></div>
                   </div>
                 </div>
               </div>
@@ -5288,6 +4998,24 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       root.addEventListener('scroll', () => {
         this._hideTooltip();
       }, { capture: true, passive: true });
+
+      // Keyboard navigation for interactive elements (Enter / Space)
+      root.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+          const target = e.target && typeof e.target.closest === 'function' 
+            ? e.target.closest('[data-action], [role="button"]') 
+            : null;
+          if (target) {
+            const tag = target.tagName.toLowerCase();
+            if (tag !== 'button' && tag !== 'a' && tag !== 'input' && tag !== 'textarea') {
+              if (e.key === ' ' || e.key === 'Spacebar') {
+                e.preventDefault();
+              }
+              target.click();
+            }
+          }
+        }
+      });
 
       // Keyboard support for status group
       const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
@@ -5506,7 +5234,6 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       };
 
       attach('[data-el="queue-stream"]', '[data-el="queue-scrollbar"]', '[data-el="queue-scroll-thumb"]');
-      attach('[data-el="log-stream"]', '[data-el="log-scrollbar"]', '[data-el="log-scroll-thumb"]');
     }
 
     _updateOverlayScrollbar() {
@@ -5537,7 +5264,66 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       };
 
       update('[data-el="queue-stream"]', '[data-el="queue-scrollbar"]', '[data-el="queue-scroll-thumb"]');
-      update('[data-el="log-stream"]', '[data-el="log-scrollbar"]', '[data-el="log-scroll-thumb"]');
+    }
+
+    _showError(errPayload) {
+      if (!errPayload) return;
+      const time = formatTime(errPayload.timestamp || Date.now());
+      const code = errPayload.code || (errPayload.level === 'ERR' ? 'ERROR' : 'INFO');
+      const message = String(errPayload.message || 'Произошла непредвиденная ошибка');
+      const details = errPayload.details || errPayload.context || {};
+      const url = details.url || (typeof window !== 'undefined' ? window.location.href : '');
+
+      this._lastErrorPayload = {
+        time,
+        code,
+        message,
+        details,
+        url
+      };
+
+      if (!this._shadow) return;
+
+      const humanMsg = formatHumanError(code, message);
+
+      // 1. Update and show Banner (inside flyout)
+      const banner = this._shadow.querySelector('[data-el="error-banner"]');
+      const bannerText = this._shadow.querySelector('[data-el="error-banner-text"]');
+      if (banner && bannerText) {
+        bannerText.textContent = humanMsg;
+        bannerText.setAttribute('title', `${humanMsg}\n(${code}: ${message})`);
+        banner.style.display = 'flex';
+      }
+
+      // 2. Show refined error indicator on collapsed pill
+      const errorDot = this._shadow.querySelector('[data-el="pill-error-dot"]');
+      if (errorDot) {
+        errorDot.style.display = 'inline-block';
+        errorDot.setAttribute('title', `${humanMsg} (нажмите для деталей)`);
+      }
+      const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
+      if (statusGroup) {
+        statusGroup.classList.add('has-error');
+      }
+    }
+
+    _dismissError() {
+      if (this._toastTimer) {
+        clearTimeout(this._toastTimer);
+        this._toastTimer = null;
+      }
+      if (!this._shadow) return;
+      const banner = this._shadow.querySelector('[data-el="error-banner"]');
+      if (banner) banner.style.display = 'none';
+      const errorDot = this._shadow.querySelector('[data-el="pill-error-dot"]');
+      if (errorDot) errorDot.style.display = 'none';
+      const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
+      if (statusGroup) statusGroup.classList.remove('has-error');
+      this._lastErrorPayload = null;
+    }
+
+    _dismissToast() {
+      this._dismissError();
     }
 
     _handleRootClick(e) {
@@ -5576,27 +5362,12 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       } else if (action === 'switch-tab') {
         e.stopPropagation();
         this.setActiveTab(actionTarget.dataset.tab);
-      } else if (action === 'copy-logs') {
+      } else if (action === 'copy-last-error') {
         e.stopPropagation();
-        this._copyLogsToClipboard();
-      } else if (action === 'toggle-log-detail') {
+        this._copyLastErrorToClipboard(actionTarget);
+      } else if (action === 'dismiss-error') {
         e.stopPropagation();
-        const logId = actionTarget.dataset.logId;
-        this._toggleLogDetail(logId, actionTarget);
-      } else if (action === 'copy-single-log') {
-        e.stopPropagation();
-        const logId = actionTarget.dataset.logId;
-        this._copySingleLogToClipboard(logId, actionTarget);
-      } else if (action === 'clear-logs') {
-        e.stopPropagation();
-        this._liveFeed = [];
-        this._expandedLogIds.clear();
-        if (this._persistLogsTimer) {
-          clearTimeout(this._persistLogsTimer);
-          this._persistLogsTimer = null;
-        }
-        removeStoredLogs(this._assistant);
-        this._syncLogs();
+        this._dismissError();
       } else if (action === 'clear-queue') {
         e.stopPropagation();
         if (actionTarget.disabled || (typeof actionTarget.hasAttribute === 'function' && actionTarget.hasAttribute('disabled')) || this._queue.length === 0) {
@@ -5611,12 +5382,12 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
             this._assistant.clearManualQueue();
           } else {
             this._queue = [];
-            this._syncLogs();
+            this._syncQueue();
           }
         } else {
-          // First click -> show inline confirmation "Очистить?"
+          // First click -> show inline confirmation "Точно очистить?"
           actionTarget.classList.add('is-confirming');
-          actionTarget.innerHTML = '<span class="hha-btn-confirm-text">Очистить?</span>';
+          actionTarget.innerHTML = '<span class="hha-btn-confirm-text">Точно очистить?</span>';
           this._queueConfirmTimer = setTimeout(() => {
             this._queueConfirmTimer = null;
             this._resetClearQueueBtn();
@@ -5631,7 +5402,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
             this._assistant.removeManualItem(vid);
           } else {
             this._queue = this._queue.filter(it => cleanVid(it.vid) !== cVid);
-            this._syncLogs();
+            this._syncQueue();
           }
         }
       } else if (action === 'step-limit') {
@@ -5682,154 +5453,41 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       return Promise.resolve(this._fallbackCopyText(text));
     }
 
-    _formatLogItemForClipboard(item) {
-      if (!item) return '';
-      const time = String(item.time || '').startsWith('[') ? item.time : `[${item.time || formatTime()}]`;
-      const tag = item.tag ? `[${item.tag}]` : '[EVENT]';
-      const badge = item.metaBadge ? ` [${item.metaBadge}]` : '';
-      const msg = item.msg || item.title || '';
-      const ctx = item.context || {};
+    
 
-      const hasMultiLineDetails = Boolean(
-        item.selector || item.expectedCss || item.heuristic || item.contextSnippet ||
-        ctx.error || ctx.stack || (Array.isArray(ctx.modals) && ctx.modals.length > 0) ||
-        (ctx.href && ctx.href !== item.url) || ctx.tag || ctx.qa || ctx.text || ctx.rect ||
-        ctx.optionsCount !== undefined || ctx.cardsCount !== undefined ||
-        ctx.elapsedMs !== undefined || ctx.visibleModalsCount !== undefined ||
-        ctx.delaySec !== undefined || ctx.pending !== undefined || ctx.total !== undefined ||
-        ctx.skippedProcessed !== undefined || ctx.skippedHidden !== undefined ||
-        ctx.letterLen !== undefined || ctx.relocAttempts !== undefined || ctx.sent !== undefined ||
-        ctx.snippet || ctx.details || ctx.outcome !== undefined || ctx.result !== undefined || ctx.reason !== undefined
-      );
-
-      if (hasMultiLineDetails) {
-        const parts = [`${time} ${tag}${badge} ${msg}`];
-        if (item.url) parts.push(`  URL: ${item.url}`);
-        if (item.vid) parts.push(`  ID вакансии: v_${item.vid}`);
-        if (item.selector) parts.push(`  Селектор: ${item.selector}${item.selectorName ? ` (${item.selectorName})` : ''}`);
-        if (ctx.qa && ctx.qa !== item.selector) parts.push(`  data-qa: ${ctx.qa}`);
-        if (ctx.tag) parts.push(`  Элемент: <${ctx.tag}>`);
-        if (ctx.text) parts.push(`  Текст: "${ctx.text}"`);
-        if (ctx.class) parts.push(`  CSS-класс: ${ctx.class}`);
-        if (ctx.rect && ctx.rect !== 'unknown') parts.push(`  Координаты: ${ctx.rect}`);
-        if (ctx.disabled !== undefined) parts.push(`  Отключен (disabled): ${ctx.disabled}`);
-        if (item.expectedCss) parts.push(`  Ожидался CSS: ${item.expectedCss}`);
-        if (item.heuristic) parts.push(`  Эвристика: ${item.heuristic}`);
-        if (item.employer) parts.push(`  Компания: ${item.employer}`);
-        if (ctx.href && ctx.href !== item.url) parts.push(`  Ссылка (href): ${ctx.href}`);
-        if (ctx.delaySec !== undefined) parts.push(`  Пауза безопасности: ${ctx.delaySec}с`);
-        if (ctx.total !== undefined) parts.push(`  Всего кнопок: ${ctx.total}`);
-        if (ctx.pending !== undefined) parts.push(`  К обработке: ${ctx.pending}`);
-        if (ctx.skippedProcessed !== undefined) parts.push(`  Ранее обработаны: ${ctx.skippedProcessed}`);
-        if (ctx.skippedHidden !== undefined) parts.push(`  Скрыты: ${ctx.skippedHidden}`);
-        if (ctx.sent !== undefined) parts.push(`  Отправлено: ${ctx.sent}${ctx.limit ? ` / ${ctx.limit}` : ''}`);
-        if (ctx.preset !== undefined) parts.push(`  Пресет: ${ctx.preset}`);
-        if (ctx.letterLen !== undefined) parts.push(`  Длина письма: ${ctx.letterLen} симв.`);
-        if (ctx.relocAttempts !== undefined) parts.push(`  Попытка релокации: ${ctx.relocAttempts}`);
-        if (ctx.outcome !== undefined) parts.push(`  Исход: ${ctx.outcome}`);
-        if (ctx.result !== undefined) parts.push(`  Результат: ${ctx.result}`);
-        if (ctx.reason !== undefined) parts.push(`  Причина: ${ctx.reason}`);
-        if (ctx.optionsCount !== undefined) parts.push(`  Вариантов резюме: ${ctx.optionsCount}`);
-        if (ctx.cardsCount !== undefined) parts.push(`  Карточек резюме: ${ctx.cardsCount}`);
-        if (ctx.elapsedMs !== undefined) parts.push(`  Время ожидания: ${(ctx.elapsedMs / 1000).toFixed(1)}с${ctx.timeoutMs ? ` из ${(ctx.timeoutMs / 1000).toFixed(1)}с` : ''}`);
-        if (ctx.visibleModalsCount !== undefined) parts.push(`  Видимых модалок: ${ctx.visibleModalsCount}`);
-        if (Array.isArray(ctx.modals) && ctx.modals.length > 0) {
-          parts.push('  Обнаруженные модальные окна:');
-          ctx.modals.forEach(m => parts.push(`    • ${m}`));
+    _copyLastErrorToClipboard(btnEl) {
+      if (!this._lastErrorPayload) return;
+      const err = this._lastErrorPayload;
+      const lines = [
+        `=== HH Apply Assistant Error Report ===`,
+        `Time: ${err.time || formatTime()}`,
+        `Code: ${err.code || 'UNKNOWN'}`,
+        `Message: ${err.message || ''}`,
+        `URL: ${err.url || (typeof window !== 'undefined' ? window.location.href : '')}`,
+        `User-Agent: ${typeof navigator !== 'undefined' ? navigator.userAgent : ''}`
+      ];
+      if (err.details && Object.keys(err.details).length > 0) {
+        try {
+          lines.push(`Context: ${JSON.stringify(err.details, null, 2)}`);
+        } catch (_) {
+          lines.push(`Context: ${String(err.details)}`);
         }
-        if (ctx.filename) parts.push(`  Файл: ${ctx.filename}${ctx.lineno ? `:${ctx.lineno}:${ctx.colno || 0}` : ''}`);
-        if (ctx.error) parts.push(`  Ошибка: ${ctx.error}`);
-        if (ctx.stack) {
-          parts.push('  Стек вызовов:');
-          const stackLines = String(ctx.stack).trim().split(/\r?\n/);
-          stackLines.forEach(l => parts.push(`    ${l}`));
-        }
-        if (item.contextSnippet) {
-          parts.push('  HTML родителя:');
-          const snippetLines = String(item.contextSnippet).trim().split(/\r?\n/);
-          snippetLines.forEach(l => parts.push(`    ${l}`));
-        }
-        return parts.join('\n');
       }
-
-      const idPart = item.vid ? ` (v_${item.vid}${item.url ? ' / ' + item.url : ''})` : (item.url ? ` (${item.url})` : '');
-      const sub = item.sub ? ` • ${item.sub}` : '';
-      return `${time} ${tag} ${msg}${idPart}${sub}`;
-    }
-
-    _copySingleLogToClipboard(logId, btnEl) {
-      if (!logId || !this._liveFeed) return;
-      const item = this._liveFeed.find(l => l.id === logId);
-      if (!item) return;
-      const textToCopy = this._formatLogItemForClipboard(item);
-      if (!textToCopy) return;
-
-      this._copyText(textToCopy);
+      const text = lines.join('\n');
+      this._copyText(text);
 
       if (btnEl) {
         const origHtml = btnEl.innerHTML;
         btnEl.classList.add('is-copied');
-        btnEl.innerHTML = `${ICONS.check} <span>Скопировано</span>`;
+        btnEl.innerHTML = `${ICONS.check} <span>Скопировано!</span>`;
         setTimeout(() => {
           btnEl.classList.remove('is-copied');
           btnEl.innerHTML = origHtml;
-        }, 1500);
+        }, 1800);
       }
     }
 
-    _copyLogsToClipboard() {
-      let textToCopy = '';
-      const lines = [];
-
-      if (this._activeTab === 'queue') {
-        if (this._queue && this._queue.length > 0) {
-          for (const item of this._queue) {
-            const cVid = cleanVid(item.vid);
-            const url = toVacancyUrl(cVid, item.url);
-            const idUrl = cVid && url ? `${cVid} / ${url}` : (cVid || url || '');
-            const suffix = idUrl ? ` (${idUrl})` : '';
-            const time = item.time ? (String(item.time).startsWith('[') ? item.time : `[${item.time}]`) : `[${formatTime()}]`;
-            const badge = 'В очередь';
-            const title = item.title || 'Вакансия';
-            lines.push(`${time} [${badge}] ${title}${suffix}`);
-          }
-          textToCopy = lines.join('\n');
-        }
-      } else {
-        if (this._liveFeed && this._liveFeed.length > 0) {
-          const formattedItems = this._liveFeed.map(item => this._formatLogItemForClipboard(item)).filter(Boolean);
-          const hasMultiline = formattedItems.some(str => str.includes('\n'));
-          textToCopy = hasMultiline ? formattedItems.join('\n\n') : formattedItems.join('\n');
-        }
-      }
-
-      if (!textToCopy) {
-        textToCopy = 'Нет недавних действий';
-      }
-
-      this._copyText(textToCopy);
-
-      const copyBtn = this._shadow ? (this._shadow.querySelector('[data-action="copy-logs"]') || this._shadow.querySelector('[data-el="copy-logs-btn"]')) : null;
-      if (copyBtn) {
-        if (!this._copyBtnOrigHtml) {
-          this._copyBtnOrigHtml = copyBtn.innerHTML;
-          this._copyBtnOrigColor = copyBtn.style.color;
-        }
-        copyBtn.innerHTML = ICONS.check;
-        copyBtn.style.color = '#15803d';
-        if (this._copyFeedbackTimer) clearTimeout(this._copyFeedbackTimer);
-        this._copyFeedbackTimer = setTimeout(() => {
-          if (copyBtn) {
-            copyBtn.innerHTML = this._copyBtnOrigHtml || ICONS.copy;
-            copyBtn.style.color = this._copyBtnOrigColor || '';
-          }
-          this._copyBtnOrigHtml = null;
-          this._copyBtnOrigColor = null;
-          this._copyFeedbackTimer = null;
-        }, 1500);
-      }
-      return textToCopy;
-    }
+    
 
     _handleToggleAutomation() {
       if (!this._assistant) return;
@@ -5843,7 +5501,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         if (this._status.code === 'DAILY_LIMIT_REACHED') {
           if (this._assistant && typeof this._assistant.detectDailyLimit === 'function' && this._assistant.detectDailyLimit()) {
             this.open();
-            this.setActiveTab('logs');
+            this.setActiveTab('settings');
             return;
           }
           this.updateStatus('idle', 'IDLE');
@@ -6186,7 +5844,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       this._syncStatus();
       this._syncProgress();
       this._syncConfig();
-      this._syncLogs();
+      this._syncQueue();
     }
 
     _syncStatus() {
@@ -6248,6 +5906,10 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
 
 
     _syncLogs() {
+      this._syncQueue();
+    }
+
+    _syncQueue() {
       if (!this._shadow) return;
       this._hideTooltip();
       const count = this._queue ? this._queue.length : 0;
@@ -6308,9 +5970,13 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
       if (queueTabCount) {
         if (count > 0) {
           queueTabCount.textContent = String(count);
+          queueTabCount.setAttribute('title', `В очереди: ${count}`);
+          queueTabCount.setAttribute('aria-label', `В очереди: ${count}`);
           queueTabCount.style.display = 'inline-flex';
         } else {
           queueTabCount.textContent = '';
+          queueTabCount.removeAttribute('title');
+          queueTabCount.removeAttribute('aria-label');
           queueTabCount.style.display = 'none';
         }
       }
@@ -6321,25 +5987,8 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         queueStatusText.textContent = count > 0 ? `Вакансий в очереди: ${count}` : 'Очередь откликов';
       }
 
-      // Update error badge on Journal tab button
-      let countError = 0;
-      if (this._liveFeed && this._liveFeed.length > 0) {
-        for (const it of this._liveFeed) {
-          if (it.category === 'error' || it.tagType === 'error') countError++;
-        }
-      }
-      const errBadge = this._shadow.querySelector('[data-el="log-error-badge"]');
-      if (errBadge) {
-        if (countError > 0) {
-          errBadge.textContent = String(countError);
-          errBadge.style.display = 'inline-flex';
-        } else {
-          errBadge.style.display = 'none';
-        }
-      }
-
       // Sync action buttons visibility
-      this._syncLogActions();
+      this._syncQueueActions();
 
       // Render Queue Stream
       const queueStream = this._shadow.querySelector('[data-el="queue-stream"]');
@@ -6354,23 +6003,22 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
               displayTitle = cVid ? `Вакансия #${cVid}` : 'Вакансия';
             }
             const reasonInfo = formatQueueReasonInfo(item.reason);
-            const employer = collapseSpaces(item.employer || '');
-            const salary = collapseSpaces(item.salary || '');
+            const cleanSalary = formatCleanSalary(item.salary || '');
+            const showVidTag = cVid && !displayTitle.includes(cVid);
 
             return `
               <div class="hha-queue-card">
                 <div class="hha-queue-card-top">
                   <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-tooltip="${escapeHtml(displayTitle)}" onclick="event.stopPropagation();">
                     <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
+                    <span class="hha-queue-link-arrow">↗</span>
                   </a>
-                  <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить">${ICONS.trash}</button>
+                  <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">${ICONS.trash}</button>
                 </div>
                 <div class="hha-queue-card-bottom">
-                  <span class="hha-queue-badge badge-${escapeHtml(reasonInfo.type)}">${escapeHtml(reasonInfo.text)}</span>
-                  ${employer ? `<span class="hha-queue-employer" title="${escapeHtml(employer)}">${escapeHtml(employer)}</span>` : ''}
-                  ${employer && salary ? '<span class="hha-queue-meta-divider">•</span>' : ''}
-                  ${salary ? `<span class="hha-queue-salary">${escapeHtml(salary)}</span>` : ''}
-                  ${cVid ? `<span class="hha-queue-vid">#${escapeHtml(cVid)}</span>` : ''}
+                  <span class="hha-queue-badge badge-${escapeHtml(reasonInfo.type)}"><span class="hha-queue-badge-dot">●</span>${escapeHtml(reasonInfo.text)}</span>
+                  ${cleanSalary ? `<span class="hha-queue-salary" title="${escapeHtml(item.salary || cleanSalary)}">${escapeHtml(cleanSalary)}</span>` : ''}
+                  ${showVidTag ? `<span class="hha-queue-vid">#${escapeHtml(cVid)}</span>` : ''}
                 </div>
               </div>
             `;
@@ -6385,95 +6033,7 @@ const MAX_LOG_HISTORY_MEMORY = 2000;
         }
       }
 
-      // Render Logs Stream
-      const logStream = this._shadow.querySelector('[data-el="log-stream"]');
-      if (logStream && this._isExpanded && this._activeTab === 'logs') {
-        if (this._liveFeed && this._liveFeed.length > 0) {
-          const itemsToRender = this._liveFeed.slice(0, 150);
-          const html = itemsToRender.map(item => {
-            const isExpanded = this._expandedLogIds && this._expandedLogIds.has(item.id);
-            const cleanSub = item.sub ? item.sub.replace(/^Причина:\s*Причина:\s*/i, 'Причина: ') : '';
-            return `
-              <div class="hha-log-dev-row ${isExpanded ? 'is-expanded' : ''}" data-action="toggle-log-detail" data-log-id="${escapeHtml(item.id)}">
-                <div class="hha-log-dev-main">
-                  <span class="hha-log-dev-time">${escapeHtml(item.time)}</span>
-                  <span class="hha-log-dev-tag tag-${escapeHtml(item.tagType)}">[${escapeHtml(item.tag)}]</span>
-                  <span class="hha-log-dev-msg" title="${escapeHtml(item.msg)}">${escapeHtml(item.msg)}</span>
-                  <span class="hha-log-dev-arrow">▾</span>
-                </div>
-                <div class="hha-log-dev-details">
-                  <div class="hha-log-detail-grid">
-                    ${item.selector ? `
-                      <div class="hha-log-detail-key">Селектор:</div>
-                      <div class="hha-log-detail-val"><code>${escapeHtml(item.selector)}</code> ${item.selectorName ? `<span class="hha-log-detail-note">(${escapeHtml(item.selectorName)})</span>` : ''}</div>
-                    ` : ''}
-                    ${item.expectedCss ? `
-                      <div class="hha-log-detail-block">
-                        <div class="hha-log-detail-block-title">Ожидался CSS:</div>
-                        <code class="hha-code-highlight">${escapeHtml(item.expectedCss)}</code>
-                      </div>
-                    ` : ''}
-                    ${item.heuristic ? `
-                      <div class="hha-log-detail-block">
-                        <div class="hha-log-detail-block-title">Эвристика:</div>
-                        <code class="hha-code-heuristic">${escapeHtml(item.heuristic)}</code>
-                      </div>
-                    ` : ''}
-                    ${item.contextSnippet ? `
-                      <div class="hha-log-detail-block">
-                        <div class="hha-log-detail-block-title">HTML родителя:</div>
-                        <pre class="hha-dom-snippet">${escapeHtml(item.contextSnippet)}</pre>
-                      </div>
-                    ` : ''}
-                    ${item.vid ? `
-                      <div class="hha-log-detail-key">Вакансия:</div>
-                      <div class="hha-log-detail-val">
-                        <code>v_${escapeHtml(item.vid)}</code>
-                        ${item.url ? `
-                          <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="hha-log-detail-link" onclick="event.stopPropagation();" title="Открыть вакансию в новой вкладке">
-                            ${ICONS.open} <span>Открыть на hh.ru</span>
-                          </a>
-                        ` : ''}
-                      </div>
-                    ` : (item.url ? `
-                      <div class="hha-log-detail-key">URL:</div>
-                      <div class="hha-log-detail-val">
-                        <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="hha-log-detail-url" onclick="event.stopPropagation();">${escapeHtml(item.url)}</a>
-                      </div>
-                    ` : '')}
-                    ${item.employer ? `
-                      <div class="hha-log-detail-key">Компания:</div>
-                      <div class="hha-log-detail-val">${escapeHtml(item.employer)}</div>
-                    ` : ''}
-                    ${cleanSub ? `
-                      <div class="hha-log-detail-key">${cleanSub.startsWith('Причина:') ? 'Причина:' : 'Инфо:'}</div>
-                      <div class="hha-log-detail-val">${escapeHtml(cleanSub.replace(/^Причина:\s*/i, ''))}</div>
-                    ` : ''}
-                  </div>
-                  <div class="hha-log-detail-footer">
-                    <button type="button" class="hha-btn-copy-item" data-action="copy-single-log" data-log-id="${escapeHtml(item.id)}">
-                      ${ICONS.copy} <span>Скопировать детали</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            `;
-          }).join('');
-          const footerNote = this._liveFeed.length > 150
-            ? `<div class="hha-log-footer-note" style="padding: 10px 14px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px dashed rgba(226, 232, 240, 0.6);">Показаны последние 150 из ${this._liveFeed.length} записей.<br>Кнопка «Скопировать» экспортирует всю историю (${this._liveFeed.length}).</div>`
-            : '';
-          logStream.innerHTML = html + footerNote;
-        } else {
-          logStream.innerHTML = `
-            <div class="hha-log-empty">
-              <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
-              <div class="hha-log-empty-text">Нет записей в логах</div>
-            </div>
-          `;
-        }
-      }
-
-      if (this._isExpanded && this._activeTab === 'logs') {
+      if (this._isExpanded && this._activeTab === 'queue') {
         this._updateOverlayScrollbar();
       }
     }
