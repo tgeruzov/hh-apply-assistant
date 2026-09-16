@@ -2785,10 +2785,10 @@ const MAX_COVER_LENGTH = 5000;
       return { text: 'Промо / Лид', type: 'neutral' };
     }
     if (r.includes('access_denied') || r.includes('inaccessible')) {
-      return { text: 'Нет доступа', type: 'warning' };
+      return { text: 'Нет доступа', type: 'error' };
     }
     if (r.includes('test') || r.includes('questionnaire') || r.includes('questions')) {
-      return { text: 'Тест / анкета', type: 'warning' };
+      return { text: 'Тест / анкета', type: 'info' };
     }
     if (r.includes('relocation')) {
       return { text: 'Релокация', type: 'info' };
@@ -2797,7 +2797,7 @@ const MAX_COVER_LENGTH = 5000;
       return { text: 'Нет кнопки', type: 'neutral' };
     }
     if (r.includes('external')) {
-      return { text: 'Внешний сайт', type: 'warning' };
+      return { text: 'Внешний сайт', type: 'neutral' };
     }
     if (r.includes('failed') || r.includes('error') || r.includes('max_retries') || r.includes('timeout') || r.includes('hang')) {
       return { text: 'Сбой отклика', type: 'error' };
@@ -2834,7 +2834,10 @@ const MAX_COVER_LENGTH = 5000;
     open: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>`,
     trash: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`,
     alert: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>`,
-    inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`
+    inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`,
+    close: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>`,
+    chevronDown: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>`,
+    dragHandle: `<svg width="10" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M9 3c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 7c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 7c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6-14c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 7c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 7c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`
   };
 
   // --- 3. Shadow DOM Stylesheet ---
@@ -2900,7 +2903,7 @@ const MAX_COVER_LENGTH = 5000;
       /* M3 Surface Container Roles (Tonal Elevation) */
       --md-sys-color-surface-container-lowest: #FFFFFF;
       --md-sys-color-surface-container-low: #F6F8F7;
-      --md-sys-color-surface-container: #FFFFFF;
+      --md-sys-color-surface-container: #F0F4F2;
       --md-sys-color-surface-container-high: #EEF1EF;
       --md-sys-color-surface-container-highest: #E4E8E6;
       --md-sys-color-surface-dim: #D8DBD9;
@@ -2909,11 +2912,11 @@ const MAX_COVER_LENGTH = 5000;
       --md-sys-color-inverse-surface: #2E3130;
       --md-sys-color-inverse-on-surface: #EFF1EF;
 
-      /* M3 Extended Semantic Roles: Warning */
-      --md-custom-color-warning: #7D5700;
+      /* M3 Extended Semantic Roles: Warning (Harmonized with palette) */
+      --md-custom-color-warning: #505F5C;
       --md-custom-color-on-warning: #FFFFFF;
-      --md-custom-color-warning-container: #FEE4B8;
-      --md-custom-color-on-warning-container: #3B2300;
+      --md-custom-color-warning-container: #DAE5E1;
+      --md-custom-color-on-warning-container: #191C1B;
 
       /* ── M3 Shape Scale ── */
       --md-sys-shape-corner-none: 0px;
@@ -2921,7 +2924,7 @@ const MAX_COVER_LENGTH = 5000;
       --md-sys-shape-corner-small: 8px;
       --md-sys-shape-corner-medium: 12px;
       --md-sys-shape-corner-large: 16px;
-      --md-sys-shape-corner-extra-large: 28px;
+      --md-sys-shape-corner-extra-large: 22px;
       --md-sys-shape-corner-full: 9999px;
 
       /* ── M3 Elevation (Soft Ambient Drop Shadows - No Dirty Halo) ── */
@@ -3055,10 +3058,10 @@ const MAX_COVER_LENGTH = 5000;
       --md-sys-color-inverse-surface: #DEE4E1;
       --md-sys-color-inverse-on-surface: #2B3230;
 
-      --md-custom-color-warning: #FFDEA3;
-      --md-custom-color-on-warning: #261900;
-      --md-custom-color-warning-container: #5B3F00;
-      --md-custom-color-on-warning-container: #FFDEA3;
+      --md-custom-color-warning: #BCEBE2;
+      --md-custom-color-on-warning: #003731;
+      --md-custom-color-warning-container: #334B46;
+      --md-custom-color-on-warning-container: #DAE5E1;
     }
 
     *, *::before, *::after {
@@ -3084,6 +3087,12 @@ const MAX_COVER_LENGTH = 5000;
       pointer-events: none;
       transition: none;
       transform: translateX(-50%);
+    }
+
+    .hha-root.is-snapping {
+      transition: left 240ms cubic-bezier(0.05, 0.7, 0.1, 1),
+                  top 240ms cubic-bezier(0.05, 0.7, 0.1, 1),
+                  bottom 240ms cubic-bezier(0.05, 0.7, 0.1, 1) !important;
     }
 
     .hha-root.dir-up {
@@ -3145,8 +3154,8 @@ const MAX_COVER_LENGTH = 5000;
     .hha-pill-status-group {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      cursor: pointer;
+      gap: 4px;
+      cursor: grab;
       user-select: none;
       position: relative;
       overflow: hidden;
@@ -3154,7 +3163,7 @@ const MAX_COVER_LENGTH = 5000;
       border-radius: var(--md-sys-shape-corner-full);
       height: var(--md-comp-control-height);
       min-height: var(--md-comp-control-height);
-      padding: 0 12px;
+      padding: 0 10px 0 12px;
       background: transparent;
       border: none;
       box-sizing: border-box;
@@ -3172,21 +3181,23 @@ const MAX_COVER_LENGTH = 5000;
       background: var(--md-sys-color-surface-container-low);
     }
 
-    .hha-pill-status-group:active {
+    .hha-pill-status-group:active,
+    .hha-root.is-dragging .hha-pill-status-group {
       background: var(--md-sys-color-surface-container);
-      transform: scale(0.98);
+      cursor: grabbing;
     }
+
 
     .hha-pill-status {
       position: relative;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 48px;
+      min-width: 44px;
       height: var(--md-comp-control-height);
       min-height: var(--md-comp-control-height);
       box-sizing: border-box;
-      padding: 0 4px;
+      padding: 0 2px;
       border-radius: 0;
       overflow: visible;
       z-index: 2;
@@ -3203,6 +3214,7 @@ const MAX_COVER_LENGTH = 5000;
       height: 100%;
       width: 0%;
       background: var(--md-sys-color-secondary-container);
+      opacity: 0.75;
       border-radius: var(--md-sys-shape-corner-full);
       z-index: 1;
       pointer-events: none;
@@ -3333,8 +3345,8 @@ const MAX_COVER_LENGTH = 5000;
     .hha-btn-quick {
       margin-left: auto;
       width: auto;
-      min-width: 88px;
-      padding: 0 12px;
+      min-width: 76px;
+      padding: 0 16px;
       border-radius: var(--md-sys-shape-corner-full);
       border: none;
       font-family: var(--md-sys-typescale-font-family);
@@ -3346,7 +3358,7 @@ const MAX_COVER_LENGTH = 5000;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
+      gap: 0;
       height: var(--md-comp-control-height);
       box-sizing: border-box;
       vertical-align: middle;
@@ -3358,23 +3370,6 @@ const MAX_COVER_LENGTH = 5000;
         box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), 
         transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard),
         min-width var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate);
-    }
-
-    .hha-btn-icon-slot {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 14px;
-      height: 14px;
-      flex-shrink: 0;
-      transition: 
-        transform var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-decelerate),
-        opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
-    }
-
-    .hha-btn-icon-slot.is-swapping {
-      transform: scale(0.6) rotate(-15deg);
-      opacity: 0;
     }
 
     .hha-btn-label {
@@ -3428,6 +3423,33 @@ const MAX_COVER_LENGTH = 5000;
       box-shadow: var(--md-sys-elevation-level1);
       color: var(--md-sys-color-on-error);
       transform: scale(0.97);
+    }
+
+    /* Living Breathing Indicator when Automation is Running */
+    .hha-root.is-running .hha-pill-progress-fill {
+      animation: hhaProgressBreathe 2.4s ease-in-out infinite;
+    }
+
+    .hha-root.is-running .hha-btn-stop {
+      animation: hhaStopPulse 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+
+    @keyframes hhaProgressBreathe {
+      0%, 100% {
+        opacity: 0.65;
+      }
+      50% {
+        opacity: 0.95;
+      }
+    }
+
+    @keyframes hhaStopPulse {
+      0%, 100% {
+        box-shadow: 0 0 0 0 color-mix(in srgb, var(--md-sys-color-error) 45%, transparent);
+      }
+      50% {
+        box-shadow: 0 0 0 5px color-mix(in srgb, var(--md-sys-color-error) 15%, transparent);
+      }
     }
 
     /* M3 Filled Success Button for Done / Limit Reached */
@@ -3497,7 +3519,7 @@ const MAX_COVER_LENGTH = 5000;
       box-sizing: border-box;
       background: var(--md-sys-color-surface-container);
       border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: var(--md-sys-shape-corner-large);
+      border-radius: var(--md-sys-shape-corner-extra-large);
       box-shadow: var(--md-sys-elevation-level3);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
@@ -3548,17 +3570,19 @@ const MAX_COVER_LENGTH = 5000;
         visibility var(--md-sys-motion-duration-medium2);
     }
 
-    /* ─── 6. TABS (SEGMENTED CONTROL) ─────────────────────────────── */
+    /* ─── 6. BOTTOM NAVIGATION BAR (M3 FOOTER DOCK) ─────────────────── */
     .hha-tabs {
       display: flex;
       background: var(--md-sys-color-surface-container-low);
-      margin: 8px 12px 12px 12px;
-      padding: 4px;
-      border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: var(--md-sys-shape-corner-full);
-      gap: 4px;
+      margin: 0;
+      padding: 8px;
+      border: none;
+      border-top: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: 0 0 var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large);
+      gap: 8px;
       flex-shrink: 0;
       box-sizing: border-box;
+      min-height: 50px;
     }
 
     /* Segmented Tab Badges */
@@ -3575,26 +3599,31 @@ const MAX_COVER_LENGTH = 5000;
       line-height: 1;
       box-sizing: border-box;
       margin-left: 4px;
-      background: var(--md-sys-color-primary-container);
-      color: var(--md-sys-color-on-primary-container);
+      background: var(--md-sys-color-surface-container-highest);
+      color: var(--md-sys-color-on-surface-variant);
       border: none;
       transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
     }
 
     .hha-tab-badge.is-queue {
-      background: var(--md-sys-color-primary-container);
-      color: var(--md-sys-color-on-primary-container);
+      background: var(--md-sys-color-surface-container-highest);
+      color: var(--md-sys-color-on-surface-variant);
       border: none;
+    }
+
+    .hha-tab-btn:hover .hha-tab-badge.is-queue {
+      background: var(--md-sys-color-surface-container-high);
+      color: var(--md-sys-color-on-surface);
     }
 
     .hha-tab-btn {
       flex: 1;
       min-width: 0;
-      height: var(--md-comp-control-height);
+      height: 34px;
       background: transparent;
       border: none;
       outline: none;
-      border-radius: var(--md-sys-shape-corner-full);
+      border-radius: 14px;
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-label-medium-size);
       font-weight: var(--md-sys-typescale-label-medium-weight);
@@ -3604,7 +3633,7 @@ const MAX_COVER_LENGTH = 5000;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard), box-shadow var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
       box-shadow: none;
       -webkit-appearance: none;
       appearance: none;
@@ -3612,21 +3641,21 @@ const MAX_COVER_LENGTH = 5000;
 
     .hha-tab-btn:hover {
       color: var(--md-sys-color-on-surface);
-      background: color-mix(in srgb, var(--md-sys-color-primary) 8%, transparent);
+      background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent);
     }
 
     .hha-tab-btn:active {
       transform: scale(0.97);
-      background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent);
+      background: color-mix(in srgb, var(--md-sys-color-on-surface) 10%, transparent);
     }
 
-    /* M3 Active Tab Pill */
+    /* M3 Active Tab Indicator */
     .hha-tab-btn.active {
-      background: var(--md-sys-color-surface-container-lowest) !important;
+      background: var(--md-sys-color-secondary-container) !important;
       border: none !important;
       border-radius: var(--md-sys-shape-corner-full);
-      box-shadow: var(--md-sys-elevation-level1);
-      color: var(--md-sys-color-primary) !important;
+      box-shadow: none !important;
+      color: var(--md-sys-color-on-secondary-container) !important;
       font-weight: 600;
     }
 
@@ -3634,6 +3663,7 @@ const MAX_COVER_LENGTH = 5000;
       transform: scale(0.98);
     }
 
+    .hha-tab-btn.active .hha-tab-badge,
     .hha-tab-btn.active .hha-tab-badge.is-queue {
       background: var(--md-sys-color-primary);
       color: var(--md-sys-color-on-primary);
@@ -3667,7 +3697,7 @@ const MAX_COVER_LENGTH = 5000;
       flex-direction: column;
       overflow: hidden;
       overflow-x: hidden;
-      padding: 12px 12px 0 12px;
+      padding: 10px 10px 8px 10px;
       box-sizing: border-box;
       position: relative;
     }
@@ -3713,42 +3743,21 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     /* ─── 8. QUEUE & LOG CONTAINERS ───────────────────────────────── */
-    /* Tab 2: Queue Card Container */
+    /* Tab 2: Queue Container (M3 Unified List Surface) */
     [data-panel="queue"] .hha-log-card {
       flex: 1;
-      min-height: 220px;
+      height: 100%;
+      min-height: 0;
       display: flex;
       flex-direction: column;
-      background: transparent;
-      border: none;
-      border-radius: 0;
+      background: var(--md-sys-color-surface-container-lowest);
+      border: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: var(--md-sys-shape-corner-medium);
       box-shadow: none;
       padding: 0;
       box-sizing: border-box;
       overflow: hidden;
       position: relative;
-    }
-
-    [data-panel="queue"] .hha-log-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      height: 28px;
-      padding: 0 4px 6px 4px;
-      border-bottom: none;
-      width: 100%;
-      flex-shrink: 0;
-      box-sizing: border-box;
-    }
-
-    [data-panel="queue"] .hha-log-header-title {
-      font-size: var(--md-sys-typescale-title-small-size);
-      font-weight: var(--md-sys-typescale-title-small-weight);
-      letter-spacing: var(--md-sys-typescale-title-small-tracking);
-      color: var(--md-sys-color-on-surface);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
 
     [data-panel="queue"] .hha-log-empty-text {
@@ -3764,23 +3773,16 @@ const MAX_COVER_LENGTH = 5000;
       opacity: 0.85;
     }
 
-    .hha-log-actions {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-
     .hha-log-stream {
       flex: 1;
       overflow-y: auto;
       overflow-x: hidden;
-      margin-top: 6px;
-      padding-top: 4px;
-      padding-bottom: 8px;
+      margin-top: 0;
+      padding: 0;
       box-sizing: border-box;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 0;
       scrollbar-width: none;
       -ms-overflow-style: none;
     }
@@ -3794,8 +3796,8 @@ const MAX_COVER_LENGTH = 5000;
     /* Floating Overlay Scrollbar */
     .hha-overlay-scrollbar {
       position: absolute;
-      top: 34px;
-      bottom: 8px;
+      top: 6px;
+      bottom: 6px;
       right: 3px;
       width: 6px;
       pointer-events: auto;
@@ -3837,7 +3839,7 @@ const MAX_COVER_LENGTH = 5000;
 
     .hha-log-empty {
       position: absolute;
-      top: calc(50% + 14px);
+      top: 50%;
       left: 0;
       right: 0;
       transform: translateY(-50%);
@@ -3853,44 +3855,69 @@ const MAX_COVER_LENGTH = 5000;
       pointer-events: none;
     }
 
-    /* Queue Cards (M3 Filled Card Pattern) */
+    /* Queue List Items (M3 Unified List Pattern) */
     .hha-queue-card {
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      padding: 8px 12px;
-      background: var(--md-sys-color-surface-container-low);
+      gap: 4px;
+      padding: 10px 14px;
+      background: transparent;
       border: none;
-      border-radius: var(--md-sys-shape-corner-medium);
+      border-bottom: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: 0;
       box-shadow: none;
       box-sizing: border-box;
+      cursor: pointer;
+      user-select: none;
       transition: 
         opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
-        background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), 
-        box-shadow var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), 
-        transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
+        background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-queue-card.is-removing {
+      opacity: 0 !important;
+      transform: translate3d(24px, 0, 0) !important;
+      max-height: 0 !important;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+      margin-top: 0 !important;
+      margin-bottom: 0 !important;
+      border-color: transparent !important;
+      overflow: hidden !important;
+      pointer-events: none !important;
+      transition: 
+        opacity 180ms cubic-bezier(0.3, 0, 0.8, 0.15),
+        transform 180ms cubic-bezier(0.3, 0, 0.8, 0.15),
+        max-height 220ms cubic-bezier(0.05, 0.7, 0.1, 1),
+        padding 220ms cubic-bezier(0.05, 0.7, 0.1, 1),
+        border-color 180ms ease !important;
+    }
+
+    .hha-queue-card:last-child {
+      border-bottom: none;
     }
 
     .hha-queue-card:hover {
-      background: var(--md-sys-color-surface-container-high);
-      box-shadow: var(--md-sys-elevation-level1);
-      transform: translateY(-1px);
+      background: var(--md-sys-state-hover);
+      box-shadow: none;
+      transform: none;
     }
 
     .hha-queue-card:active {
-      transform: translateY(0);
+      background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
+      transform: none;
       box-shadow: none;
     }
 
     /* Viewed Queue Card state (M3 Subdued State) */
     .hha-queue-card.is-viewed {
-      opacity: 0.72;
-      background: var(--md-sys-color-surface-container);
+      opacity: 0.65;
+      background: color-mix(in srgb, var(--md-sys-color-surface-container) 45%, transparent);
     }
 
     .hha-queue-card.is-viewed:hover {
-      opacity: 1;
-      background: var(--md-sys-color-surface-container-high);
+      opacity: 0.95;
+      background: var(--md-sys-state-hover);
     }
 
     .hha-queue-card.is-viewed .hha-queue-title-link {
@@ -3930,19 +3957,6 @@ const MAX_COVER_LENGTH = 5000;
       color: var(--md-sys-color-primary);
     }
 
-    .hha-queue-title-link:hover .hha-queue-link-arrow {
-      color: var(--md-sys-color-primary);
-      transform: translate(1px, -1px);
-    }
-
-    .hha-queue-link-arrow {
-      font-size: 11px;
-      line-height: 1;
-      color: var(--md-sys-color-outline);
-      transition: transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
-      flex-shrink: 0;
-    }
-
     .hha-queue-title-text {
       white-space: nowrap;
       overflow: hidden;
@@ -3964,7 +3978,6 @@ const MAX_COVER_LENGTH = 5000;
     .hha-queue-badge {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
       padding: 2px 7px;
       border-radius: var(--md-sys-shape-corner-small);
       font-size: 10px;
@@ -3972,12 +3985,6 @@ const MAX_COVER_LENGTH = 5000;
       letter-spacing: 0.1px;
       flex-shrink: 0;
       line-height: 1.3;
-    }
-
-    .hha-queue-badge-dot {
-      font-size: 6px;
-      line-height: 1;
-      opacity: 0.85;
     }
 
     .hha-queue-badge.badge-warning {
@@ -4011,12 +4018,6 @@ const MAX_COVER_LENGTH = 5000;
       font-weight: 500;
     }
 
-    .hha-queue-badge-check {
-      font-size: 10px;
-      line-height: 1;
-      font-weight: 700;
-    }
-
     .hha-queue-salary {
       white-space: nowrap;
       overflow: hidden;
@@ -4025,14 +4026,6 @@ const MAX_COVER_LENGTH = 5000;
       color: var(--md-sys-color-primary);
       min-width: 0;
       flex-shrink: 1;
-    }
-
-    .hha-queue-vid {
-      white-space: nowrap;
-      color: var(--md-sys-color-outline);
-      font-size: var(--md-sys-typescale-label-small-size);
-      margin-left: auto;
-      flex-shrink: 0;
     }
 
     /* Delete item button with M3 Icon Button state layers */
@@ -4050,6 +4043,10 @@ const MAX_COVER_LENGTH = 5000;
       border-radius: var(--md-sys-shape-corner-full);
       color: var(--md-sys-color-on-surface-variant);
       cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 1;
+      font-family: var(--md-sys-typescale-font-family);
       transition: color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
@@ -4816,6 +4813,7 @@ const MAX_COVER_LENGTH = 5000;
       this._animTimer = null;
       this._domEventsBound = false;
       this._onDocClick = null;
+      this._onDocKeyDown = null;
       this._queueConfirmTimer = null;
 
       // Bound Event Handlers
@@ -4887,6 +4885,9 @@ const MAX_COVER_LENGTH = 5000;
       }
       if (this._onDocClick && typeof document !== 'undefined') {
         document.removeEventListener('click', this._onDocClick);
+      }
+      if (this._onDocKeyDown && typeof document !== 'undefined') {
+        document.removeEventListener('keydown', this._onDocKeyDown);
       }
       if (this._coverDebounceTimer) { clearTimeout(this._coverDebounceTimer); this._coverDebounceTimer = null; }
       if (this._animTimer) { clearTimeout(this._animTimer); this._animTimer = null; }
@@ -5263,13 +5264,12 @@ const MAX_COVER_LENGTH = 5000;
             </div>
             <span class="hha-pill-queue-badge" data-action="open-queue-tab" data-el="pill-queue-badge" data-tooltip="Вакансии с анкетами в очереди" tabindex="0" role="button" aria-label="Очередь вакансий"></span>
             <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="pill-quick-btn">
-              <span class="hha-btn-icon-slot" data-el="pill-quick-icon">${ICONS.play}</span>
               <span class="hha-btn-label" data-el="pill-quick-label">Старт</span>
             </button>
           </div>
 
           <!-- Flyout Overlay (390px wide, max 420px height) -->
-          <div class="hha-flyout" data-el="flyout">
+          <div class="hha-flyout" data-el="flyout" role="dialog" aria-modal="false" aria-label="Панель управления откликами">
             <!-- Floating Tooltip -->
             <div class="hha-tooltip" data-el="tooltip"></div>
 
@@ -5328,15 +5328,6 @@ const MAX_COVER_LENGTH = 5000;
               <!-- Tab 2: Queue (Очередь) -->
               <div class="hha-panel" data-panel="queue">
                 <div class="hha-log-card">
-                  <div class="hha-log-header">
-                    <span class="hha-log-header-title" data-el="queue-status-text">Очередь откликов</span>
-                    <div class="hha-log-actions">
-                      <button type="button" class="hha-btn-clear-all" data-action="clear-queue" data-el="clear-queue-btn" data-tooltip="Очистить всю очередь" aria-label="Очистить всю очередь" disabled style="display: none;">
-                        <span class="hha-btn-clear-all-icon">${ICONS.trash}</span>
-                        <span class="hha-btn-clear-all-text">Очистить всё</span>
-                      </button>
-                    </div>
-                  </div>
                   <div class="hha-log-stream" data-el="queue-stream">
                     <div class="hha-log-empty">
                       <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
@@ -5512,6 +5503,17 @@ const MAX_COVER_LENGTH = 5000;
       };
       if (typeof document !== 'undefined') {
         document.addEventListener('click', this._onDocClick);
+      }
+
+      // Document Escape key listener to close overlay
+      this._onDocKeyDown = (e) => {
+        if (e && e.key === 'Escape' && this._isExpanded) {
+          e.preventDefault();
+          this.toggleExpand(false);
+        }
+      };
+      if (typeof document !== 'undefined') {
+        document.addEventListener('keydown', this._onDocKeyDown);
       }
 
       this._initOverlayScrollbar();
@@ -5767,6 +5769,9 @@ const MAX_COVER_LENGTH = 5000;
       } else if (action === 'toggle-expand') {
         e.stopPropagation();
         this.toggleExpand();
+      } else if (action === 'close-flyout') {
+        e.stopPropagation();
+        this.toggleExpand(false);
       } else if (action === 'switch-tab') {
         e.stopPropagation();
         this.setActiveTab(actionTarget.dataset.tab);
@@ -5804,6 +5809,13 @@ const MAX_COVER_LENGTH = 5000;
       } else if (action === 'open-vacancy') {
         const vid = actionTarget.dataset.vid || actionTarget.dataset.cleanVid;
         const cVid = cleanVid(actionTarget.dataset.cleanVid || vid);
+        const targetCard = actionTarget.closest('.hha-queue-card') || actionTarget;
+        const url = targetCard.dataset.url || actionTarget.getAttribute('href') || targetCard.getAttribute('href');
+        if (url && url !== '#' && !e.target.closest('a')) {
+          try {
+            window.open(url, '_blank', 'noopener,noreferrer');
+          } catch (_) {}
+        }
         if (cVid) {
           if (this._assistant && typeof this._assistant.markManualItemViewed === 'function') {
             this._assistant.markManualItemViewed(cVid, true);
@@ -5822,18 +5834,10 @@ const MAX_COVER_LENGTH = 5000;
         const cVid = cleanVid(actionTarget.dataset.cleanVid || vid);
         if (vid) {
           const card = actionTarget.closest('.hha-queue-card');
-          if (card) {
-            card.style.transition = 'opacity 180ms cubic-bezier(0.3,0,0.8,0.15), transform 180ms cubic-bezier(0.3,0,0.8,0.15), max-height 220ms cubic-bezier(0.05,0.7,0.1,1), margin 220ms, padding 220ms';
-            card.style.overflow = 'hidden';
+          if (card && !card.classList.contains('is-removing')) {
             card.style.maxHeight = `${card.offsetHeight}px`;
-            requestAnimationFrame(() => {
-              card.style.opacity = '0';
-              card.style.transform = 'scale(0.95) translate3d(12px, 0, 0)';
-              card.style.maxHeight = '0px';
-              card.style.paddingTop = '0px';
-              card.style.paddingBottom = '0px';
-              card.style.marginBottom = '0px';
-            });
+            void card.offsetHeight;
+            card.classList.add('is-removing');
             setTimeout(() => {
               if (this._assistant && typeof this._assistant.removeManualItem === 'function') {
                 this._assistant.removeManualItem(vid);
@@ -5842,7 +5846,7 @@ const MAX_COVER_LENGTH = 5000;
                 this._syncQueue();
               }
             }, 200);
-          } else {
+          } else if (!card) {
             if (this._assistant && typeof this._assistant.removeManualItem === 'function') {
               this._assistant.removeManualItem(vid);
             } else {
@@ -6142,6 +6146,48 @@ const MAX_COVER_LENGTH = 5000;
       this._dragOpenDirection = null;
 
       if (wasDragging) {
+        const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
+        const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
+        const flyoutMaxW = 390;
+        const halfW = flyoutMaxW / 2;
+
+        let snappedX = this._pillPos.x;
+        let snappedY = this._pillPos.y;
+        let didSnap = false;
+
+        const leftDist = this._pillPos.x - halfW;
+        const rightDist = winW - (this._pillPos.x + halfW);
+        const topDist = this._pillPos.y;
+        const bottomDist = winH - 36 - this._pillPos.y;
+
+        if (leftDist < 36) {
+          snappedX = 16 + halfW;
+          didSnap = true;
+        } else if (rightDist < 36) {
+          snappedX = winW - 16 - halfW;
+          didSnap = true;
+        }
+
+        if (topDist < 36) {
+          snappedY = 16;
+          didSnap = true;
+        } else if (bottomDist < 36) {
+          snappedY = winH - 36 - 16;
+          didSnap = true;
+        }
+
+        if (didSnap) {
+          this._pillPos = this._clampPillCoordinates(snappedX, snappedY, winW, winH);
+          if (root) {
+            root.classList.add('is-snapping');
+            if (this._snapTimer) clearTimeout(this._snapTimer);
+            this._snapTimer = setTimeout(() => {
+              if (root) root.classList.remove('is-snapping');
+              this._snapTimer = null;
+            }, 260);
+          }
+        }
+
         this._persistPosition();
         this._suppressNextClick();
       }
@@ -6301,6 +6347,11 @@ const MAX_COVER_LENGTH = 5000;
       const { status = 'idle' } = this._status || {};
       const isRunning = status === 'running';
 
+      const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
+      if (root) {
+        root.classList.toggle('is-running', isRunning);
+      }
+
       // Pill Quick Button
       const quickBtn = this._shadow.querySelector('[data-el="pill-quick-btn"]');
       if (quickBtn) {
@@ -6335,38 +6386,26 @@ const MAX_COVER_LENGTH = 5000;
           quickBtn.className = desiredClassName;
         }
 
-        // Icon & Label smooth crossfade
-        let iconEl = quickBtn.querySelector('[data-el="pill-quick-icon"]');
+        // Label smooth crossfade
         let labelEl = quickBtn.querySelector('[data-el="pill-quick-label"]');
 
-        if (!iconEl || !labelEl) {
-          quickBtn.innerHTML = `<span class="hha-btn-icon-slot" data-el="pill-quick-icon">${targetIcon}</span><span class="hha-btn-label" data-el="pill-quick-label">${targetLabel}</span>`;
-          this._lastBtnIcon = targetIcon;
+        if (!labelEl) {
+          quickBtn.innerHTML = `<span class="hha-btn-label" data-el="pill-quick-label">${targetLabel}</span>`;
           this._lastBtnLabel = targetLabel;
           this._hasSyncedStatus = true;
         } else if (!this._hasSyncedStatus) {
           this._hasSyncedStatus = true;
-          iconEl.innerHTML = targetIcon;
           labelEl.textContent = targetLabel;
-          this._lastBtnIcon = targetIcon;
           this._lastBtnLabel = targetLabel;
         } else {
-          const iconChanged = this._lastBtnIcon !== targetIcon;
           const labelChanged = this._lastBtnLabel !== targetLabel;
 
-          if (iconChanged || labelChanged) {
-            this._lastBtnIcon = targetIcon;
+          if (labelChanged) {
             this._lastBtnLabel = targetLabel;
-
-            if (iconChanged) iconEl.classList.add('is-swapping');
-            if (labelChanged) labelEl.classList.add('is-swapping');
+            labelEl.classList.add('is-swapping');
 
             setTimeout(() => {
-              if (iconChanged && iconEl) {
-                iconEl.innerHTML = targetIcon;
-                iconEl.classList.remove('is-swapping');
-              }
-              if (labelChanged && labelEl) {
+              if (labelEl) {
                 labelEl.textContent = targetLabel;
                 labelEl.classList.remove('is-swapping');
               }
@@ -6479,14 +6518,6 @@ const MAX_COVER_LENGTH = 5000;
         }
       }
 
-      // Update queue status text in queue list header
-      const queueStatusText = this._shadow.querySelector('[data-el="queue-status-text"]');
-      if (queueStatusText) {
-        queueStatusText.textContent = count > 0 ? `Вакансий в очереди: ${count}` : 'Очередь откликов';
-      }
-
-      // Sync action buttons visibility
-      this._syncQueueActions();
 
       // Render Queue Stream
       const queueStream = this._shadow.querySelector('[data-el="queue-stream"]');
@@ -6504,28 +6535,26 @@ const MAX_COVER_LENGTH = 5000;
             const cVid = cleanVid(rawVid);
             const targetUrl = toVacancyUrl(cVid, item.url);
             let displayTitle = collapseSpaces(item.title || '');
+            displayTitle = displayTitle.replace(/\s*#\d+\b/g, '').trim();
             if (!displayTitle || /^(?:отклик на вакансию|отклик без резюме)$/i.test(displayTitle)) {
-              displayTitle = cVid ? `Вакансия #${cVid}` : 'Вакансия';
+              displayTitle = 'Вакансия';
             }
             const reasonInfo = formatQueueReasonInfo(item.reason);
             const cleanSalary = formatCleanSalary(item.salary || '');
-            const showVidTag = cVid && !displayTitle.includes(cVid);
             const isViewed = Boolean(item.viewed);
 
             return `
-              <div class="hha-queue-card ${isViewed ? 'is-viewed' : ''}">
+              <div class="hha-queue-card ${isViewed ? 'is-viewed' : ''}" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-url="${escapeHtml(targetUrl || '#')}" role="link" tabindex="0" title="Открыть вакансию в новой вкладке">
                 <div class="hha-queue-card-top">
                   <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="${escapeHtml(displayTitle)}">
                     <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
-                    <span class="hha-queue-link-arrow">↗</span>
                   </a>
-                  <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">${ICONS.trash}</button>
+                  <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">✕</button>
                 </div>
                 <div class="hha-queue-card-bottom">
-                  ${isViewed ? `<span class="hha-queue-badge badge-viewed"><span class="hha-queue-badge-check">✓</span>Просмотрено</span>` : ''}
-                  <span class="hha-queue-badge badge-${escapeHtml(reasonInfo.type)}"><span class="hha-queue-badge-dot">●</span>${escapeHtml(reasonInfo.text)}</span>
+                  ${isViewed ? `<span class="hha-queue-badge badge-viewed">Просмотрено</span>` : ''}
+                  <span class="hha-queue-badge badge-${escapeHtml(reasonInfo.type)}">${escapeHtml(reasonInfo.text)}</span>
                   ${cleanSalary ? `<span class="hha-queue-salary" title="${escapeHtml(item.salary || cleanSalary)}">${escapeHtml(cleanSalary)}</span>` : ''}
-                  ${showVidTag ? `<span class="hha-queue-vid">#${escapeHtml(cVid)}</span>` : ''}
                 </div>
               </div>
             `;
