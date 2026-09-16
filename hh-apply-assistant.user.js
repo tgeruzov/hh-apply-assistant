@@ -382,7 +382,9 @@ const MAX_COVER_LENGTH = 5000;
       salary: collapseSpaces(entry.salary || ''),
       reason: collapseSpaces(entry.reason || entry.note || ''),
       addedAt: Number(entry.addedAt || entry.ts) || Date.now(),
-      returnUrl: toSafeHhUrl(entry.returnUrl || '')
+      returnUrl: toSafeHhUrl(entry.returnUrl || ''),
+      viewed: Boolean(entry.viewed),
+      viewedAt: entry.viewedAt ? Number(entry.viewedAt) : null
     };
   }
 
@@ -390,6 +392,27 @@ const MAX_COVER_LENGTH = 5000;
     get() {
       const raw = parseJson(storage.localGet(KEYS.manualList), []);
       return Array.isArray(raw) ? raw.map(normalizeManualEntry).filter(Boolean) : [];
+    },
+    has(vid) {
+      const targetVid = cleanVid(vid);
+      if (!targetVid) return false;
+      return this.get().some(it => cleanVid(it.vid) === targetVid);
+    },
+    markViewed(vid, viewed = true) {
+      const queue = this.get();
+      const targetVid = cleanVid(vid);
+      const idx = queue.findIndex(it => cleanVid(it.vid) === targetVid);
+      if (idx >= 0) {
+        const isChange = queue[idx].viewed !== Boolean(viewed);
+        if (isChange) {
+          queue[idx].viewed = Boolean(viewed);
+          queue[idx].viewedAt = viewed ? Date.now() : null;
+          storage.localSet(KEYS.manualList, JSON.stringify(queue));
+          events.emit('manualQueue', { action: 'update', item: queue[idx], queue });
+        }
+        return true;
+      }
+      return false;
     },
     save(list) {
       const clean = Array.isArray(list) ? list.map(normalizeManualEntry).filter(Boolean) : [];
@@ -2475,7 +2498,9 @@ const MAX_COVER_LENGTH = 5000;
     addManualItem: (entry) => Boolean(ManualQueue.add(entry).success),
     removeManualItem: (vid) => ManualQueue.remove(vid),
     clearManualQueue: () => ManualQueue.clear(),
-        detectDailyLimit: () => detectDailyLimit(),
+    markManualItemViewed: (vid, viewed) => ManualQueue.markViewed(vid, viewed),
+    isManualItem: (vid) => ManualQueue.has(vid),
+    detectDailyLimit: () => detectDailyLimit(),
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
     once: (evt, fn) => events.once(evt, fn),
@@ -2510,6 +2535,17 @@ const MAX_COVER_LENGTH = 5000;
       }
     }
     if (!Page.isResponseForm()) clearTrapLock();
+
+    // Cross-tab auto-detection: if viewing an item from manual queue, mark viewed (or remove if applied)
+    if (Page.isVacancy() || Page.isResponseForm()) {
+      const currentVid = getStableVacancyId() || getLastAttemptID();
+      if (currentVid && ManualQueue.has(currentVid)) {
+        ManualQueue.markViewed(currentVid, true);
+        if (isAlreadyApplied()) {
+          ManualQueue.remove(currentVid);
+        }
+      }
+    }
 
     const win = globalThis.window;
     if (win && typeof win.dispatchEvent === 'function') {
@@ -2746,7 +2782,7 @@ const MAX_COVER_LENGTH = 5000;
   function formatQueueReasonInfo(reason) {
     const r = String(reason || '').toLowerCase();
     if (r.includes('lead_gen') || r.includes('article') || r.includes('promo')) {
-      return { text: 'Промо / Лид', type: 'warning' };
+      return { text: 'Промо / Лид', type: 'neutral' };
     }
     if (r.includes('access_denied') || r.includes('inaccessible')) {
       return { text: 'Нет доступа', type: 'warning' };
@@ -2755,7 +2791,7 @@ const MAX_COVER_LENGTH = 5000;
       return { text: 'Тест / анкета', type: 'warning' };
     }
     if (r.includes('relocation')) {
-      return { text: 'Релокация', type: 'warning' };
+      return { text: 'Релокация', type: 'info' };
     }
     if (r.includes('no-apply') || r.includes('no-submit') || r.includes('redirect')) {
       return { text: 'Нет кнопки', type: 'neutral' };
@@ -2790,31 +2826,38 @@ const MAX_COVER_LENGTH = 5000;
   // --- 2. SVG Icons ---
 
   const ICONS = {
-    play: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`,
-    stop: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>`,
-    check: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
-    reset: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>`,
-    copy: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
-    open: `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`,
-    trash: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>`,
-    alert: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
-    inboxEmpty: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`
+    play: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7L8 5z"/></svg>`,
+    stop: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>`,
+    check: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>`,
+    reset: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>`,
+    copy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>`,
+    open: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>`,
+    trash: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`,
+    alert: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>`,
+    inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`
   };
 
   // --- 3. Shadow DOM Stylesheet ---
 
   const STYLES = `
     /* ═══════════════════════════════════════════════════════════════
-       1. HOST & DESIGN TOKENS
+       1. HOST & MATERIAL DESIGN 3 DESIGN TOKENS
+       Specification: https://m3.material.io/
+       Token Names: https://m3.material.io/foundations/design-tokens
+       Color Roles: https://m3.material.io/styles/color/system/overview
+       Tonal Palette Seed: #006A60 (M3 Teal Baseline) via Theme Builder
+       Typography: https://m3.material.io/styles/typography/type-scale-tokens
+       Shape Scale: https://m3.material.io/styles/shape/shape-scale-tokens
+       Elevation: https://m3.material.io/styles/elevation/tokens
        ═══════════════════════════════════════════════════════════════ */
     :host {
       all: initial;
       position: fixed;
       z-index: 2147483640;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      font-size: 12px;
-      line-height: 1.4;
-      color: #1F2328;
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-body-small-size);
+      line-height: var(--md-sys-typescale-body-small-line-height);
+      color: var(--md-sys-color-on-surface);
       box-sizing: border-box;
       user-select: none;
       -webkit-user-select: none;
@@ -2822,30 +2865,200 @@ const MAX_COVER_LENGTH = 5000;
       pointer-events: auto;
       interpolate-size: allow-keywords;
 
-      /* Design Tokens: Colors */
-      --hha-bg-card: #FAFAFA;
-      --hha-bg-inner: #FFFFFF;
-      --hha-border-card: rgba(15, 23, 42, 0.08);
-      --hha-shadow-card: 0 4px 20px rgba(15, 23, 42, 0.10), 0 1px 2px rgba(0, 0, 0, 0.06);
-      --hha-text-main: #1F2328;
-      --hha-text-secondary: #6B7280;
-      --hha-text-muted: #9CA3AF;
-      --hha-accent: #0F6E56;
-      --hha-accent-tint: #E1F5EE;
-      --hha-accent-tint-text: #085041;
-      --hha-destructive: #DC2626;
-      --hha-destructive-bg: #FEE2E2;
+      /* ── M3 Color System: Light Scheme (Seed: #006A60 Teal) ── */
+      --md-sys-color-primary: #006A60;
+      --md-sys-color-on-primary: #FFFFFF;
+      --md-sys-color-primary-container: #BCECE3;
+      --md-sys-color-on-primary-container: #00201D;
+      --md-sys-color-inverse-primary: #52DBC7;
 
-      /* Design Tokens: Border Radii */
-      --hha-radius-lg: 12px;    /* External card / flyout container */
-      --hha-radius-md: 10px;    /* Inner card blocks, tabs track */
-      --hha-radius-sm: 8px;     /* Interactive elements: stepper, buttons, active tab */
-      --hha-radius-xs: 6px;     /* Segmented buttons, ghost action icons, log items */
-      --hha-radius-micro: 4px;  /* Compact tags, inline inputs, link badges */
-      --hha-radius-full: 9999px;/* Dynamic island pill, status chips, badges */
+      --md-sys-color-secondary: #4A635F;
+      --md-sys-color-on-secondary: #FFFFFF;
+      --md-sys-color-secondary-container: #CCE8E2;
+      --md-sys-color-on-secondary-container: #05201C;
 
-      /* Control Dimensions */
-      --hha-control-height: 28px;
+      --md-sys-color-tertiary: #456179;
+      --md-sys-color-on-tertiary: #FFFFFF;
+      --md-sys-color-tertiary-container: #CCE5FF;
+      --md-sys-color-on-tertiary-container: #001D31;
+
+      --md-sys-color-error: #BA1A1A;
+      --md-sys-color-on-error: #FFFFFF;
+      --md-sys-color-error-container: #FFDAD6;
+      --md-sys-color-on-error-container: #410002;
+
+      --md-sys-color-background: #FAFDFB;
+      --md-sys-color-on-background: #191C1B;
+      --md-sys-color-surface: #FAFDFB;
+      --md-sys-color-on-surface: #191C1B;
+      --md-sys-color-surface-variant: #DAE5E1;
+      --md-sys-color-on-surface-variant: #3F4946;
+
+      --md-sys-color-outline: #707976;
+      --md-sys-color-outline-variant: #E2E7E5;
+
+      /* M3 Surface Container Roles (Tonal Elevation) */
+      --md-sys-color-surface-container-lowest: #FFFFFF;
+      --md-sys-color-surface-container-low: #F6F8F7;
+      --md-sys-color-surface-container: #FFFFFF;
+      --md-sys-color-surface-container-high: #EEF1EF;
+      --md-sys-color-surface-container-highest: #E4E8E6;
+      --md-sys-color-surface-dim: #D8DBD9;
+      --md-sys-color-surface-bright: #FAFDFB;
+
+      --md-sys-color-inverse-surface: #2E3130;
+      --md-sys-color-inverse-on-surface: #EFF1EF;
+
+      /* M3 Extended Semantic Roles: Warning */
+      --md-custom-color-warning: #7D5700;
+      --md-custom-color-on-warning: #FFFFFF;
+      --md-custom-color-warning-container: #FEE4B8;
+      --md-custom-color-on-warning-container: #3B2300;
+
+      /* ── M3 Shape Scale ── */
+      --md-sys-shape-corner-none: 0px;
+      --md-sys-shape-corner-extra-small: 4px;
+      --md-sys-shape-corner-small: 8px;
+      --md-sys-shape-corner-medium: 12px;
+      --md-sys-shape-corner-large: 16px;
+      --md-sys-shape-corner-extra-large: 28px;
+      --md-sys-shape-corner-full: 9999px;
+
+      /* ── M3 Elevation (Soft Ambient Drop Shadows - No Dirty Halo) ── */
+      --md-sys-elevation-level0: none;
+      --md-sys-elevation-level1: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.04);
+      --md-sys-elevation-level2: 0 4px 14px -1px rgba(0, 0, 0, 0.07), 0 2px 5px -1px rgba(0, 0, 0, 0.04);
+      --md-sys-elevation-level3: 0 12px 28px -4px rgba(0, 0, 0, 0.08), 0 4px 10px -2px rgba(0, 0, 0, 0.03);
+      --md-sys-elevation-level4: 0 16px 36px -4px rgba(0, 0, 0, 0.10), 0 6px 14px -2px rgba(0, 0, 0, 0.04);
+      --md-sys-elevation-level5: 0 24px 48px -4px rgba(0, 0, 0, 0.12), 0 8px 20px -2px rgba(0, 0, 0, 0.05);
+
+      /* ── M3 State Layer Opacities ── */
+      --md-sys-state-hover-state-layer-opacity: 0.08;
+      --md-sys-state-focus-state-layer-opacity: 0.12;
+      --md-sys-state-pressed-state-layer-opacity: 0.12;
+      --md-sys-state-dragged-state-layer-opacity: 0.16;
+
+      /* ── M3 Typography Scale ── */
+      --md-sys-typescale-font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      --md-sys-typescale-font-family-mono: 'Roboto Mono', 'SFMono-Regular', Menlo, Monaco, Consolas, monospace;
+
+      --md-sys-typescale-title-small-size: 14px;
+      --md-sys-typescale-title-small-line-height: 20px;
+      --md-sys-typescale-title-small-weight: 500;
+      --md-sys-typescale-title-small-tracking: 0.1px;
+
+      --md-sys-typescale-title-medium-size: 16px;
+      --md-sys-typescale-title-medium-line-height: 24px;
+      --md-sys-typescale-title-medium-weight: 500;
+      --md-sys-typescale-title-medium-tracking: 0.15px;
+
+      --md-sys-typescale-body-large-size: 16px;
+      --md-sys-typescale-body-large-line-height: 24px;
+      --md-sys-typescale-body-large-weight: 400;
+      --md-sys-typescale-body-large-tracking: 0.5px;
+
+      --md-sys-typescale-body-medium-size: 14px;
+      --md-sys-typescale-body-medium-line-height: 20px;
+      --md-sys-typescale-body-medium-weight: 400;
+      --md-sys-typescale-body-medium-tracking: 0.25px;
+
+      --md-sys-typescale-body-small-size: 12px;
+      --md-sys-typescale-body-small-line-height: 16px;
+      --md-sys-typescale-body-small-weight: 400;
+      --md-sys-typescale-body-small-tracking: 0.4px;
+
+      --md-sys-typescale-label-large-size: 14px;
+      --md-sys-typescale-label-large-line-height: 20px;
+      --md-sys-typescale-label-large-weight: 500;
+      --md-sys-typescale-label-large-tracking: 0.1px;
+
+      --md-sys-typescale-label-medium-size: 12px;
+      --md-sys-typescale-label-medium-line-height: 16px;
+      --md-sys-typescale-label-medium-weight: 500;
+      --md-sys-typescale-label-medium-tracking: 0.5px;
+
+      --md-sys-typescale-label-small-size: 11px;
+      --md-sys-typescale-label-small-line-height: 16px;
+      --md-sys-typescale-label-small-weight: 500;
+      --md-sys-typescale-label-small-tracking: 0.5px;
+
+      /* Control Height (M3 Compact Standard) */
+      --md-comp-control-height: 32px;
+
+      /* ── M3 Motion Tokens: Easing ── */
+      --md-sys-motion-easing-linear: cubic-bezier(0, 0, 1, 1);
+      --md-sys-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+      --md-sys-motion-easing-standard-accelerate: cubic-bezier(0.3, 0, 1, 1);
+      --md-sys-motion-easing-standard-decelerate: cubic-bezier(0, 0, 0.2, 1);
+      --md-sys-motion-easing-emphasized: cubic-bezier(0.2, 0, 0, 1);
+      --md-sys-motion-easing-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+      --md-sys-motion-easing-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+
+      /* ── M3 Motion Tokens: Duration ── */
+      --md-sys-motion-duration-short1: 50ms;
+      --md-sys-motion-duration-short2: 100ms;
+      --md-sys-motion-duration-short3: 150ms;
+      --md-sys-motion-duration-short4: 200ms;
+      --md-sys-motion-duration-medium1: 250ms;
+      --md-sys-motion-duration-medium2: 300ms;
+      --md-sys-motion-duration-medium3: 350ms;
+      --md-sys-motion-duration-medium4: 400ms;
+      --md-sys-motion-duration-long1: 450ms;
+      --md-sys-motion-duration-long2: 500ms;
+    }
+
+    /* ── M3 Color System: Dark Scheme (Activated only via explicit dark-mode class) ── */
+
+    :host-context(body.dark-mode),
+    :host-context(.dark-mode),
+    :host-context([data-theme="dark"]),
+    :host(.dark-mode) {
+      --md-sys-color-primary: #52DBC7;
+      --md-sys-color-on-primary: #003731;
+      --md-sys-color-primary-container: #005048;
+      --md-sys-color-on-primary-container: #70F7E6;
+      --md-sys-color-inverse-primary: #006A60;
+
+      --md-sys-color-secondary: #B1CCC6;
+      --md-sys-color-on-secondary: #1C3531;
+      --md-sys-color-secondary-container: #324B47;
+      --md-sys-color-on-secondary-container: #CCE8E2;
+
+      --md-sys-color-tertiary: #AECACF;
+      --md-sys-color-on-tertiary: #173338;
+      --md-sys-color-tertiary-container: #2E4A4E;
+      --md-sys-color-on-tertiary-container: #CCE5FF;
+
+      --md-sys-color-error: #FFB4AB;
+      --md-sys-color-on-error: #690005;
+      --md-sys-color-error-container: #93000A;
+      --md-sys-color-on-error-container: #FFDAD6;
+
+      --md-sys-color-background: #0E1513;
+      --md-sys-color-on-background: #DEE4E1;
+      --md-sys-color-surface: #0E1513;
+      --md-sys-color-on-surface: #DEE4E1;
+      --md-sys-color-surface-variant: #3F4946;
+      --md-sys-color-on-surface-variant: #BEC9C5;
+
+      --md-sys-color-outline: #89938F;
+      --md-sys-color-outline-variant: #3F4946;
+
+      --md-sys-color-surface-container-lowest: #090F0E;
+      --md-sys-color-surface-container-low: #171D1B;
+      --md-sys-color-surface-container: #1B2120;
+      --md-sys-color-surface-container-high: #252B2A;
+      --md-sys-color-surface-container-highest: #303635;
+      --md-sys-color-surface-dim: #0E1513;
+      --md-sys-color-surface-bright: #353B39;
+
+      --md-sys-color-inverse-surface: #DEE4E1;
+      --md-sys-color-inverse-on-surface: #2B3230;
+
+      --md-custom-color-warning: #FFDEA3;
+      --md-custom-color-on-warning: #261900;
+      --md-custom-color-warning-container: #5B3F00;
+      --md-custom-color-on-warning-container: #FFDEA3;
     }
 
     *, *::before, *::after {
@@ -2877,35 +3090,36 @@ const MAX_COVER_LENGTH = 5000;
       flex-direction: column-reverse;
     }
 
-
     /* ─── 3. PILL (DYNAMIC ISLAND) ────────────────────────────────── */
     .hha-pill {
-      font-size: 12px;
-      line-height: 1.4;
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-body-small-size);
+      line-height: var(--md-sys-typescale-body-small-line-height);
       pointer-events: auto;
       display: inline-flex;
       align-items: center;
-      height: 36px;
+      height: 40px;
       width: fit-content;
       min-width: auto;
       max-width: min(390px, calc(100vw - 16px));
-      padding: 3px;
-      gap: 5px;
-      border-radius: var(--hha-radius-full, 9999px);
-      border: 1px solid rgba(15, 23, 42, 0.08);
-      background: #FAFAFA;
+      padding: 4px;
+      gap: 6px;
+      border-radius: var(--md-sys-shape-corner-full);
+      border: 1px solid var(--md-sys-color-outline-variant);
+      background: var(--md-sys-color-surface-container-lowest);
       box-sizing: border-box;
       overflow: hidden;
-      box-shadow: 
-        0 4px 20px rgba(15, 23, 42, 0.10),
-        0 1px 2px rgba(0, 0, 0, 0.06);
+      box-shadow: var(--md-sys-elevation-level2);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       cursor: grab;
       touch-action: none;
       white-space: nowrap;
       position: relative;
       transition: 
-        box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1),
-        border-color 180ms ease;
+        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), 
+        border-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
+        background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard);
     }
 
     .hha-pill:active {
@@ -2913,47 +3127,54 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     .hha-root.is-expanded .hha-pill {
-      box-shadow: 
-        0 6px 24px rgba(15, 23, 42, 0.14),
-        0 2px 4px rgba(0, 0, 0, 0.08);
+      box-shadow: var(--md-sys-elevation-level3);
     }
 
     .hha-root.is-expanded .hha-pill-queue-badge {
-      width: 0 !important;
-      margin-left: 0 !important;
-      padding: 0 !important;
-      opacity: 0 !important;
-      visibility: hidden !important;
-      pointer-events: none !important;
-      transform: scale(0.85);
+      width: 0;
+      min-width: 0;
+      max-width: 0;
+      margin-left: -6px;
+      padding: 0;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: scale(0.7);
     }
 
     .hha-pill-status-group {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       cursor: pointer;
       user-select: none;
       position: relative;
       overflow: hidden;
       isolation: isolate;
-      border-radius: var(--hha-radius-full, 9999px);
-      height: var(--hha-control-height, 28px);
-      min-height: var(--hha-control-height, 28px);
-      padding: 0 10px;
-      background: #FFFFFF;
-      border: 1px solid rgba(15, 23, 42, 0.06);
+      border-radius: var(--md-sys-shape-corner-full);
+      height: var(--md-comp-control-height);
+      min-height: var(--md-comp-control-height);
+      padding: 0 12px;
+      background: transparent;
+      border: none;
       box-sizing: border-box;
       line-height: 1;
       vertical-align: middle;
       outline: none;
-      transition: background 150ms ease, border-color 150ms ease;
+      transition: 
+        background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard), 
+        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
+        transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
     .hha-pill-status-group:hover,
     .hha-root.is-expanded .hha-pill-status-group {
-      background: #F8FAFC;
-      border-color: rgba(15, 23, 42, 0.12);
+      background: var(--md-sys-color-surface-container-low);
+    }
+
+    .hha-pill-status-group:active {
+      background: var(--md-sys-color-surface-container);
+      transform: scale(0.98);
     }
 
     .hha-pill-status {
@@ -2962,8 +3183,8 @@ const MAX_COVER_LENGTH = 5000;
       align-items: center;
       justify-content: center;
       min-width: 48px;
-      height: var(--hha-control-height, 28px);
-      min-height: var(--hha-control-height, 28px);
+      height: var(--md-comp-control-height);
+      min-height: var(--md-comp-control-height);
       box-sizing: border-box;
       padding: 0 4px;
       border-radius: 0;
@@ -2981,17 +3202,18 @@ const MAX_COVER_LENGTH = 5000;
       left: 0;
       height: 100%;
       width: 0%;
-      background: #E1F5EE;
-      border-radius: 0;
+      background: var(--md-sys-color-secondary-container);
+      border-radius: var(--md-sys-shape-corner-full);
       z-index: 1;
       pointer-events: none;
-      transition: width 260ms cubic-bezier(0.16, 1, 0.3, 1);
+      transition: width var(--md-sys-motion-duration-medium4) var(--md-sys-motion-easing-emphasized-decelerate);
     }
 
     .hha-pill-progress {
-      font-size: 12px;
-      font-weight: 500;
-      color: #6B7280;
+      font-size: var(--md-sys-typescale-label-medium-size);
+      font-weight: var(--md-sys-typescale-label-medium-weight);
+      letter-spacing: var(--md-sys-typescale-label-medium-tracking);
+      color: var(--md-sys-color-on-surface-variant);
       font-variant-numeric: tabular-nums;
       position: relative;
       z-index: 2;
@@ -2999,51 +3221,38 @@ const MAX_COVER_LENGTH = 5000;
 
     .hha-current-count {
       font-weight: 700;
-      color: #0F6E56;
+      color: var(--md-sys-color-primary);
+      transition: color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard);
     }
 
     .hha-pill-limit-val {
-      font-weight: 600;
+      font-weight: 500;
       font-variant-numeric: tabular-nums;
-      color: #6B7280;
+      color: var(--md-sys-color-on-surface-variant);
     }
 
-    .hha-pill-status-group.has-error {
-      border-color: rgba(239, 68, 68, 0.45);
+    .hha-pill-status-group.has-error .hha-current-count {
+      color: var(--md-sys-color-error);
     }
 
     .hha-pill-error-dot {
-      display: none;
-      width: 7px;
-      height: 7px;
-      margin-left: 3px;
-      border-radius: 50%;
-      background: #EF4444;
-      box-shadow: 0 0 0 1.5px #FFFFFF, 0 0 5px rgba(239, 68, 68, 0.5);
-      flex-shrink: 0;
-      z-index: 3;
-      animation: hhaErrorDotPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-    }
-
-    @keyframes hhaErrorDotPulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.5; transform: scale(0.85); }
+      display: none !important;
     }
 
     /* Pill Contextual Queue Badge */
     .hha-pill-queue-badge {
       display: inline-flex;
-      height: var(--hha-control-height, 28px);
-      min-height: var(--hha-control-height, 28px);
+      height: var(--md-comp-control-height);
+      min-height: var(--md-comp-control-height);
       box-sizing: border-box;
       align-items: center;
       justify-content: center;
       padding: 0;
-      border-radius: var(--hha-radius-full, 9999px);
-      background: #E1F5EE;
-      color: #085041;
-      border: 1px solid rgba(15, 110, 86, 0.25);
-      font-size: 12px;
+      border-radius: var(--md-sys-shape-corner-full);
+      background: var(--md-sys-color-surface-container-high);
+      color: var(--md-sys-color-on-surface);
+      border: none;
+      font-size: var(--md-sys-typescale-label-small-size);
       font-weight: 700;
       line-height: 1;
       font-variant-numeric: tabular-nums;
@@ -3054,140 +3263,231 @@ const MAX_COVER_LENGTH = 5000;
       vertical-align: middle;
       width: 0;
       min-width: 0;
-      max-width: none;
+      max-width: 0;
       opacity: 0;
-      margin-left: -5px;
+      margin-left: -6px;
       overflow: hidden;
       visibility: hidden;
       pointer-events: none;
-      will-change: width, opacity, margin-left;
+      transform: scale(0.7);
+      will-change: width, max-width, opacity, margin-left, transform;
       transition: 
-        width 240ms cubic-bezier(0.16, 1, 0.3, 1),
-        margin-left 240ms cubic-bezier(0.16, 1, 0.3, 1),
-        opacity 180ms ease,
-        transform 100ms ease,
-        visibility 240ms;
+        width var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-accelerate),
+        max-width var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-accelerate),
+        margin-left var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-accelerate),
+        padding var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-accelerate),
+        opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+        transform var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-accelerate),
+        background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+        color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+        visibility 0s linear var(--md-sys-motion-duration-short4);
     }
 
     .hha-pill-queue-badge.is-visible {
-      width: 28px;
+      width: 32px;
       min-width: 0;
+      max-width: 32px;
       padding: 0;
       margin-left: 0;
       opacity: 1;
+      transform: scale(1);
       visibility: visible;
       pointer-events: auto;
+      transition: 
+        width var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate),
+        max-width var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate),
+        margin-left var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate),
+        padding var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate),
+        opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
+        transform var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-emphasized-decelerate),
+        background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+        color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+        visibility 0s linear 0s;
     }
 
-    .hha-pill-queue-badge.is-wide {
-      width: 36px;
-      padding: 0 4px;
+    .hha-pill-queue-badge.is-visible.is-wide {
+      width: 40px;
+      max-width: 48px;
+      padding: 0 6px;
     }
 
     .hha-pill-queue-badge:hover {
-      background: #C6EBDD;
-      border-color: #0F6E56;
-      color: #085041;
+      background: var(--md-sys-color-primary-container);
+      color: var(--md-sys-color-on-primary-container);
     }
 
     .hha-pill-queue-badge:active {
-      transform: scale(0.94);
+      transform: scale(0.92);
     }
 
     .hha-pill-queue-badge.is-popping {
-      animation: hhaBadgePop 200ms cubic-bezier(0.25, 1, 0.5, 1);
+      animation: hhaBadgePop var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-emphasized);
     }
 
     /* ─── 4. QUICK ACTION BUTTON ──────────────────────────────────── */
     .hha-btn-start,
     .hha-btn-stop,
+    .hha-btn-done,
+    .hha-btn-error,
+    .hha-btn-reset,
     .hha-btn-quick {
       margin-left: auto;
-      width: 80px;
-      min-width: 80px;
-      padding: 0 8px;
-      border-radius: var(--hha-radius-full, 9999px);
+      width: auto;
+      min-width: 88px;
+      padding: 0 12px;
+      border-radius: var(--md-sys-shape-corner-full);
       border: none;
-      font-weight: 600;
-      font-size: 12px;
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-label-medium-size);
+      font-weight: var(--md-sys-typescale-label-medium-weight);
+      letter-spacing: var(--md-sys-typescale-label-medium-tracking);
       line-height: 1;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 4px;
-      height: var(--hha-control-height, 28px);
-      min-height: var(--hha-control-height, 28px);
+      gap: 6px;
+      height: var(--md-comp-control-height);
       box-sizing: border-box;
       vertical-align: middle;
-      transition: background-color 100ms ease, border-color 100ms ease, transform 100ms ease;
+      position: relative;
+      overflow: hidden;
+      transition: 
+        background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard), 
+        color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard), 
+        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), 
+        transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard),
+        min-width var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate);
     }
 
-    /* Unified Accent for Start */
+    .hha-btn-icon-slot {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+      transition: 
+        transform var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-decelerate),
+        opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-btn-icon-slot.is-swapping {
+      transform: scale(0.6) rotate(-15deg);
+      opacity: 0;
+    }
+
+    .hha-btn-label {
+      display: inline-block;
+      white-space: nowrap;
+      transition: 
+        transform var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-decelerate),
+        opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-btn-label.is-swapping {
+      transform: translateY(3px);
+      opacity: 0;
+    }
+
+    /* M3 Filled Button for Start (Primary Role) */
     .hha-btn-start {
-      background: #0F6E56;
-      color: #FFFFFF;
-      border: 1px solid #085041;
-      box-shadow: 0 1px 2px rgba(15, 110, 86, 0.2);
+      background: var(--md-sys-color-primary);
+      color: var(--md-sys-color-on-primary);
+      box-shadow: var(--md-sys-elevation-level1);
     }
 
     .hha-btn-start:hover {
-      background: #085041;
-      border-color: #063b30;
-      color: #FFFFFF;
+      background: color-mix(in srgb, var(--md-sys-color-primary) 92%, var(--md-sys-color-on-primary));
+      box-shadow: var(--md-sys-elevation-level2);
+      color: var(--md-sys-color-on-primary);
     }
 
     .hha-btn-start:active {
-      background: #063b30;
-      transform: scale(0.98);
+      background: color-mix(in srgb, var(--md-sys-color-primary) 88%, var(--md-sys-color-on-primary));
+      box-shadow: var(--md-sys-elevation-level1);
+      transform: scale(0.97);
     }
 
-    /* Red reserved for Stop action */
+    /* M3 Filled Button for Stop (Error Role) */
     .hha-btn-stop {
-      background: #DC2626;
-      color: #FFFFFF;
-      border: 1px solid #B91C1C;
-      box-shadow: 0 1px 2px rgba(220, 38, 38, 0.2);
+      background: var(--md-sys-color-error);
+      color: var(--md-sys-color-on-error);
+      box-shadow: var(--md-sys-elevation-level1);
     }
 
     .hha-btn-stop:hover {
-      background: #B91C1C;
-      border-color: #991B1B;
-      color: #FFFFFF;
+      background: color-mix(in srgb, var(--md-sys-color-error) 92%, var(--md-sys-color-on-error));
+      box-shadow: var(--md-sys-elevation-level2);
+      color: var(--md-sys-color-on-error);
     }
 
     .hha-btn-stop:active,
     .hha-btn-stop:focus-visible {
-      background: #991B1B;
-      color: #FFFFFF;
+      background: color-mix(in srgb, var(--md-sys-color-error) 88%, var(--md-sys-color-on-error));
+      box-shadow: var(--md-sys-elevation-level1);
+      color: var(--md-sys-color-on-error);
+      transform: scale(0.97);
     }
 
+    /* M3 Filled Success Button for Done / Limit Reached */
     .hha-btn-done {
-      background: #F1F5F9;
-      color: #6B7280;
-      border: 1px solid rgba(15, 23, 42, 0.1);
+      background: var(--md-sys-color-primary);
+      color: var(--md-sys-color-on-primary);
+      border: none;
+      box-shadow: var(--md-sys-elevation-level1);
     }
 
     .hha-btn-done:hover {
-      background: #E2E8F0;
-      color: #1F2328;
+      background: color-mix(in srgb, var(--md-sys-color-primary) 92%, var(--md-sys-color-on-primary));
+      box-shadow: var(--md-sys-elevation-level2);
+      color: var(--md-sys-color-on-primary);
     }
 
-    .hha-btn-error {
-      background: #DC2626;
-      color: #FFFFFF;
-      border: 1px solid #B91C1C;
+    .hha-btn-done:active {
+      background: color-mix(in srgb, var(--md-sys-color-primary) 88%, var(--md-sys-color-on-primary));
+      box-shadow: var(--md-sys-elevation-level1);
+      transform: scale(0.97);
     }
 
-    .hha-btn-error:hover {
-      background: #B91C1C;
+    /* M3 Filled Error Button for Error / Reset State */
+    .hha-btn-error,
+    .hha-btn-reset {
+      background: var(--md-sys-color-error);
+      color: var(--md-sys-color-on-error);
+      box-shadow: var(--md-sys-elevation-level1);
     }
 
+    .hha-btn-error:hover,
+    .hha-btn-reset:hover {
+      background: color-mix(in srgb, var(--md-sys-color-error) 92%, var(--md-sys-color-on-error));
+      box-shadow: var(--md-sys-elevation-level2);
+      color: var(--md-sys-color-on-error);
+    }
+
+    .hha-btn-error:active,
+    .hha-btn-reset:active,
+    .hha-btn-error:focus-visible,
+    .hha-btn-reset:focus-visible {
+      background: color-mix(in srgb, var(--md-sys-color-error) 88%, var(--md-sys-color-on-error));
+      box-shadow: var(--md-sys-elevation-level1);
+      transform: scale(0.97);
+      color: var(--md-sys-color-on-error);
+    }
+
+    .hha-btn-quick:disabled,
+    .hha-btn-quick.is-disabled {
+      opacity: 0.38;
+      cursor: not-allowed;
+      pointer-events: none;
+      box-shadow: none;
+    }
 
     /* ─── 5. FLYOUT PANEL ─────────────────────────────────────────── */
     .hha-flyout {
-      font-size: 12px;
-      line-height: 1.4;
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-body-small-size);
+      line-height: var(--md-sys-typescale-body-small-line-height);
       pointer-events: auto;
       width: min(390px, calc(100vw - 16px));
       max-width: calc(100vw - 16px);
@@ -3195,12 +3495,12 @@ const MAX_COVER_LENGTH = 5000;
       min-height: 160px;
       max-height: min(420px, calc(100vh - 56px));
       box-sizing: border-box;
-      background: #FAFAFA;
-      border: 1px solid rgba(15, 23, 42, 0.08);
-      border-radius: var(--hha-radius-lg, 12px);
-      box-shadow: 
-        0 4px 20px rgba(15, 23, 42, 0.10),
-        0 1px 2px rgba(0, 0, 0, 0.06);
+      background: var(--md-sys-color-surface-container);
+      border: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: var(--md-sys-shape-corner-large);
+      box-shadow: var(--md-sys-elevation-level3);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -3214,21 +3514,21 @@ const MAX_COVER_LENGTH = 5000;
       will-change: opacity, transform;
       backface-visibility: hidden;
       transition:
-        opacity 180ms cubic-bezier(0.16, 1, 0.3, 1),
-        transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
-        visibility 180ms;
+        opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-accelerate),
+        transform var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-accelerate),
+        visibility var(--md-sys-motion-duration-short4);
     }
 
     .hha-root.dir-up .hha-flyout {
       margin: 0;
       transform-origin: center bottom;
-      transform: scale(0.96) translateY(6px);
+      transform: scale(0.95) translate3d(0, 8px, 0);
     }
 
     .hha-root:not(.dir-up) .hha-flyout {
       margin: 0;
       transform-origin: center top;
-      transform: scale(0.96) translateY(-6px);
+      transform: scale(0.95) translate3d(0, -8px, 0);
     }
 
     .hha-root.is-animating .hha-panel,
@@ -3241,19 +3541,22 @@ const MAX_COVER_LENGTH = 5000;
       opacity: 1;
       visibility: visible;
       pointer-events: auto;
-      transform: scale(1) translateY(0);
+      transform: scale(1) translate3d(0, 0, 0);
+      transition:
+        opacity var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate),
+        transform var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate),
+        visibility var(--md-sys-motion-duration-medium2);
     }
 
     /* ─── 6. TABS (SEGMENTED CONTROL) ─────────────────────────────── */
     .hha-tabs {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      background: #F1F5F9;
-      margin: 8px 8px 6px 8px;
-      padding: 3px;
-      border: 1px solid rgba(15, 23, 42, 0.08);
-      border-radius: var(--hha-radius-sm, 8px);
-      gap: 3px;
+      display: flex;
+      background: var(--md-sys-color-surface-container-low);
+      margin: 8px 12px 12px 12px;
+      padding: 4px;
+      border: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: var(--md-sys-shape-corner-full);
+      gap: 4px;
       flex-shrink: 0;
       box-sizing: border-box;
     }
@@ -3266,84 +3569,64 @@ const MAX_COVER_LENGTH = 5000;
       min-width: 16px;
       height: 16px;
       padding: 0 4px;
-      border-radius: var(--hha-radius-full, 9999px);
-      font-size: 9.5px;
+      border-radius: var(--md-sys-shape-corner-full);
+      font-size: var(--md-sys-typescale-label-small-size);
       font-weight: 700;
       line-height: 1;
       box-sizing: border-box;
-      margin-left: 3px;
-      background: #E1F5EE;
-      color: #085041;
-      border: 1px solid rgba(15, 110, 86, 0.25);
-      transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), color 150ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms cubic-bezier(0.16, 1, 0.3, 1);
+      margin-left: 4px;
+      background: var(--md-sys-color-primary-container);
+      color: var(--md-sys-color-on-primary-container);
+      border: none;
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
     }
 
     .hha-tab-badge.is-queue {
-      background: #E1F5EE;
-      color: #085041;
-      border: 1px solid rgba(15, 110, 86, 0.25);
+      background: var(--md-sys-color-primary-container);
+      color: var(--md-sys-color-on-primary-container);
+      border: none;
     }
 
     .hha-tab-btn {
       flex: 1;
-      height: var(--hha-control-height, 28px);
+      min-width: 0;
+      height: var(--md-comp-control-height);
       background: transparent;
       border: none;
       outline: none;
-      border-radius: var(--hha-radius-xs, 6px);
-      font-size: 11px;
-      font-weight: 500;
-      color: #6B7280;
+      border-radius: var(--md-sys-shape-corner-full);
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-label-medium-size);
+      font-weight: var(--md-sys-typescale-label-medium-weight);
+      letter-spacing: var(--md-sys-typescale-label-medium-tracking);
+      color: var(--md-sys-color-on-surface-variant);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), color 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 100ms ease;
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard), box-shadow var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
       box-shadow: none;
       -webkit-appearance: none;
       appearance: none;
     }
 
     .hha-tab-btn:hover {
-      color: #1F2328;
-      background: rgba(15, 23, 42, 0.04);
+      color: var(--md-sys-color-on-surface);
+      background: color-mix(in srgb, var(--md-sys-color-primary) 8%, transparent);
     }
 
     .hha-tab-btn:active {
       transform: scale(0.97);
+      background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent);
     }
 
-    .hha-pill-status-group:focus-visible,
-    .hha-pill-queue-badge:focus-visible,
-    .hha-tab-btn:focus-visible,
-    .hha-segmented-btn:focus-visible,
-    .hha-stepper-btn:focus-visible,
-    .hha-stepper-input:focus-visible,
-    .hha-btn-quick:focus-visible,
-    .hha-queue-title-link:focus-visible,
-    .hha-btn-clear-all:focus-visible {
-      outline: none;
-      box-shadow: 0 0 0 2px #E1F5EE, 0 0 0 4px #0F6E56;
-    }
-
-    .hha-log-item-delete:focus-visible {
-      outline: none;
-      box-shadow: 0 0 0 2px #FEE2E2, 0 0 0 4px #DC2626;
-    }
-
-    .hha-btn-copy-error:focus-visible,
-    .hha-btn-dismiss-error:focus-visible {
-      outline: none;
-      box-shadow: 0 0 0 2px #FEF2F2, 0 0 0 4px #DC2626;
-    }
-
-    /* Unified Accent for Active Tab */
+    /* M3 Active Tab Pill */
     .hha-tab-btn.active {
-      background: #FFFFFF !important;
-      border: 1px solid rgba(15, 23, 42, 0.06) !important;
-      border-radius: var(--hha-radius-xs, 6px);
-      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
-      color: #0F6E56 !important;
+      background: var(--md-sys-color-surface-container-lowest) !important;
+      border: none !important;
+      border-radius: var(--md-sys-shape-corner-full);
+      box-shadow: var(--md-sys-elevation-level1);
+      color: var(--md-sys-color-primary) !important;
       font-weight: 600;
     }
 
@@ -3351,9 +3634,30 @@ const MAX_COVER_LENGTH = 5000;
       transform: scale(0.98);
     }
 
-    .hha-tab-btn.active:focus-visible {
+    .hha-tab-btn.active .hha-tab-badge.is-queue {
+      background: var(--md-sys-color-primary);
+      color: var(--md-sys-color-on-primary);
+      border: none;
+    }
+
+    /* Focus Rings (M3 Dual Focus Indicators) */
+    .hha-pill-status-group:focus-visible,
+    .hha-pill-queue-badge:focus-visible,
+    .hha-tab-btn:focus-visible,
+    .hha-segmented-btn:focus-visible,
+    .hha-stepper-btn:focus-visible,
+    .hha-btn-quick:focus-visible,
+    .hha-queue-title-link:focus-visible {
       outline: none;
-      box-shadow: 0 0 0 2px #E1F5EE, 0 0 0 4px #0F6E56;
+      box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary);
+    }
+
+    .hha-log-item-delete:focus-visible,
+    .hha-btn-clear-all:focus-visible,
+    .hha-btn-copy-error:focus-visible,
+    .hha-btn-dismiss-error:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-error);
     }
 
     /* ─── 7. TAB PANELS ───────────────────────────────────────────── */
@@ -3363,7 +3667,7 @@ const MAX_COVER_LENGTH = 5000;
       flex-direction: column;
       overflow: hidden;
       overflow-x: hidden;
-      padding: 0 8px 8px 8px;
+      padding: 12px 12px 0 12px;
       box-sizing: border-box;
       position: relative;
     }
@@ -3381,13 +3685,13 @@ const MAX_COVER_LENGTH = 5000;
       overflow-y: auto;
       padding: 0;
       scrollbar-width: thin;
-      scrollbar-color: #CBD5E1 transparent;
+      scrollbar-color: var(--md-sys-color-outline-variant) transparent;
       position: relative;
     }
 
     .hha-panel::-webkit-scrollbar {
-      width: 5px;
-      height: 5px;
+      width: 4px;
+      height: 4px;
     }
 
     .hha-panel::-webkit-scrollbar-track {
@@ -3395,30 +3699,31 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     .hha-panel::-webkit-scrollbar-thumb {
-      background: #CBD5E1;
-      border-radius: var(--hha-radius-full, 9999px);
+      background: var(--md-sys-color-outline-variant);
+      border-radius: var(--md-sys-shape-corner-full);
     }
 
     .hha-panel::-webkit-scrollbar-thumb:hover {
-      background: #94A3B8;
+      background: var(--md-sys-color-outline);
     }
 
     .hha-panel.active {
       display: flex;
+      animation: hhaPanelEnter var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-emphasized-decelerate) both;
     }
 
     /* ─── 8. QUEUE & LOG CONTAINERS ───────────────────────────────── */
-    /* Tab 2: Queue Card Container (Light) */
+    /* Tab 2: Queue Card Container */
     [data-panel="queue"] .hha-log-card {
       flex: 1;
       min-height: 220px;
       display: flex;
       flex-direction: column;
-      background: #FFFFFF;
-      border: 1px solid rgba(15, 23, 42, 0.08);
-      border-radius: var(--hha-radius-sm, 8px);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-      padding: 8px 10px;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+      padding: 0;
       box-sizing: border-box;
       overflow: hidden;
       position: relative;
@@ -3428,41 +3733,41 @@ const MAX_COVER_LENGTH = 5000;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      height: 26px;
-      padding-bottom: 6px;
-      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+      height: 28px;
+      padding: 0 4px 6px 4px;
+      border-bottom: none;
       width: 100%;
       flex-shrink: 0;
       box-sizing: border-box;
     }
 
     [data-panel="queue"] .hha-log-header-title {
-      font-size: 11px;
-      font-weight: 600;
-      color: #1F2328;
-      letter-spacing: -0.1px;
+      font-size: var(--md-sys-typescale-title-small-size);
+      font-weight: var(--md-sys-typescale-title-small-weight);
+      letter-spacing: var(--md-sys-typescale-title-small-tracking);
+      color: var(--md-sys-color-on-surface);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
     [data-panel="queue"] .hha-log-empty-text {
-      color: #6B7280;
-      font-size: 11px;
+      color: var(--md-sys-color-on-surface-variant);
+      font-size: var(--md-sys-typescale-body-small-size);
       font-weight: 500;
       text-align: center;
-      line-height: 1.4;
+      line-height: var(--md-sys-typescale-body-small-line-height);
     }
 
     [data-panel="queue"] .hha-log-empty-icon {
-      color: #9CA3AF;
-      opacity: 0.8;
+      color: var(--md-sys-color-outline);
+      opacity: 0.85;
     }
 
     .hha-log-actions {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
+      gap: 6px;
     }
 
     .hha-log-stream {
@@ -3475,7 +3780,7 @@ const MAX_COVER_LENGTH = 5000;
       box-sizing: border-box;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
       scrollbar-width: none;
       -ms-overflow-style: none;
     }
@@ -3489,7 +3794,7 @@ const MAX_COVER_LENGTH = 5000;
     /* Floating Overlay Scrollbar */
     .hha-overlay-scrollbar {
       position: absolute;
-      top: 48px;
+      top: 34px;
       bottom: 8px;
       right: 3px;
       width: 6px;
@@ -3497,7 +3802,7 @@ const MAX_COVER_LENGTH = 5000;
       z-index: 10;
       opacity: 0;
       visibility: hidden;
-      transition: opacity 200ms ease, visibility 200ms ease;
+      transition: opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), visibility var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
       user-select: none;
       cursor: pointer;
     }
@@ -3513,17 +3818,17 @@ const MAX_COVER_LENGTH = 5000;
       right: 0;
       width: 4px;
       min-height: 24px;
-      border-radius: var(--hha-radius-full, 9999px);
+      border-radius: var(--md-sys-shape-corner-full);
       cursor: grab;
       touch-action: none;
-      background: rgba(15, 23, 42, 0.2);
-      transition: width 150ms ease, background-color 150ms ease;
+      background: var(--md-sys-color-outline-variant);
+      transition: width var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
     }
 
     .hha-overlay-thumb:hover,
     .hha-overlay-thumb.is-dragging {
       width: 6px;
-      background: rgba(15, 23, 42, 0.4);
+      background: var(--md-sys-color-outline);
     }
 
     .hha-overlay-thumb.is-dragging {
@@ -3548,31 +3853,53 @@ const MAX_COVER_LENGTH = 5000;
       pointer-events: none;
     }
 
-    .hha-log-empty-icon {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      opacity: 0.8;
-    }
-
-
-    /* Queue Cards */
+    /* Queue Cards (M3 Filled Card Pattern) */
     .hha-queue-card {
       display: flex;
       flex-direction: column;
-      gap: 4px;
-      padding: 7px 9px;
-      background: #FAFAFA;
-      border: 1px solid rgba(15, 23, 42, 0.08);
-      border-radius: var(--hha-radius-sm, 8px);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+      gap: 6px;
+      padding: 8px 12px;
+      background: var(--md-sys-color-surface-container-low);
+      border: none;
+      border-radius: var(--md-sys-shape-corner-medium);
+      box-shadow: none;
       box-sizing: border-box;
-      transition: border-color 120ms ease, box-shadow 120ms ease;
+      transition: 
+        opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+        background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), 
+        box-shadow var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), 
+        transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
     .hha-queue-card:hover {
-      border-color: #0F6E56;
-      box-shadow: 0 2px 8px rgba(15, 110, 86, 0.12);
+      background: var(--md-sys-color-surface-container-high);
+      box-shadow: var(--md-sys-elevation-level1);
+      transform: translateY(-1px);
+    }
+
+    .hha-queue-card:active {
+      transform: translateY(0);
+      box-shadow: none;
+    }
+
+    /* Viewed Queue Card state (M3 Subdued State) */
+    .hha-queue-card.is-viewed {
+      opacity: 0.72;
+      background: var(--md-sys-color-surface-container);
+    }
+
+    .hha-queue-card.is-viewed:hover {
+      opacity: 1;
+      background: var(--md-sys-color-surface-container-high);
+    }
+
+    .hha-queue-card.is-viewed .hha-queue-title-link {
+      color: var(--md-sys-color-on-surface-variant);
+      font-weight: 500;
+    }
+
+    .hha-queue-card.is-viewed .hha-queue-title-link:hover {
+      color: var(--md-sys-color-primary);
     }
 
     .hha-queue-card-top {
@@ -3589,30 +3916,30 @@ const MAX_COVER_LENGTH = 5000;
       gap: 4px;
       min-width: 0;
       flex: 1;
-      color: #1F2328;
+      color: var(--md-sys-color-on-surface);
       text-decoration: none;
-      font-weight: 600;
-      font-size: 11.5px;
-      line-height: 1.3;
+      font-size: var(--md-sys-typescale-label-large-size);
+      font-weight: var(--md-sys-typescale-label-large-weight);
+      line-height: var(--md-sys-typescale-label-large-line-height);
       overflow: hidden;
       cursor: pointer;
-      transition: color 100ms ease;
+      transition: color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
     }
 
     .hha-queue-title-link:hover {
-      color: #0F6E56;
+      color: var(--md-sys-color-primary);
     }
 
     .hha-queue-title-link:hover .hha-queue-link-arrow {
-      color: #0F6E56;
+      color: var(--md-sys-color-primary);
       transform: translate(1px, -1px);
     }
 
     .hha-queue-link-arrow {
       font-size: 11px;
       line-height: 1;
-      color: #9CA3AF;
-      transition: transform 120ms ease, color 120ms ease;
+      color: var(--md-sys-color-outline);
+      transition: transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
       flex-shrink: 0;
     }
 
@@ -3626,22 +3953,23 @@ const MAX_COVER_LENGTH = 5000;
       display: flex;
       align-items: center;
       gap: 6px;
-      font-size: 10px;
-      color: #6B7280;
+      font-size: var(--md-sys-typescale-label-small-size);
+      color: var(--md-sys-color-on-surface-variant);
       min-width: 0;
       overflow: hidden;
-      line-height: 1.2;
+      line-height: var(--md-sys-typescale-label-small-line-height);
     }
 
+    /* M3 Assist Chips / Badges */
     .hha-queue-badge {
       display: inline-flex;
       align-items: center;
-      gap: 3.5px;
+      gap: 4px;
       padding: 2px 7px;
-      border-radius: var(--hha-radius-sm, 8px);
-      font-size: 9.5px;
-      font-weight: 600;
-      letter-spacing: 0.01em;
+      border-radius: var(--md-sys-shape-corner-small);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.1px;
       flex-shrink: 0;
       line-height: 1.3;
     }
@@ -3653,39 +3981,40 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     .hha-queue-badge.badge-warning {
-      background: #FEF3C7;
-      color: #92400E;
-      border: 1px solid #FCD34D;
+      background: var(--md-custom-color-warning-container);
+      color: var(--md-custom-color-on-warning-container);
+      border: none;
     }
 
-    /* Red reserved for error badge */
     .hha-queue-badge.badge-error {
-      background: #FEE2E2;
-      color: #991B1B;
-      border: 1px solid #FCA5A5;
+      background: var(--md-sys-color-error-container);
+      color: var(--md-sys-color-on-error-container);
+      border: none;
     }
 
     .hha-queue-badge.badge-info {
-      background: #E1F5EE;
-      color: #085041;
-      border: 1px solid #A7F3D0;
+      background: var(--md-sys-color-tertiary-container);
+      color: var(--md-sys-color-on-tertiary-container);
+      border: none;
     }
 
     .hha-queue-badge.badge-neutral {
-      background: #F3F4F6;
-      color: #4B5563;
-      border: 1px solid #E5E7EB;
+      background: var(--md-sys-color-surface-container-highest);
+      color: var(--md-sys-color-on-surface-variant);
+      border: none;
     }
 
-    .hha-queue-employer {
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+    .hha-queue-badge.badge-viewed {
+      background: var(--md-sys-color-surface-container-highest);
+      color: var(--md-sys-color-on-surface-variant);
+      border: none;
       font-weight: 500;
-      color: #6B7280;
-      min-width: 0;
-      max-width: 120px;
-      flex-shrink: 1;
+    }
+
+    .hha-queue-badge-check {
+      font-size: 10px;
+      line-height: 1;
+      font-weight: 700;
     }
 
     .hha-queue-salary {
@@ -3693,69 +4022,62 @@ const MAX_COVER_LENGTH = 5000;
       overflow: hidden;
       text-overflow: ellipsis;
       font-weight: 600;
-      color: #0F6E56;
+      color: var(--md-sys-color-primary);
       min-width: 0;
       flex-shrink: 1;
     }
 
-    .hha-queue-meta-divider {
-      color: #D1D5DB;
-      flex-shrink: 0;
-    }
-
     .hha-queue-vid {
       white-space: nowrap;
-      color: #9CA3AF;
-      font-size: 9px;
+      color: var(--md-sys-color-outline);
+      font-size: var(--md-sys-typescale-label-small-size);
       margin-left: auto;
       flex-shrink: 0;
     }
 
-    /* Delete item: Red strictly reserved for destructive action */
+    /* Delete item button with M3 Icon Button state layers */
     .hha-log-item-delete {
-      width: 22px;
-      height: 22px;
-      min-width: 22px;
-      min-height: 22px;
+      width: 24px;
+      height: 24px;
+      min-width: 24px;
+      min-height: 24px;
       padding: 0;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       background: transparent;
       border: none;
-      border-radius: var(--hha-radius-xs, 6px);
-      color: #9CA3AF;
+      border-radius: var(--md-sys-shape-corner-full);
+      color: var(--md-sys-color-on-surface-variant);
       cursor: pointer;
-      transition: color 150ms cubic-bezier(0.16, 1, 0.3, 1), background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 100ms ease;
+      transition: color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
     .hha-log-item-delete:hover {
-      color: #DC2626;
-      background: #FEE2E2;
+      color: var(--md-sys-color-error);
+      background: var(--md-sys-color-error-container);
     }
 
     .hha-log-item-delete:active {
-      color: #B91C1C;
-      background: #FECACA;
-      transform: scale(0.90);
+      color: var(--md-sys-color-error);
+      background: color-mix(in srgb, var(--md-sys-color-error-container) 80%, var(--md-sys-color-error));
+      transform: scale(0.92);
     }
 
-
     /* ─── 9. ERROR BANNER & TOAST ALERTS ──────────────────────────── */
-    /* Inline banner inside flyout (above tabs) */
     .hha-error-banner {
       display: none;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
       margin: 8px 8px 0 8px;
-      padding: 6px 10px;
-      background: #FEF2F2;
-      border: 1px solid rgba(239, 68, 68, 0.25);
-      border-radius: var(--hha-radius-sm, 8px);
+      padding: 6px 12px;
+      background: var(--md-sys-color-error-container);
+      border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent);
+      border-radius: var(--md-sys-shape-corner-small);
       box-sizing: border-box;
       flex-shrink: 0;
-      animation: hhaBannerSlide 160ms cubic-bezier(0.16, 1, 0.3, 1);
+      animation: hhaBannerSlide var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-decelerate);
     }
 
     @keyframes hhaBannerSlide {
@@ -3766,7 +4088,7 @@ const MAX_COVER_LENGTH = 5000;
     .hha-error-banner-main {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       min-width: 0;
       flex: 1;
     }
@@ -3775,16 +4097,16 @@ const MAX_COVER_LENGTH = 5000;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      color: #DC2626;
+      color: var(--md-sys-color-error);
       line-height: 1;
       flex-shrink: 0;
     }
 
     .hha-error-text {
-      font-size: 11px;
+      font-size: var(--md-sys-typescale-body-small-size);
       font-weight: 500;
-      color: #991B1B;
-      line-height: 1.35;
+      color: var(--md-sys-color-on-error-container);
+      line-height: var(--md-sys-typescale-body-small-line-height);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -3795,7 +4117,7 @@ const MAX_COVER_LENGTH = 5000;
     .hha-error-banner-actions {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
+      gap: 6px;
       flex-shrink: 0;
     }
 
@@ -3803,117 +4125,112 @@ const MAX_COVER_LENGTH = 5000;
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      height: 22px;
+      height: 24px;
       padding: 0 8px;
-      border-radius: var(--hha-radius-xs, 6px);
-      background: #FFFFFF;
-      color: #991B1B;
-      border: 1px solid rgba(239, 68, 68, 0.3);
-      font-size: 10.5px;
+      border-radius: var(--md-sys-shape-corner-full);
+      background: transparent;
+      color: var(--md-sys-color-error);
+      border: none;
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-label-small-size);
       font-weight: 600;
       line-height: 1;
       cursor: pointer;
       box-sizing: border-box;
-      transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 80ms ease;
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
     .hha-btn-copy-error:hover {
-      background: #FEE2E2;
-      border-color: #EF4444;
+      background: color-mix(in srgb, var(--md-sys-color-error) 12%, transparent);
     }
 
     .hha-btn-copy-error:active {
       transform: scale(0.96);
+      background: color-mix(in srgb, var(--md-sys-color-error) 20%, transparent);
     }
 
     .hha-btn-copy-error.is-copied {
-      background: #DCFCE7;
-      color: #166534;
-      border-color: #86EFAC;
+      background: var(--md-sys-color-primary-container);
+      color: var(--md-sys-color-on-primary-container);
+      border: none;
     }
 
     .hha-btn-dismiss-error {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 22px;
-      height: 22px;
+      width: 24px;
+      height: 24px;
       padding: 0;
-      border-radius: var(--hha-radius-micro, 4px);
+      border-radius: var(--md-sys-shape-corner-full);
       background: transparent;
       border: none;
-      color: #991B1B;
+      color: var(--md-sys-color-error);
       font-size: 13px;
       font-weight: 700;
       line-height: 1;
       cursor: pointer;
-      opacity: 0.65;
-      transition: opacity 120ms ease, background-color 120ms ease;
+      opacity: 0.8;
+      transition: opacity var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard), background-color var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
     .hha-btn-dismiss-error:hover {
       opacity: 1;
-      background: rgba(239, 68, 68, 0.12);
+      background: color-mix(in srgb, var(--md-sys-color-error) 8%, transparent);
     }
 
     .hha-btn-dismiss-error:active {
       transform: scale(0.92);
+      background: color-mix(in srgb, var(--md-sys-color-error) 12%, transparent);
     }
 
-    /* Clear all in queue: Red strictly for destructive confirmation */
+    /* Clear all in queue: M3 Text Button (Error role) */
     .hha-btn-clear-all,
     .hha-btn-clear-queue {
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      height: 22px;
-      padding: 2px 7px;
-      background: #FFFFFF;
-      border: 1px solid rgba(15, 23, 42, 0.12);
-      border-radius: var(--hha-radius-xs, 6px);
-      font-size: 11px;
+      height: 24px;
+      padding: 2px 8px;
+      background: transparent;
+      border: none;
+      border-radius: var(--md-sys-shape-corner-full);
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-label-small-size);
       font-weight: 500;
-      color: #6B7280;
+      color: var(--md-sys-color-on-surface-variant);
       cursor: pointer;
       line-height: 1;
-      transition: color 150ms cubic-bezier(0.16, 1, 0.3, 1), background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 100ms ease;
+      transition: color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
       white-space: nowrap;
-      margin-right: 2px;
     }
 
     .hha-btn-clear-all:hover:not(:disabled),
     .hha-btn-clear-queue:hover:not(:disabled) {
-      background: #FEE2E2;
-      border-color: #FCA5A5;
-      color: #DC2626;
+      color: var(--md-sys-color-error);
+      background: var(--md-sys-color-error-container);
     }
 
     .hha-btn-clear-all:active:not(:disabled),
     .hha-btn-clear-queue:active:not(:disabled) {
       transform: scale(0.96);
-      background: #FECACA;
-    }
-
-    .hha-btn-clear-all:hover:not(:disabled) .hha-btn-clear-all-icon {
-      color: #DC2626;
+      background: color-mix(in srgb, var(--md-sys-color-error-container) 85%, var(--md-sys-color-error));
     }
 
     .hha-btn-clear-all.is-confirming,
     .hha-btn-clear-queue.is-confirming {
       width: auto !important;
-      padding: 2px 8px !important;
-      background: #DC2626 !important;
-      border-color: #DC2626 !important;
-      color: #FFFFFF !important;
-      font-size: 11px !important;
+      padding: 2px 10px !important;
+      background: var(--md-sys-color-error) !important;
+      border: none !important;
+      color: var(--md-sys-color-on-error) !important;
       font-weight: 600 !important;
     }
 
     .hha-btn-clear-all.is-confirming:hover,
     .hha-btn-clear-queue.is-confirming:hover {
-      background: #B91C1C !important;
-      border-color: #B91C1C !important;
-      color: #FFFFFF !important;
+      background: color-mix(in srgb, var(--md-sys-color-error) 90%, black) !important;
+      color: var(--md-sys-color-on-error) !important;
     }
 
     .hha-btn-clear-all.is-confirming:active,
@@ -3932,40 +4249,37 @@ const MAX_COVER_LENGTH = 5000;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 12px;
-      height: 12px;
+      width: 14px;
+      height: 14px;
       color: inherit;
     }
 
-    .hha-btn-clear-all-icon svg {
-      width: 12px;
-      height: 12px;
-    }
-
-    .hha-btn-clear-all-text {
-      font-size: 10.5px;
+    .hha-btn-clear-all-text,
+    .hha-btn-confirm-text {
+      font-size: var(--md-sys-typescale-label-small-size);
       line-height: 1;
     }
 
-    /* ─── 10. TOOLTIP ─────────────────────────────────────────────── */
+    /* ─── 10. TOOLTIP (M3 PLAIN TOOLTIP) ──────────────────────────── */
     .hha-tooltip {
       position: absolute;
-      background: #1F2328;
-      color: #FFFFFF;
-      font-size: 11px;
-      font-weight: 500;
-      line-height: 1.3;
+      background: var(--md-sys-color-inverse-surface);
+      color: var(--md-sys-color-inverse-on-surface);
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-body-small-size);
+      font-weight: 400;
+      line-height: var(--md-sys-typescale-body-small-line-height);
       padding: 4px 8px;
-      border-radius: var(--hha-radius-xs, 6px);
+      border-radius: var(--md-sys-shape-corner-extra-small);
       max-width: 260px;
       width: max-content;
       white-space: normal;
       word-break: break-word;
-      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+      box-shadow: var(--md-sys-elevation-level2);
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
-      transition: opacity 120ms ease;
+      transition: opacity var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
       z-index: 1000;
     }
 
@@ -3976,10 +4290,10 @@ const MAX_COVER_LENGTH = 5000;
 
     /* ─── 11. SETTINGS CONTROLS ───────────────────────────────────── */
     .hha-card {
-      background: #FFFFFF;
-      border: 1px solid rgba(15, 23, 42, 0.08);
-      border-radius: var(--hha-radius-sm, 8px);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      background: var(--md-sys-color-surface-container-lowest);
+      border: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: var(--md-sys-shape-corner-medium);
+      box-shadow: none;
       margin-bottom: 8px;
       overflow: visible;
       box-sizing: border-box;
@@ -3993,82 +4307,91 @@ const MAX_COVER_LENGTH = 5000;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 4px 10px;
-      min-height: 36px;
+      padding: 8px 12px;
+      min-height: 48px;
       box-sizing: border-box;
     }
 
     .hha-row + .hha-row {
-      border-top: 1px solid rgba(15, 23, 42, 0.06);
+      border-top: 1px solid var(--md-sys-color-outline-variant);
     }
 
     .hha-speed-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 4px 10px;
-      min-height: 36px;
+      padding: 8px 12px;
+      min-height: 48px;
       box-sizing: border-box;
-      border-top: 1px solid rgba(15, 23, 42, 0.06);
+      border-top: 1px solid var(--md-sys-color-outline-variant);
       flex-wrap: nowrap;
     }
 
     .hha-row-label {
-      font-size: 13px;
+      font-size: var(--md-sys-typescale-body-medium-size);
       font-weight: 500;
-      color: #1F2328;
+      color: var(--md-sys-color-on-surface);
+      letter-spacing: var(--md-sys-typescale-body-medium-tracking);
     }
 
     .hha-stepper {
       display: inline-flex;
       align-items: stretch;
-      border: 1px solid rgba(15, 23, 42, 0.12);
-      border-radius: var(--hha-radius-sm, 8px);
-      background: #FFFFFF;
+      border: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: var(--md-sys-shape-corner-small);
+      background: var(--md-sys-color-surface-container-lowest);
       overflow: hidden;
-      height: var(--hha-control-height, 28px);
+      height: var(--md-comp-control-height);
       box-sizing: border-box;
+      transition: border-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), box-shadow var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-stepper:focus-within,
+    .hha-stepper:has(.is-focused) {
+      border-color: var(--md-sys-color-primary);
+      box-shadow: 0 0 0 1px var(--md-sys-color-primary);
     }
 
     .hha-stepper-btn {
       width: 28px;
       min-width: 28px;
-      height: var(--hha-control-height, 28px);
+      height: var(--md-comp-control-height);
       display: flex;
       align-items: center;
       justify-content: center;
       background: transparent;
       border: none;
-      color: #1F2328;
-      font-size: 14px;
-      font-weight: 600;
+      color: var(--md-sys-color-on-surface);
+      font-size: 15px;
+      font-weight: 500;
       cursor: pointer;
       padding: 0;
-      transition: background-color 140ms ease, transform 100ms ease;
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
       user-select: none;
       box-sizing: border-box;
     }
 
     .hha-stepper-btn:hover {
-      background: #F1F5F9;
+      background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
     }
 
     .hha-stepper-btn:active {
-      background: #CBD5E1;
+      background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
       transform: scale(0.92);
     }
 
     .hha-stepper-input {
       width: 44px;
-      height: var(--hha-control-height, 28px);
+      height: var(--md-comp-control-height);
       border: none;
-      border-left: 1px solid rgba(15, 23, 42, 0.12);
-      border-right: 1px solid rgba(15, 23, 42, 0.12);
+      border-left: 1px solid var(--md-sys-color-outline-variant);
+      border-right: 1px solid var(--md-sys-color-outline-variant);
       background: transparent;
       text-align: center;
-      font-size: 12px;
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-title-small-size);
       font-weight: 600;
-      color: #1F2328;
+      color: var(--md-sys-color-on-surface);
       padding: 0;
       outline: none;
       box-sizing: border-box;
@@ -4076,9 +4399,10 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     .hha-stepper-input:focus,
-    .hha-stepper-input.is-focused {
-      background: #E1F5EE;
-      color: #085041;
+    .hha-stepper-input:focus-visible {
+      outline: none;
+      box-shadow: none;
+      background: transparent;
     }
 
     .hha-stepper-input::-webkit-outer-spin-button,
@@ -4087,19 +4411,21 @@ const MAX_COVER_LENGTH = 5000;
       margin: 0;
     }
 
+    /* M3 Connected Segmented Button (m3.material.io/components/segmented-buttons/specs) */
     .hha-segmented-control {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      max-width: 204px;
-      min-width: 170px;
+      max-width: 236px;
+      min-width: 204px;
       width: 100%;
-      height: 28px;
-      padding: 2px;
-      gap: 2px;
-      background: #F1F5F9;
-      border: 1px solid rgba(15, 23, 42, 0.08);
-      border-radius: var(--hha-radius-sm, 8px);
+      height: var(--md-comp-control-height);
+      padding: 0;
+      gap: 0;
+      background: transparent;
+      border: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: var(--md-sys-shape-corner-full);
       box-sizing: border-box;
+      overflow: hidden;
     }
 
     .hha-segmented-btn {
@@ -4111,34 +4437,63 @@ const MAX_COVER_LENGTH = 5000;
       align-items: center;
       justify-content: center;
       text-align: center;
-      font-size: 11px;
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-label-small-size);
       font-weight: 500;
+      letter-spacing: var(--md-sys-typescale-label-small-tracking);
       line-height: 1;
       border: none;
-      border-radius: var(--hha-radius-xs, 6px);
       background: transparent;
-      color: #6B7280;
+      color: var(--md-sys-color-on-surface-variant);
       cursor: pointer;
       box-sizing: border-box;
-      transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease, transform 100ms ease;
+      white-space: nowrap;
+      position: relative;
+      user-select: none;
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+                  color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
     }
 
-    .hha-segmented-btn:hover {
-      color: #1F2328;
+    /* M3 Connected Endcaps & Inner Dividers */
+    .hha-segmented-btn:first-child {
+      border-radius: var(--md-sys-shape-corner-full) 0 0 var(--md-sys-shape-corner-full);
     }
 
-    .hha-segmented-btn:active {
-      transform: scale(0.96);
+    .hha-segmented-btn:not(:first-child):not(:last-child) {
+      border-radius: 0;
     }
 
-    /* Unified Accent for active speed preset */
+    .hha-segmented-btn:last-child {
+      border-radius: 0 var(--md-sys-shape-corner-full) var(--md-sys-shape-corner-full) 0;
+    }
+
+    .hha-segmented-btn + .hha-segmented-btn {
+      border-left: 1px solid var(--md-sys-color-outline-variant);
+    }
+
+    .hha-segmented-btn:hover:not(.is-active) {
+      color: var(--md-sys-color-on-surface);
+      background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
+    }
+
+    .hha-segmented-btn:active:not(.is-active) {
+      background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
+    }
+
+    /* M3 Selected Segment */
     .hha-segmented-btn.is-active {
-      background: #E1F5EE !important;
-      border: 1px solid rgba(15, 110, 86, 0.25) !important;
-      box-shadow: 0 1px 2px rgba(15, 110, 86, 0.1) !important;
-      color: #085041 !important;
+      background: var(--md-sys-color-secondary-container) !important;
+      border: none !important;
+      box-shadow: none !important;
+      color: var(--md-sys-color-on-secondary-container) !important;
       font-weight: 600 !important;
     }
+
+    .hha-segmented-btn.is-active:hover {
+      background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 8%, var(--md-sys-color-secondary-container)) !important;
+    }
+
+
 
     /* ─── 12. SWITCH & COVER LETTER ───────────────────────────────── */
     .hha-card-cover {
@@ -4148,21 +4503,27 @@ const MAX_COVER_LENGTH = 5000;
       flex-direction: column;
       margin-bottom: 0;
       overflow: hidden;
-      background: #FFFFFF;
-      border: 1px solid rgba(15, 23, 42, 0.08);
-      border-radius: var(--hha-radius-sm, 8px);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      background: var(--md-sys-color-surface-container-lowest);
+      border: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: var(--md-sys-shape-corner-medium);
+      box-shadow: none;
+      transition: border-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), box-shadow var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-card-cover:focus-within {
+      border-color: var(--md-sys-color-primary);
+      box-shadow: 0 0 0 1px var(--md-sys-color-primary);
     }
 
     .hha-switch-row {
       display: flex;
       align-items: center;
-      padding: 7px 10px 7px 10px;
+      padding: 8px 12px;
       box-sizing: border-box;
-      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+      border-bottom: 1px solid var(--md-sys-color-outline-variant);
       width: 100%;
       flex-shrink: 0;
-      background: #FFFFFF;
+      background: var(--md-sys-color-surface-container-lowest);
     }
 
     .hha-switch-label {
@@ -4176,17 +4537,18 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     .hha-switch-label .hha-row-label {
-      font-size: 12px;
-      line-height: 1.35;
+      font-size: var(--md-sys-typescale-body-medium-size);
+      line-height: var(--md-sys-typescale-body-medium-line-height);
       font-weight: 500;
-      color: #1F2328;
+      color: var(--md-sys-color-on-surface);
     }
 
+    /* M3 Switch Specification (m3.material.io/components/switch/specs) */
     .hha-switch {
       position: relative;
       display: inline-block;
-      width: 36px;
-      height: 20px;
+      width: 44px;
+      height: 24px;
       flex-shrink: 0;
     }
 
@@ -4206,46 +4568,64 @@ const MAX_COVER_LENGTH = 5000;
       left: 0;
       right: 0;
       bottom: 0;
-      background-color: #E2E8F0;
-      border-radius: 9999px;
-      box-shadow: inset 0 0 0 1px #CBD5E1;
-      transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1);
+      background-color: var(--md-sys-color-surface-container-highest);
+      border-radius: var(--md-sys-shape-corner-full);
+      border: 2px solid var(--md-sys-color-outline);
+      box-sizing: border-box;
+      transition: background-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), border-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
     }
 
     .hha-switch-slider:hover {
-      box-shadow: inset 0 0 0 1px #9CA3AF;
+      border-color: var(--md-sys-color-on-surface);
     }
 
     .hha-switch-slider::before {
       position: absolute;
       content: "";
-      height: 16px;
-      width: 16px;
-      left: 2px;
-      bottom: 2px;
-      background-color: #FFFFFF;
-      border-radius: 50%;
-      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.2);
-      transition: transform 200ms cubic-bezier(0.34, 1.3, 0.64, 1);
+      top: 50%;
+      left: 4px;
+      height: 12px;
+      width: 12px;
+      transform: translateY(-50%);
+      background-color: var(--md-sys-color-outline);
+      border-radius: var(--md-sys-shape-corner-full);
+      transition: transform var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-emphasized-decelerate), background-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), width var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), height var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
     }
 
-    /* Unified Accent for active switch */
+    .hha-switch:hover .hha-switch-slider::before {
+      background-color: var(--md-sys-color-on-surface);
+    }
+
+    /* M3 Checked Switch */
     .hha-switch-input:checked + .hha-switch-slider {
-      background-color: #0F6E56;
-      box-shadow: inset 0 0 0 1px #085041;
+      background-color: var(--md-sys-color-primary);
+      border: 2px solid var(--md-sys-color-primary);
     }
 
     .hha-switch-input:checked + .hha-switch-slider:hover {
-      background-color: #085041;
-      box-shadow: inset 0 0 0 1px #063b30;
+      background-color: color-mix(in srgb, var(--md-sys-color-primary) 92%, var(--md-sys-color-on-primary));
+      border-color: color-mix(in srgb, var(--md-sys-color-primary) 92%, var(--md-sys-color-on-primary));
     }
 
     .hha-switch-input:checked + .hha-switch-slider::before {
-      transform: translateX(16px);
+      transform: translateY(-50%) translateX(20px);
+      height: 16px;
+      width: 16px;
+      background-color: var(--md-sys-color-on-primary);
+    }
+
+    /* M3 Squish Transition on Active/Press */
+    .hha-switch:active .hha-switch-slider::before {
+      width: 16px;
+    }
+
+    .hha-switch-input:checked:active + .hha-switch-slider::before {
+      transform: translateY(-50%) translateX(16px);
+      width: 20px;
     }
 
     .hha-switch-input:focus-visible + .hha-switch-slider {
-      box-shadow: 0 0 0 2px #E1F5EE, 0 0 0 4px #0F6E56;
+      box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary);
     }
 
     .hha-cover-container {
@@ -4256,7 +4636,7 @@ const MAX_COVER_LENGTH = 5000;
       padding: 0;
       box-sizing: border-box;
       position: relative;
-      background: #FAFAFA;
+      background: transparent;
     }
 
     .hha-cover-textarea {
@@ -4267,10 +4647,10 @@ const MAX_COVER_LENGTH = 5000;
       background: transparent;
       border: none;
       border-radius: 0;
-      color: #1F2328;
-      font-size: 12px;
-      line-height: 1.45;
-      font-family: inherit;
+      color: var(--md-sys-color-on-surface);
+      font-size: var(--md-sys-typescale-body-small-size);
+      line-height: var(--md-sys-typescale-body-small-line-height);
+      font-family: var(--md-sys-typescale-font-family);
       padding: 8px 10px 28px 10px;
       margin: 0;
       resize: none;
@@ -4278,15 +4658,12 @@ const MAX_COVER_LENGTH = 5000;
       box-sizing: border-box;
       box-shadow: none !important;
       scrollbar-width: thin;
-      scrollbar-color: #CBD5E1 transparent;
-      transition: 
-        opacity 180ms ease,
-        background-color 180ms ease,
-        color 180ms ease;
+      scrollbar-color: var(--md-sys-color-outline-variant) transparent;
+      transition: opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), background-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
     }
 
     .hha-cover-textarea::-webkit-scrollbar {
-      width: 5px;
+      width: 4px;
     }
 
     .hha-cover-textarea::-webkit-scrollbar-track {
@@ -4294,69 +4671,67 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     .hha-cover-textarea::-webkit-scrollbar-thumb {
-      background: #CBD5E1;
-      border-radius: var(--hha-radius-full, 9999px);
+      background: var(--md-sys-color-outline-variant);
+      border-radius: var(--md-sys-shape-corner-full);
     }
 
     .hha-cover-textarea::-webkit-scrollbar-thumb:hover {
-      background: #94A3B8;
+      background: var(--md-sys-color-outline);
     }
 
     .hha-cover-textarea::placeholder {
-      color: #9CA3AF;
+      color: var(--md-sys-color-outline);
       opacity: 1;
     }
 
     .hha-cover-textarea:disabled,
     .hha-cover-textarea.is-disabled {
-      opacity: 0.55;
-      background: #F1F5F9;
-      color: #9CA3AF;
+      opacity: 0.38;
+      background: var(--md-sys-color-surface-container-high);
+      color: var(--md-sys-color-outline);
       cursor: not-allowed;
     }
 
     .hha-char-counter {
       position: absolute;
-      bottom: 7px;
-      right: 9px;
+      bottom: 8px;
+      right: 12px;
       z-index: 2;
       pointer-events: none;
-      font-size: 10.5px;
+      font-size: var(--md-sys-typescale-label-small-size);
+      font-family: var(--md-sys-typescale-font-family-mono);
       line-height: 1;
-      color: #6B7280;
+      color: var(--md-sys-color-on-surface-variant);
       font-weight: 500;
       font-variant-numeric: tabular-nums;
-      background: rgba(255, 255, 255, 0.88);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
-      padding: 3px 6px;
-      border-radius: 6px;
-      border: 1px solid rgba(15, 23, 42, 0.08);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-      transition: color 120ms ease, border-color 120ms ease, opacity 180ms ease;
+      background: transparent;
+      padding: 0;
+      border: none;
+      box-shadow: none;
+      transition: color var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard), opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
     }
 
     .hha-cover-textarea:disabled ~ .hha-char-counter,
     .hha-cover-textarea.is-disabled ~ .hha-char-counter {
-      opacity: 0.55;
-      background: rgba(241, 245, 249, 0.85);
+      opacity: 0.38;
+      background: transparent;
     }
 
-    /* Red reserved for limit alert */
     .hha-char-counter.is-limit {
-      color: #DC2626;
-      border-color: rgba(220, 38, 38, 0.3);
+      color: var(--md-sys-color-error);
       font-weight: 600;
     }
 
     /* ─── 13. KEYFRAMES ───────────────────────────────────────────── */
-
     @keyframes hhaBadgePop {
       0% {
         transform: scale(1);
       }
-      40% {
-        transform: scale(1.06);
+      35% {
+        transform: scale(1.18);
+      }
+      70% {
+        transform: scale(0.96);
       }
       100% {
         transform: scale(1);
@@ -4369,6 +4744,26 @@ const MAX_COVER_LENGTH = 5000;
       }
       to {
         opacity: 1;
+      }
+    }
+
+    @keyframes hhaPanelEnter {
+      from {
+        opacity: 0;
+        transform: translate3d(0, 4px, 0);
+      }
+      to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0);
+      }
+    }
+
+    /* Accessibility: M3 Motion Reduction */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
       }
     }
   `;
@@ -4727,9 +5122,8 @@ const MAX_COVER_LENGTH = 5000;
             if (pill && typeof pill.offsetWidth === 'number' && pill.offsetWidth > 0 && pill.offsetWidth < 300) {
               this._collapsedPillWidth = pill.offsetWidth;
             }
-            this._updatePosition();
           }
-        }, 190);
+        }, this._isExpanded ? 300 : 200);
       } else {
         this._isAnimating = false;
       }
@@ -4821,7 +5215,9 @@ const MAX_COVER_LENGTH = 5000;
     setPosition(x, y) {
       const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
       const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
-      this._pillPos = this._clampPillCoordinates(x, y, winW, winH);
+      // Accept center X or left edge
+      const centerX = x < 200 ? (x + 195) : x;
+      this._pillPos = this._clampPillCoordinates(centerX, y, winW, winH);
       this._persistPosition();
       this._updatePosition();
     }
@@ -4837,15 +5233,17 @@ const MAX_COVER_LENGTH = 5000;
       return this._collapsedPillWidth || 166;
     }
 
-    _clampPillCoordinates(x, y, winW, winH) {
-      const pillW = this._getPillWidth();
-      const targetW = Math.min(390, Math.max(100, winW - 16));
-      const maxW = Math.max(targetW, pillW);
-      const offset = (maxW - pillW) / 2;
-      const clamped = clampCoordinates(x - offset, y, maxW, 36, winW, winH, 8);
+    _clampPillCoordinates(centerX, y, winW, winH) {
+      const padding = 8;
+      const flyoutMaxW = 390;
+      const halfW = flyoutMaxW / 2;
+      const minX = padding + halfW;
+      const maxX = Math.max(minX, winW - padding - halfW);
+      const minY = padding;
+      const maxY = winH - 36 - padding;
       return {
-        x: Math.round(clamped.x + offset),
-        y: clamped.y
+        x: Math.round(clamp(centerX, minX, maxX)),
+        y: Math.round(clamp(y, minY, maxY))
       };
     }
 
@@ -4865,8 +5263,8 @@ const MAX_COVER_LENGTH = 5000;
             </div>
             <span class="hha-pill-queue-badge" data-action="open-queue-tab" data-el="pill-queue-badge" data-tooltip="Вакансии с анкетами в очереди" tabindex="0" role="button" aria-label="Очередь вакансий"></span>
             <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="pill-quick-btn">
-              ${ICONS.play}
-              <span data-el="pill-quick-label">Старт</span>
+              <span class="hha-btn-icon-slot" data-el="pill-quick-icon">${ICONS.play}</span>
+              <span class="hha-btn-label" data-el="pill-quick-label">Старт</span>
             </button>
           </div>
 
@@ -4887,12 +5285,6 @@ const MAX_COVER_LENGTH = 5000;
               </div>
             </div>
 
-            <!-- Segmented Control Tabs (2 columns) -->
-            <div class="hha-tabs" role="tablist" aria-label="Разделы панели">
-              <button type="button" class="hha-tab-btn active" role="tab" aria-selected="true" data-action="switch-tab" data-tab="settings">Настройки</button>
-              <button type="button" class="hha-tab-btn" role="tab" aria-selected="false" data-action="switch-tab" data-tab="queue"><span>Очередь</span> <span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
-            </div>
-
             <!-- Panels -->
             <div class="hha-panels">
               <!-- Tab 1: Settings (Настройки) -->
@@ -4908,10 +5300,10 @@ const MAX_COVER_LENGTH = 5000;
                   </div>
                   <div class="hha-speed-row">
                     <span class="hha-row-label">Скорость</span>
-                    <div class="hha-segmented-control">
-                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="safe">Безопасно</button>
-                      <button type="button" class="hha-segmented-btn is-active" data-action="set-preset" data-preset="balanced">Баланс</button>
-                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="fast">Быстро</button>
+                    <div class="hha-segmented-control" role="radiogroup" aria-label="Пресет скорости">
+                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="safe" role="radio" aria-checked="false">Безопасно</button>
+                      <button type="button" class="hha-segmented-btn is-active" data-action="set-preset" data-preset="balanced" role="radio" aria-checked="true">Баланс</button>
+                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="fast" role="radio" aria-checked="false">Быстро</button>
                     </div>
                   </div>
                 </div>
@@ -4956,6 +5348,12 @@ const MAX_COVER_LENGTH = 5000;
                   </div>
                 </div>
               </div>
+            </div>
+
+            <!-- Segmented Control Tabs (2 columns) -->
+            <div class="hha-tabs" role="tablist" aria-label="Разделы панели">
+              <button type="button" class="hha-tab-btn active" role="tab" aria-selected="true" data-action="switch-tab" data-tab="settings">Настройки</button>
+              <button type="button" class="hha-tab-btn" role="tab" aria-selected="false" data-action="switch-tab" data-tab="queue"><span>Очередь</span> <span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
             </div>
           </div>
         </div>
@@ -5314,7 +5712,17 @@ const MAX_COVER_LENGTH = 5000;
       }
       if (!this._shadow) return;
       const banner = this._shadow.querySelector('[data-el="error-banner"]');
-      if (banner) banner.style.display = 'none';
+      if (banner && banner.style.display !== 'none') {
+        banner.style.transition = 'opacity 160ms cubic-bezier(0.3,0,0.8,0.15), transform 160ms cubic-bezier(0.3,0,0.8,0.15)';
+        banner.style.opacity = '0';
+        banner.style.transform = 'translate3d(0, -4px, 0)';
+        setTimeout(() => {
+          banner.style.display = 'none';
+          banner.style.opacity = '';
+          banner.style.transform = '';
+          banner.style.transition = '';
+        }, 160);
+      }
       const errorDot = this._shadow.querySelector('[data-el="pill-error-dot"]');
       if (errorDot) errorDot.style.display = 'none';
       const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
@@ -5393,16 +5801,54 @@ const MAX_COVER_LENGTH = 5000;
             this._resetClearQueueBtn();
           }, 3000);
         }
+      } else if (action === 'open-vacancy') {
+        const vid = actionTarget.dataset.vid || actionTarget.dataset.cleanVid;
+        const cVid = cleanVid(actionTarget.dataset.cleanVid || vid);
+        if (cVid) {
+          if (this._assistant && typeof this._assistant.markManualItemViewed === 'function') {
+            this._assistant.markManualItemViewed(cVid, true);
+          } else {
+            const item = (this._queue || []).find(it => cleanVid(it.vid) === cVid);
+            if (item) {
+              item.viewed = true;
+              item.viewedAt = Date.now();
+              this._syncQueue();
+            }
+          }
+        }
       } else if (action === 'delete-queue-item') {
         e.stopPropagation();
         const vid = actionTarget.dataset.vid || actionTarget.dataset.cleanVid;
         const cVid = cleanVid(actionTarget.dataset.cleanVid || vid);
         if (vid) {
-          if (this._assistant && typeof this._assistant.removeManualItem === 'function') {
-            this._assistant.removeManualItem(vid);
+          const card = actionTarget.closest('.hha-queue-card');
+          if (card) {
+            card.style.transition = 'opacity 180ms cubic-bezier(0.3,0,0.8,0.15), transform 180ms cubic-bezier(0.3,0,0.8,0.15), max-height 220ms cubic-bezier(0.05,0.7,0.1,1), margin 220ms, padding 220ms';
+            card.style.overflow = 'hidden';
+            card.style.maxHeight = `${card.offsetHeight}px`;
+            requestAnimationFrame(() => {
+              card.style.opacity = '0';
+              card.style.transform = 'scale(0.95) translate3d(12px, 0, 0)';
+              card.style.maxHeight = '0px';
+              card.style.paddingTop = '0px';
+              card.style.paddingBottom = '0px';
+              card.style.marginBottom = '0px';
+            });
+            setTimeout(() => {
+              if (this._assistant && typeof this._assistant.removeManualItem === 'function') {
+                this._assistant.removeManualItem(vid);
+              } else {
+                this._queue = this._queue.filter(it => cleanVid(it.vid) !== cVid);
+                this._syncQueue();
+              }
+            }, 200);
           } else {
-            this._queue = this._queue.filter(it => cleanVid(it.vid) !== cVid);
-            this._syncQueue();
+            if (this._assistant && typeof this._assistant.removeManualItem === 'function') {
+              this._assistant.removeManualItem(vid);
+            } else {
+              this._queue = this._queue.filter(it => cleanVid(it.vid) !== cVid);
+              this._syncQueue();
+            }
           }
         }
       } else if (action === 'step-limit') {
@@ -5653,13 +6099,13 @@ const MAX_COVER_LENGTH = 5000;
       }
 
       if (this._dragMoved) {
-        const rawX = this._dragStartPillPos.x + dx;
+        const rawCenterX = this._dragStartPillPos.x + dx;
         const rawY = this._dragStartPillPos.y + dy;
 
         const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
         const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
 
-        this._pillPos = this._clampPillCoordinates(rawX, rawY, winW, winH);
+        this._pillPos = this._clampPillCoordinates(rawCenterX, rawY, winW, winH);
         this._updatePosition();
       }
     }
@@ -5741,7 +6187,6 @@ const MAX_COVER_LENGTH = 5000;
 
       const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
       const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
-      const pillW = this._getPillWidth();
 
       // Determine open direction dynamically based on available screen space
       const flyoutH = 420;
@@ -5762,15 +6207,13 @@ const MAX_COVER_LENGTH = 5000;
       root.classList.toggle('dir-up', opensUp);
       root.classList.toggle('is-expanded', this._isExpanded);
 
-      // Strict center alignment positioning (Center Anchor)
+      // Strict Center Anchor positioning: Center X stays stable regardless of pill width expansions
       const padding = 8;
-      const centerX = Math.round(this._pillPos.x + pillW / 2);
-      const targetW = Math.min(390, Math.max(100, winW - padding * 2));
-      const maxW = Math.max(targetW, pillW);
-      const halfW = maxW / 2;
+      const flyoutMaxW = 390;
+      const halfW = flyoutMaxW / 2;
       const minX = padding + halfW;
       const maxX = Math.max(minX, winW - padding - halfW);
-      const clampedCenterX = Math.round(clamp(centerX, minX, maxX));
+      const clampedCenterX = Math.round(clamp(this._pillPos.x, minX, maxX));
       root.style.left = `${clampedCenterX}px`;
       root.style.right = 'auto';
       root.style.alignItems = 'center';
@@ -5802,28 +6245,34 @@ const MAX_COVER_LENGTH = 5000;
     _restorePosition() {
       const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
       const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
-      const pillW = this._getPillWidth();
-      const targetW = Math.min(390, Math.max(100, winW - 16));
-      const maxW = Math.max(targetW, pillW);
 
       // Default position: Bottom-Right with 24px margin
-      const offset = (maxW - pillW) / 2;
-      const defX = Math.max(8, winW - maxW - 24 + offset);
+      const defCenterX = Math.max(203, winW - 219);
       const defY = Math.max(8, winH - 36 - 24);
 
       let pos = null;
       try {
         if (typeof localStorage !== 'undefined') {
-          // Versioned storage key 'hha_hud_pos_v2' cleanly resets any legacy positions from when pill could be on top
-          const raw = localStorage.getItem('hha_hud_pos_v2');
-          if (raw) pos = JSON.parse(raw);
+          const rawV3 = localStorage.getItem('hha_hud_pos_v3');
+          if (rawV3) {
+            pos = JSON.parse(rawV3);
+          } else {
+            // Migrate legacy v2 coordinate (v2 stored left coordinate)
+            const rawV2 = localStorage.getItem('hha_hud_pos_v2');
+            if (rawV2) {
+              const p2 = JSON.parse(rawV2);
+              if (p2 && typeof p2.x === 'number') {
+                pos = { x: p2.x + 83, y: p2.y };
+              }
+            }
+          }
         }
       } catch (_) {}
 
       if (pos && typeof pos.x === 'number' && !isNaN(pos.x) && typeof pos.y === 'number' && !isNaN(pos.y)) {
         this._pillPos = this._clampPillCoordinates(pos.x, pos.y, winW, winH);
       } else {
-        this._pillPos = this._clampPillCoordinates(defX, defY, winW, winH);
+        this._pillPos = this._clampPillCoordinates(defCenterX, defY, winW, winH);
       }
 
       this._persistPosition();
@@ -5833,7 +6282,7 @@ const MAX_COVER_LENGTH = 5000;
     _persistPosition() {
       try {
         if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('hha_hud_pos_v2', JSON.stringify({ x: this._pillPos.x, y: this._pillPos.y }));
+          localStorage.setItem('hha_hud_pos_v3', JSON.stringify({ x: this._pillPos.x, y: this._pillPos.y }));
         }
       } catch (_) {}
     }
@@ -5855,27 +6304,76 @@ const MAX_COVER_LENGTH = 5000;
       // Pill Quick Button
       const quickBtn = this._shadow.querySelector('[data-el="pill-quick-btn"]');
       if (quickBtn) {
+        let targetClass = 'hha-btn-start';
+        let targetIcon = ICONS.play;
+        let targetLabel = 'Старт';
+        let targetTitle = 'Запустить автоматизацию';
+
         if (isRunning) {
-          quickBtn.className = 'hha-btn-quick hha-btn-stop';
-          quickBtn.innerHTML = `${ICONS.stop} <span data-el="pill-quick-label">Стоп</span>`;
-          quickBtn.title = 'Остановить автоматизацию';
+          targetClass = 'hha-btn-stop';
+          targetIcon = ICONS.stop;
+          targetLabel = 'Стоп';
+          targetTitle = 'Остановить автоматизацию';
         } else if (status === 'done' || (this._status && this._status.code === 'DAILY_LIMIT_REACHED')) {
-          quickBtn.className = 'hha-btn-quick hha-btn-done';
+          targetClass = 'hha-btn-done';
+          targetIcon = ICONS.check;
           const isDaily = this._status && this._status.code === 'DAILY_LIMIT_REACHED';
-          quickBtn.innerHTML = `${ICONS.check} <span data-el="pill-quick-label">${isDaily ? 'Лимит 24ч' : 'Готово'}</span>`;
-          quickBtn.title = isDaily ? `Достигнут суточный лимит HeadHunter (${MAX_DAILY_LIMIT} откликов за 24 часа)` : 'Лимит достигнут. Кликните для настройки';
+          targetLabel = isDaily ? 'Лимит 24ч' : 'Готово';
+          targetTitle = isDaily ? `Достигнут суточный лимит HeadHunter (${MAX_DAILY_LIMIT} откликов за 24 часа)` : 'Лимит достигнут. Кликните для настройки';
         } else if (status === 'error') {
-          quickBtn.className = 'hha-btn-quick hha-btn-error';
-          quickBtn.innerHTML = `${ICONS.reset} <span data-el="pill-quick-label">Сброс</span>`;
-          quickBtn.title = 'Ошибка. Кликните для перезапуска';
+          targetClass = 'hha-btn-error';
+          targetIcon = ICONS.reset;
+          targetLabel = 'Сброс';
+          targetTitle = 'Ошибка. Кликните для перезапуска';
+        }
+
+        quickBtn.title = targetTitle;
+
+        // Smooth background & color class update
+        const desiredClassName = `hha-btn-quick ${targetClass}`;
+        if (quickBtn.className !== desiredClassName) {
+          quickBtn.className = desiredClassName;
+        }
+
+        // Icon & Label smooth crossfade
+        let iconEl = quickBtn.querySelector('[data-el="pill-quick-icon"]');
+        let labelEl = quickBtn.querySelector('[data-el="pill-quick-label"]');
+
+        if (!iconEl || !labelEl) {
+          quickBtn.innerHTML = `<span class="hha-btn-icon-slot" data-el="pill-quick-icon">${targetIcon}</span><span class="hha-btn-label" data-el="pill-quick-label">${targetLabel}</span>`;
+          this._lastBtnIcon = targetIcon;
+          this._lastBtnLabel = targetLabel;
+          this._hasSyncedStatus = true;
+        } else if (!this._hasSyncedStatus) {
+          this._hasSyncedStatus = true;
+          iconEl.innerHTML = targetIcon;
+          labelEl.textContent = targetLabel;
+          this._lastBtnIcon = targetIcon;
+          this._lastBtnLabel = targetLabel;
         } else {
-          quickBtn.className = 'hha-btn-quick hha-btn-start';
-          quickBtn.innerHTML = `${ICONS.play} <span data-el="pill-quick-label">Старт</span>`;
-          quickBtn.title = 'Запустить автоматизацию';
+          const iconChanged = this._lastBtnIcon !== targetIcon;
+          const labelChanged = this._lastBtnLabel !== targetLabel;
+
+          if (iconChanged || labelChanged) {
+            this._lastBtnIcon = targetIcon;
+            this._lastBtnLabel = targetLabel;
+
+            if (iconChanged) iconEl.classList.add('is-swapping');
+            if (labelChanged) labelEl.classList.add('is-swapping');
+
+            setTimeout(() => {
+              if (iconChanged && iconEl) {
+                iconEl.innerHTML = targetIcon;
+                iconEl.classList.remove('is-swapping');
+              }
+              if (labelChanged && labelEl) {
+                labelEl.textContent = targetLabel;
+                labelEl.classList.remove('is-swapping');
+              }
+            }, 80);
+          }
         }
       }
-
-
     }
 
     _syncProgress() {
@@ -5950,7 +6448,7 @@ const MAX_COVER_LENGTH = 5000;
             if (this._queue && this._queue.length === 0 && queueBadge) {
               queueBadge.textContent = '';
             }
-          }, 300);
+          }, 220);
         }
 
         // Refresh pill width cache after animation settles
@@ -5994,7 +6492,14 @@ const MAX_COVER_LENGTH = 5000;
       const queueStream = this._shadow.querySelector('[data-el="queue-stream"]');
       if (queueStream) {
         if (this._queue && this._queue.length > 0) {
-          queueStream.innerHTML = this._queue.map(item => {
+          // Sort queue: unviewed items first, viewed items last; newest first within each group
+          const sorted = [...this._queue].sort((a, b) => {
+            const aViewed = a.viewed ? 1 : 0;
+            const bViewed = b.viewed ? 1 : 0;
+            if (aViewed !== bViewed) return aViewed - bViewed;
+            return (Number(b.addedAt) || 0) - (Number(a.addedAt) || 0);
+          });
+          queueStream.innerHTML = sorted.map(item => {
             const rawVid = item.vid ? String(item.vid) : '';
             const cVid = cleanVid(rawVid);
             const targetUrl = toVacancyUrl(cVid, item.url);
@@ -6005,17 +6510,19 @@ const MAX_COVER_LENGTH = 5000;
             const reasonInfo = formatQueueReasonInfo(item.reason);
             const cleanSalary = formatCleanSalary(item.salary || '');
             const showVidTag = cVid && !displayTitle.includes(cVid);
+            const isViewed = Boolean(item.viewed);
 
             return `
-              <div class="hha-queue-card">
+              <div class="hha-queue-card ${isViewed ? 'is-viewed' : ''}">
                 <div class="hha-queue-card-top">
-                  <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-tooltip="${escapeHtml(displayTitle)}" onclick="event.stopPropagation();">
+                  <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="${escapeHtml(displayTitle)}">
                     <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
                     <span class="hha-queue-link-arrow">↗</span>
                   </a>
                   <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">${ICONS.trash}</button>
                 </div>
                 <div class="hha-queue-card-bottom">
+                  ${isViewed ? `<span class="hha-queue-badge badge-viewed"><span class="hha-queue-badge-check">✓</span>Просмотрено</span>` : ''}
                   <span class="hha-queue-badge badge-${escapeHtml(reasonInfo.type)}"><span class="hha-queue-badge-dot">●</span>${escapeHtml(reasonInfo.text)}</span>
                   ${cleanSalary ? `<span class="hha-queue-salary" title="${escapeHtml(item.salary || cleanSalary)}">${escapeHtml(cleanSalary)}</span>` : ''}
                   ${showVidTag ? `<span class="hha-queue-vid">#${escapeHtml(cVid)}</span>` : ''}
@@ -6058,7 +6565,9 @@ const MAX_COVER_LENGTH = 5000;
       // Preset Segmented Buttons
       const presetBtns = this._shadow.querySelectorAll('[data-action="set-preset"]');
       presetBtns.forEach(btn => {
-        btn.classList.toggle('is-active', btn.dataset.preset === c.preset);
+        const isActive = btn.dataset.preset === c.preset;
+        btn.classList.toggle('is-active', isActive);
+        btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
       });
 
       // Cover Letter
