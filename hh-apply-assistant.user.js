@@ -19,6 +19,28 @@
 const MAX_DAILY_LIMIT = 200;
 const MAX_COVER_LENGTH = 5000;
 
+// --- Global Shared Utilities ---
+function clamp(val, min, max) {
+  const num = Number(val);
+  if (isNaN(num)) return min;
+  return Math.max(min, Math.min(max, num));
+}
+
+const collapseSpaces = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+
+const formatCleanSalary = (raw) => {
+  if (!raw) return '';
+  return collapseSpaces(
+    String(raw)
+      .replace(/(?:до\s+вычета\s+(?:налогов|ндфл)|на\s+руки|за\s+месяц|за\s+\d+\s+смен\w*|после\s+вычета|gross|net)/gi, '')
+      .replace(/[,.]\s*$/g, '')
+  );
+};
+
+function cleanVid(vid) {
+  return vid ? String(vid).trim().replace(/^v_/i, '') : '';
+}
+
 /**
  * ============================================================================
  * Part 1: Automation Engine (Headless Core)
@@ -107,7 +129,6 @@ const MAX_COVER_LENGTH = 5000;
     blacklist: STORAGE_PREFIX + 'blacklist_v1',
     attempts: STORAGE_PREFIX + 'attempts_v1',
     dailyCounters: STORAGE_PREFIX + 'daily_counters',
-    dailyDate: STORAGE_PREFIX + 'daily_date',
     logBuffer: 'hha:log_buffer',
     watchdogStallCount: 'hha:watchdog_stall_count',
     watchdogStallVid: 'hha:watchdog_stall_vid',
@@ -246,17 +267,7 @@ const MAX_COVER_LENGTH = 5000;
   };
 
   // --- 4. Utilities ---
-  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
   const toNum = (v, fallback) => { const n = Number(v); return Number.isNaN(n) ? fallback : n; };
-  const collapseSpaces = (s) => String(s || '').replace(/\s+/g, ' ').trim();
-  const formatCleanSalary = (raw) => {
-    if (!raw) return '';
-    return collapseSpaces(
-      String(raw)
-        .replace(/(?:до\s+вычета\s+(?:налогов|ндфл)|на\s+руки|за\s+месяц|за\s+\d+\s+смен\w*|после\s+вычета|gross|net)/gi, '')
-        .replace(/[,.]\s*$/g, '')
-    );
-  };
   const randBetween = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
   const parseJson = (raw, fallback) => {
     if (!raw || typeof raw !== 'string') return fallback;
@@ -272,11 +283,6 @@ const MAX_COVER_LENGTH = 5000;
     } catch (_) {
       return '';
     }
-  }
-
-  // --- 4. Utilities (continued) ---
-  function cleanVid(vid) {
-    return vid ? String(vid).trim().replace(/^v_/i, '') : '';
   }
 
   // --- 5. Error Reporting, Logging & Telemetry ---
@@ -407,14 +413,6 @@ const MAX_COVER_LENGTH = 5000;
       details: details || {}
     });
   }
-
-  function log(msg, isError = false, code = '', context = null) {
-    if (isError) {
-      reportError(msg, code, context);
-    }
-  }
-
-  function flushTelemetryBeforeNav() {}
 
   // --- Watchdog Progress Tracking ---
   let lastProgressTs = Date.now();
@@ -585,8 +583,6 @@ const MAX_COVER_LENGTH = 5000;
     return success;
   }
 
-  function ensureCurrentRunLimit() {}
-
   const timings = () => ACTION_TIMINGS;
   const actionPause = () => wait(randBetween(timings().action[0], timings().action[1]));
   const vacancyPause = () => wait(Math.max(1500, randBetween(timings().delay[0], timings().delay[1])));
@@ -752,16 +748,6 @@ const MAX_COVER_LENGTH = 5000;
   const setRunning = (val) => (val ? storage.sessionSet(KEYS.isRunning, '1') : storage.sessionRemove(KEYS.isRunning));
 
   const getSentCount = () => getDailyCounters().applied;
-  function incSentCount() {
-    const cur = getSentCount();
-    storage.sessionSet(KEYS.sentCount, String(cur));
-    events.emit('progress', {
-      sent: cur,
-      limit: config.limit,
-      percentage: Math.min(100, Math.round((cur / Math.max(1, config.limit)) * 100))
-    });
-    return cur;
-  }
   function resetSentCount() {
     resetDailyCounters();
     storage.sessionSet(KEYS.sentCount, '0');
@@ -787,13 +773,6 @@ const MAX_COVER_LENGTH = 5000;
   function getVacancyAttemptsMap() {
     const raw = storage.sessionGet(KEYS.attempts);
     return parseJson(raw, {}) || {};
-  }
-
-  function getVacancyAttempts(vid) {
-    if (!vid) return 0;
-    const clean = cleanVid(vid);
-    const map = getVacancyAttemptsMap();
-    return Number(map[clean]) || 0;
   }
 
   function recordVacancyAttempt(vid) {
@@ -1404,13 +1383,7 @@ const MAX_COVER_LENGTH = 5000;
     if (el.tagName === 'A' && el.target && el.target.toLowerCase() === '_blank') {
       try { el.target = '_self'; } catch (_) {}
     }
-    const tag = (el.tagName || '').toLowerCase();
-    const dataQa = el.getAttribute?.('data-qa') || '';
-    const href = el.getAttribute?.('href') || el.href || '';
-    const cls = (el.className && typeof el.className === 'string' ? el.className.trim() : '') || '';
-    const textSnippet = collapseSpaces(el.innerText || el.textContent || '').slice(0, 50);
-    const disabled = Boolean(el.disabled || el.getAttribute?.('aria-disabled') === 'true');
-    
+
     try { el.scrollIntoView?.({ block: 'center', behavior: 'auto' }); } catch (_) {}
     try { el.focus?.(); } catch (_) {}
 
@@ -1453,7 +1426,7 @@ const MAX_COVER_LENGTH = 5000;
     return clickDispatched;
   }
 
-  function waitForCondition(checkFn, timeout = 8000, signal = null, diagnosticName = '') {
+  function waitForCondition(checkFn, timeout = 8000, signal = null) {
     if (stopSignal || signal?.aborted) return Promise.resolve(false);
     try {
       const init = checkFn();
@@ -1461,12 +1434,10 @@ const MAX_COVER_LENGTH = 5000;
     } catch (_) {}
 
     return new Promise((resolve) => {
-      let timer = null, pollTimer = null, observer = null, heartbeatTimer = null;
-      const startTime = Date.now();
+      let timer = null, pollTimer = null, observer = null;
       const cleanup = (res) => {
         if (timer) clearTimeout(timer);
         if (pollTimer) clearInterval(pollTimer);
-        if (heartbeatTimer) clearInterval(heartbeatTimer);
         if (observer) observer.disconnect();
         if (signal) signal.removeEventListener('abort', onAbort);
         
@@ -1985,7 +1956,7 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
-      await waitForCondition(() => !submit.disabled && submit.getAttribute?.('aria-disabled') !== 'true', 1500, activeAbortController?.signal, 'активация кнопки отправки');
+      await waitForCondition(() => !submit.disabled && submit.getAttribute?.('aria-disabled') !== 'true', 1500, activeAbortController?.signal);
       if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
         reportError('Кнопка отправки письма остается неактивной (disabled) после ожидания, пробуем клик...', 'SUBMIT_BTN_STILL_DISABLED');
       }
@@ -2222,8 +2193,6 @@ const MAX_COVER_LENGTH = 5000;
     const totalDuration = randBetween(minDelay, maxDelay);
     const stepDelay = Math.round(totalDuration / steps);
 
-    const title = parseVacancyTitle(vid);
-
     for (let i = 1; i <= steps; i++) {
       if (!isRunCurrent(runId)) {
         return;
@@ -2241,7 +2210,6 @@ const MAX_COVER_LENGTH = 5000;
   async function handleVacancyPage(vid, runId = currentRunId) {
     try {
       const pageUrl = globalThis.location?.href || '';
-      const title = parseVacancyTitle(vid);
 
       if (detectInaccessibleVacancy()) {
         if (vid) skipVacancy(vid, 'access_denied', runId);
@@ -2263,7 +2231,7 @@ const MAX_COVER_LENGTH = 5000;
       // Simulate human-like reading (45-75% scroll with random stops)
       await simulateHumanReading(vid, runId);
       if (!isRunCurrent(runId)) return 'STOPPED';
-      const applyBtn = await waitForCondition(() => query('vacancyApply'), 4000, activeAbortController?.signal, `поиск кнопки отклика #${vid}`);
+      const applyBtn = await waitForCondition(() => query('vacancyApply'), 4000, activeAbortController?.signal);
       if (!applyBtn) {
         reportError(`Кнопка «Откликнуться» не найдена на странице вакансии #${vid}`, 'NO_APPLY_BUTTON', { vid, url: pageUrl });
         notifySelectorFailure('vacancyApply', globalThis.document?.body);
@@ -2604,19 +2572,15 @@ const MAX_COVER_LENGTH = 5000;
 
       const processed = getProcessedIDs();
       const targets = [];
-      let skippedProcessed = 0;
-      let skippedHidden = 0;
 
       for (const b of allBtns) {
         const vid = getVacancyID(b);
         if (config.skipHidden && !isVisible(b)) {
-          skippedHidden++;
           markVacancyProcessed(vid, runId);
           recordOutcome(vid, 'skipped', 'skip_hidden_employer');
           continue;
         }
         if (processed.has(vid) || isBlacklisted(vid)) {
-          skippedProcessed++;
           continue;
         }
         targets.push(b);
@@ -2900,7 +2864,6 @@ const MAX_COVER_LENGTH = 5000;
   // --- 18. Bootstrap & Global Binding ---
   function bootstrap() {
     if (globalThis.__HHA_TEST__) return;
-    ensureCurrentRunLimit();
     if (watchdogIntervalId === null) {
       watchdogIntervalId = setInterval(() => {
         try { watchdogTick(); } catch (e) { console.warn('[HH] Watchdog tick error:', e); }
@@ -2944,7 +2907,7 @@ const MAX_COVER_LENGTH = 5000;
       const currentVid = getStableVacancyId() || getLastAttemptID();
       if (currentVid && ManualQueue.has(currentVid)) {
         ManualQueue.markViewed(currentVid, true);
-        if (isAlreadyApplied()) {
+        if (detectAlreadyApplied()) {
           ManualQueue.remove(currentVid);
         }
       }
@@ -2987,8 +2950,6 @@ const MAX_COVER_LENGTH = 5000;
       }
     });
     domReadyObserver.observe(doc.documentElement || doc, { childList: true, subtree: true });
-  } else {
-    ensureCurrentRunLimit();
   }
 
   const win = globalThis.window;
@@ -3054,8 +3015,6 @@ const MAX_COVER_LENGTH = 5000;
     addGlobalListener(win, 'beforeunload', () => {
       if (!isRunning()) releaseInstanceLock(TAB_ID);
     });
-    addGlobalListener(win, 'pagehide', () => {
-    });
   }
 
   return HHApplyAssistant;
@@ -3101,12 +3060,6 @@ const MAX_COVER_LENGTH = 5000;
       .replace(/'/g, '&#39;');
   }
 
-  function clamp(val, min, max) {
-    const num = Number(val);
-    if (isNaN(num)) return min;
-    return Math.max(min, Math.min(max, num));
-  }
-
   function clampCoordinates(x, y, width, height, windowWidth, windowHeight, padding = 8) {
     const maxX = Math.max(padding, windowWidth - width - padding);
     const maxY = Math.max(padding, windowHeight - height - padding);
@@ -3121,17 +3074,6 @@ const MAX_COVER_LENGTH = 5000;
     const pad = (n) => String(n).padStart(2, '0');
     return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
-
-  const collapseSpaces = (s) => String(s || '').replace(/\s+/g, ' ').trim();
-
-  const formatCleanSalary = (raw) => {
-    if (!raw) return '';
-    return collapseSpaces(
-      String(raw)
-        .replace(/(?:до\s+вычета\s+(?:налогов|ндфл)|на\s+руки|за\s+месяц|за\s+\d+\s+смен\w*|после\s+вычета|gross|net)/gi, '')
-        .replace(/[,.]\s*$/g, '')
-    );
-  };
 
   const ERROR_TITLES = {
     GLOBAL_UNCAUGHT_ERROR: 'Внутренний сбой интерфейса',
@@ -3237,10 +3179,6 @@ const MAX_COVER_LENGTH = 5000;
     return { text: 'Ручной отклик', type: 'info' };
   }
 
-  function cleanVid(vid) {
-    return vid ? String(vid).trim().replace(/^v_/i, '') : '';
-  }
-
   function toVacancyUrl(vid, url) {
     const clean = cleanVid(vid);
     const origin = (typeof globalThis !== 'undefined' && globalThis.location?.origin) || 'https://hh.ru';
@@ -3258,12 +3196,9 @@ const MAX_COVER_LENGTH = 5000;
     reset: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>`,
     copy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>`,
     open: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>`,
-    trash: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`,
     alert: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>`,
     inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`,
-    close: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>`,
-    chevronDown: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>`,
-    dragHandle: `<svg width="10" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M9 3c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 7c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 7c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6-14c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 7c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 7c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`
+    close: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>`
   };
 
   // --- 3. Shadow DOM Stylesheet ---
@@ -3804,7 +3739,6 @@ const MAX_COVER_LENGTH = 5000;
     .hha-btn-stop,
     .hha-btn-done,
     .hha-btn-error,
-    .hha-btn-reset,
     .hha-btn-quick {
       margin-left: auto;
       width: 76px;
@@ -3955,24 +3889,20 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     /* M3 Filled Error Button for Error / Reset State */
-    .hha-btn-error,
-    .hha-btn-reset {
+    .hha-btn-error {
       background: var(--md-sys-color-error);
       color: var(--md-sys-color-on-error);
       box-shadow: var(--md-sys-elevation-level1);
     }
 
-    .hha-btn-error:hover,
-    .hha-btn-reset:hover {
+    .hha-btn-error:hover {
       background: color-mix(in srgb, var(--md-sys-color-error) 92%, var(--md-sys-color-on-error));
       box-shadow: var(--md-sys-elevation-level2);
       color: var(--md-sys-color-on-error);
     }
 
     .hha-btn-error:active,
-    .hha-btn-reset:active,
-    .hha-btn-error:focus-visible,
-    .hha-btn-reset:focus-visible {
+    .hha-btn-error:focus-visible {
       background: color-mix(in srgb, var(--md-sys-color-error) 88%, var(--md-sys-color-on-error));
       box-shadow: var(--md-sys-elevation-level1);
       transform: scale(0.97);
@@ -3988,6 +3918,14 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     /* ─── 5. FLYOUT PANEL (DYNAMIC ISLAND EXPANDED SURFACE) ───────── */
+    .hha-root[data-active-tab="settings"] {
+      --flyout-height: min(320px, calc(100vh - 100px));
+    }
+
+    .hha-root[data-active-tab="queue"] {
+      --flyout-height: min(520px, calc(100vh - 100px));
+    }
+
     .hha-flyout {
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-body-small-size);
@@ -3997,7 +3935,7 @@ const MAX_COVER_LENGTH = 5000;
       max-width: calc(100vw - 16px);
       height: var(--flyout-height, 320px);
       min-height: var(--flyout-height, 320px);
-      max-height: min(var(--flyout-height, 320px), calc(100vh - 56px));
+      max-height: min(var(--flyout-height, 320px), calc(100vh - 100px));
       box-sizing: border-box;
       background: var(--md-sys-color-surface-container);
       border: 1px solid var(--md-sys-color-outline-variant);
@@ -4017,9 +3955,12 @@ const MAX_COVER_LENGTH = 5000;
       z-index: 1;
       transform-origin: center bottom;
       transform: scale(calc(var(--pill-width, 196px) / 390px), calc(40px / var(--flyout-height, 320px)));
-      will-change: transform, opacity, border-radius, box-shadow;
+      will-change: transform, opacity, border-radius, box-shadow, height, min-height, max-height;
       backface-visibility: hidden;
       transition:
+        height 280ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        min-height 280ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        max-height 280ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
         transform var(--hha-motion-collapse-duration, 220ms) var(--hha-motion-collapse-easing, cubic-bezier(0.36, 0, 0.66, -0.05)),
         opacity var(--hha-motion-collapse-duration, 220ms) ease-out,
         border-radius var(--hha-motion-collapse-duration, 220ms) var(--hha-motion-collapse-easing, cubic-bezier(0.36, 0, 0.66, -0.05)),
@@ -4066,6 +4007,9 @@ const MAX_COVER_LENGTH = 5000;
       z-index: 3;
       transform: scale(1) translate3d(0, 0, 0);
       transition:
+        height 280ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        min-height 280ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        max-height 280ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
         transform var(--hha-motion-expand-duration, 360ms) var(--hha-motion-expand-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
         opacity 180ms ease-out 0s,
         border-radius var(--hha-motion-expand-duration, 360ms) var(--hha-motion-expand-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
@@ -4411,6 +4355,17 @@ const MAX_COVER_LENGTH = 5000;
       color: var(--md-sys-color-on-surface-variant);
     }
 
+    .hha-tab-error-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--md-sys-color-error);
+      flex-shrink: 0;
+      margin-left: 2px;
+      box-shadow: 0 0 0 1px var(--md-sys-color-surface-container-low);
+    }
+
     .hha-tab-btn:hover .hha-tab-badge.is-queue {
       background: var(--md-sys-color-outline-variant);
       color: var(--md-sys-color-on-surface);
@@ -4488,8 +4443,6 @@ const MAX_COVER_LENGTH = 5000;
     .hha-pill-status-group:focus-visible,
     .hha-pill-queue-badge:focus-visible,
     .hha-tab-btn:focus-visible,
-    .hha-segmented-btn:focus-visible,
-    .hha-stepper-btn:focus-visible,
     .hha-btn-quick:focus-visible,
     .hha-queue-title-link:focus-visible {
       outline: none;
@@ -4614,6 +4567,8 @@ const MAX_COVER_LENGTH = 5000;
 
     .hha-log-stream {
       flex: 1;
+      height: 100%;
+      min-height: 0;
       overflow-y: auto;
       overflow-x: hidden;
       margin-top: 0;
@@ -4973,79 +4928,85 @@ const MAX_COVER_LENGTH = 5000;
       transform: scale(0.92);
     }
 
-    /* ─── 9. ERROR BANNER & TOAST ALERTS ──────────────────────────── */
-    .hha-error-banner {
-      display: none;
-      align-items: flex-start;
+    /* ─── 9. FULL-SIZE ERROR CARD (IN PLACE OF COVER FORM) ───────── */
+    .hha-card-error {
+      flex: 1;
+      height: 100%;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
       justify-content: space-between;
-      gap: 8px;
-      margin: 8px 8px 0 8px;
-      padding: 8px 12px;
+      box-sizing: border-box;
+      padding: 16px;
+      margin-bottom: 0 !important;
       background: var(--md-sys-color-error-container);
       border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent);
-      border-radius: var(--md-sys-shape-corner-small);
-      box-sizing: border-box;
-      flex-shrink: 0;
-      animation: hhaBannerSlide var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-decelerate);
+      border-radius: var(--md-sys-shape-corner-medium);
+      box-shadow: none;
+      overflow: hidden;
+      animation: hhaErrorCardFadeIn var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-decelerate);
     }
 
-    @keyframes hhaBannerSlide {
-      from { opacity: 0; transform: translateY(-4px); }
+    @keyframes hhaErrorCardFadeIn {
+      from { opacity: 0; transform: translateY(4px); }
       to { opacity: 1; transform: translateY(0); }
     }
 
-    .hha-error-banner-main {
+    .hha-card-error-body {
       display: flex;
-      align-items: flex-start;
-      gap: 8px;
-      min-width: 0;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
       flex: 1;
+      overflow-y: auto;
+      scrollbar-width: thin;
     }
 
-    .hha-error-icon {
+    .hha-card-error-title {
+      font-size: var(--md-sys-typescale-body-medium-size);
+      font-weight: 600;
+      line-height: 1.4;
+      color: var(--md-sys-color-on-error-container);
+      word-break: break-word;
+      user-select: text;
+    }
+
+    .hha-card-error-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: var(--md-sys-typescale-label-small-size);
+      font-weight: 500;
+      line-height: 1.4;
+      color: color-mix(in srgb, var(--md-sys-color-on-error-container) 85%, transparent);
+      background: color-mix(in srgb, var(--md-sys-color-error) 12%, transparent);
+      padding: 8px 10px;
+      border-radius: var(--md-sys-shape-corner-small);
+      word-break: break-all;
+      user-select: text;
+    }
+
+    .hha-card-error-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 8px;
+      flex-shrink: 0;
+      border-top: 1px solid color-mix(in srgb, var(--md-sys-color-error) 15%, transparent);
+    }
+
+    .hha-card-error-actions .hha-btn-copy-error {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      color: var(--md-sys-color-error);
-      line-height: 1;
-      flex-shrink: 0;
-      margin-top: 1px;
-    }
-
-    .hha-error-text {
-      font-size: var(--md-sys-typescale-body-small-size);
-      font-weight: 500;
-      color: var(--md-sys-color-on-error-container);
-      line-height: 1.35;
-      white-space: normal;
-      overflow: hidden;
-      word-break: break-word;
-      display: -webkit-box;
-      -webkit-line-clamp: 3;
-      -webkit-box-orient: vertical;
-      flex: 1;
-      min-width: 0;
-    }
-
-    .hha-error-banner-actions {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      flex-shrink: 0;
-    }
-
-    .hha-btn-copy-error {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      height: 24px;
-      padding: 0 8px;
+      height: 32px;
+      padding: 0 14px;
       border-radius: var(--md-sys-shape-corner-full);
-      background: transparent;
-      color: var(--md-sys-color-error);
-      border: none;
+      background: color-mix(in srgb, var(--md-sys-color-error) 12%, transparent);
+      color: var(--md-sys-color-on-error-container);
+      border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent);
       font-family: var(--md-sys-typescale-font-family);
-      font-size: var(--md-sys-typescale-label-small-size);
+      font-size: var(--md-sys-typescale-label-medium-size);
       font-weight: 600;
       line-height: 1;
       cursor: pointer;
@@ -5053,53 +5014,49 @@ const MAX_COVER_LENGTH = 5000;
       transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
-    .hha-btn-copy-error:hover {
-      background: color-mix(in srgb, var(--md-sys-color-error) 12%, transparent);
-    }
-
-    .hha-btn-copy-error:active {
-      transform: scale(0.96);
+    .hha-card-error-actions .hha-btn-copy-error:hover {
       background: color-mix(in srgb, var(--md-sys-color-error) 20%, transparent);
     }
 
-    .hha-btn-copy-error.is-copied {
-      background: var(--md-sys-color-primary-container);
-      color: var(--md-sys-color-on-primary-container);
-      border: none;
+    .hha-card-error-actions .hha-btn-copy-error:active {
+      transform: scale(0.96);
     }
 
-    .hha-btn-dismiss-error {
+    .hha-card-error-actions .hha-btn-copy-error.is-copied {
+      background: var(--md-sys-color-primary-container);
+      color: var(--md-sys-color-on-primary-container);
+      border-color: transparent;
+    }
+
+    .hha-card-error-actions .hha-btn-dismiss-error {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 24px;
-      height: 24px;
-      padding: 0;
+      height: 32px;
+      padding: 0 16px;
       border-radius: var(--md-sys-shape-corner-full);
-      background: transparent;
+      background: var(--md-sys-color-error);
+      color: var(--md-sys-color-on-error);
       border: none;
-      color: var(--md-sys-color-error);
-      font-size: 13px;
-      font-weight: 700;
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-label-medium-size);
+      font-weight: 600;
       line-height: 1;
       cursor: pointer;
-      opacity: 0.8;
-      transition: opacity var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard), background-color var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
+      box-sizing: border-box;
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
-    .hha-btn-dismiss-error:hover {
-      opacity: 1;
-      background: color-mix(in srgb, var(--md-sys-color-error) 8%, transparent);
+    .hha-card-error-actions .hha-btn-dismiss-error:hover {
+      background: color-mix(in srgb, var(--md-sys-color-error) 85%, black);
     }
 
-    .hha-btn-dismiss-error:active {
-      transform: scale(0.92);
-      background: color-mix(in srgb, var(--md-sys-color-error) 12%, transparent);
+    .hha-card-error-actions .hha-btn-dismiss-error:active {
+      transform: scale(0.96);
     }
 
     /* Clear all in queue: M3 Text Button (Error role) */
-    .hha-btn-clear-all,
-    .hha-btn-clear-queue {
+    .hha-btn-clear-all {
       display: inline-flex;
       align-items: center;
       gap: 4px;
@@ -5118,20 +5075,17 @@ const MAX_COVER_LENGTH = 5000;
       white-space: nowrap;
     }
 
-    .hha-btn-clear-all:hover:not(:disabled),
-    .hha-btn-clear-queue:hover:not(:disabled) {
+    .hha-btn-clear-all:hover:not(:disabled) {
       color: var(--md-sys-color-error);
       background: var(--md-sys-color-error-container);
     }
 
-    .hha-btn-clear-all:active:not(:disabled),
-    .hha-btn-clear-queue:active:not(:disabled) {
+    .hha-btn-clear-all:active:not(:disabled) {
       transform: scale(0.96);
       background: color-mix(in srgb, var(--md-sys-color-error-container) 85%, var(--md-sys-color-error));
     }
 
-    .hha-btn-clear-all.is-confirming,
-    .hha-btn-clear-queue.is-confirming {
+    .hha-btn-clear-all.is-confirming {
       width: auto !important;
       padding: 2px 10px !important;
       background: var(--md-sys-color-error) !important;
@@ -5140,31 +5094,18 @@ const MAX_COVER_LENGTH = 5000;
       font-weight: 600 !important;
     }
 
-    .hha-btn-clear-all.is-confirming:hover,
-    .hha-btn-clear-queue.is-confirming:hover {
+    .hha-btn-clear-all.is-confirming:hover {
       background: color-mix(in srgb, var(--md-sys-color-error) 90%, black) !important;
       color: var(--md-sys-color-on-error) !important;
     }
 
-    .hha-btn-clear-all.is-confirming:active,
-    .hha-btn-clear-queue.is-confirming:active {
+    .hha-btn-clear-all.is-confirming:active {
       transform: scale(0.96);
     }
 
     .hha-btn-clear-all:disabled,
-    .hha-btn-clear-all[disabled],
-    .hha-btn-clear-queue:disabled,
-    .hha-btn-clear-queue[disabled] {
+    .hha-btn-clear-all[disabled] {
       display: none !important;
-    }
-
-    .hha-btn-clear-all-icon {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 14px;
-      height: 14px;
-      color: inherit;
     }
 
     .hha-btn-clear-all-text,
@@ -5216,14 +5157,6 @@ const MAX_COVER_LENGTH = 5000;
       margin-bottom: 0;
     }
 
-    .hha-card-cover {
-      flex: 1;
-      min-height: 0;
-      display: flex;
-      flex-direction: column;
-      margin-bottom: 0 !important;
-    }
-
     .hha-row-label {
       font-size: var(--md-sys-typescale-body-medium-size);
       font-weight: 500;
@@ -5237,7 +5170,7 @@ const MAX_COVER_LENGTH = 5000;
       min-height: 0;
       display: flex;
       flex-direction: column;
-      margin-bottom: 0;
+      margin-bottom: 0 !important;
       overflow: hidden;
       background: var(--md-sys-color-surface-container-lowest);
       border: 1px solid var(--md-sys-color-outline-variant);
@@ -5477,46 +5410,6 @@ const MAX_COVER_LENGTH = 5000;
       }
     }
 
-    @keyframes hhaFadeIn {
-      from {
-        opacity: 0;
-      }
-      to {
-        opacity: 1;
-      }
-    }
-
-    @keyframes hhaPanelEnter {
-      from {
-        opacity: 0;
-      }
-      to {
-        opacity: 1;
-      }
-    }
-
-    @keyframes hhaCardStagger {
-      from {
-        opacity: 0;
-        transform: translate3d(0, 8px, 0) scale(0.985);
-      }
-      to {
-        opacity: 1;
-        transform: translate3d(0, 0, 0) scale(1);
-      }
-    }
-
-    @keyframes hhaDockStagger {
-      from {
-        opacity: 0;
-        transform: translate3d(0, 6px, 0);
-      }
-      to {
-        opacity: 1;
-        transform: translate3d(0, 0, 0);
-      }
-    }
-
     /* Accessibility: M3 Motion Reduction (opacity only, <= 100ms, no transforms or growth) */
     @media (prefers-reduced-motion: reduce) {
       .hha-pill-progress-fill,
@@ -5547,7 +5440,6 @@ const MAX_COVER_LENGTH = 5000;
       this._assistant = null;
       this._unsubscribers = [];
 
-      // UI State
       this._isExpanded = false;
       this._activeTab = 'settings'; // 'settings' | 'queue'
       const initWinW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
@@ -5567,7 +5459,6 @@ const MAX_COVER_LENGTH = 5000;
       this._status = { status: 'idle', code: 'IDLE' };
       this._progress = { sent: 0, limit: MAX_DAILY_LIMIT, percentage: 0 };
 
-      // Drag & Drop State
       this._isPointerDown = false;
       this._dragMoved = false;
       this._pointerId = null;
@@ -5584,7 +5475,6 @@ const MAX_COVER_LENGTH = 5000;
       this._onDocKeyDown = null;
       this._queueConfirmTimer = null;
 
-      // Bound Event Handlers
       this._onResize = this._onResize.bind(this);
       this._onPointerDown = this._onPointerDown.bind(this);
       this._onPointerMove = this._onPointerMove.bind(this);
@@ -5625,8 +5515,9 @@ const MAX_COVER_LENGTH = 5000;
             statusGroup.setAttribute('aria-label', 'Свернуть панель управления');
           }
           this._updatePosition();
-          this._updateTabIndicator();
-          requestAnimationFrame(() => this._updateTabIndicator());
+          if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => this._updateTabIndicator());
+          }
         }
       }
 
@@ -5676,7 +5567,6 @@ const MAX_COVER_LENGTH = 5000;
       this.unbindAssistant();
       this._assistant = assistant;
 
-      // Initial state sync
       let stateLimit;
       if (typeof assistant.getState === 'function') {
         const s = assistant.getState();
@@ -5710,7 +5600,6 @@ const MAX_COVER_LENGTH = 5000;
         if (Array.isArray(q)) this._queue = q;
       }
 
-      // Reactive Event Subscriptions
       if (typeof assistant.on === 'function') {
         this._unsubscribers.push(
           assistant.on('status', (payload) => {
@@ -5859,7 +5748,9 @@ const MAX_COVER_LENGTH = 5000;
         this._updatePosition();
         if (this._isExpanded) {
           this._updateTabIndicator();
-          requestAnimationFrame(() => this._updateTabIndicator());
+          if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => this._updateTabIndicator());
+          }
         }
 
         if (this._animTimer) clearTimeout(this._animTimer);
@@ -5898,12 +5789,18 @@ const MAX_COVER_LENGTH = 5000;
     open() {
       const res = this.toggleExpand(true);
       this._updateTabIndicator();
-      requestAnimationFrame(() => this._updateTabIndicator());
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => this._updateTabIndicator());
+      }
       return res;
     }
 
     close() {
       return this.toggleExpand(false);
+    }
+
+    _switchTab(tabName) {
+      return this.setActiveTab(tabName);
     }
 
     setActiveTab(tabName) {
@@ -5922,6 +5819,12 @@ const MAX_COVER_LENGTH = 5000;
       } catch (_) {}
 
       if (!this._shadow) return;
+
+      const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
+      if (root) {
+        root.dataset.activeTab = tabName;
+      }
+      this._updatePosition();
 
       const tabOrder = { settings: 0, queue: 1 };
       const prevIdx = tabOrder[prevTab] !== undefined ? tabOrder[prevTab] : 0;
@@ -5960,10 +5863,12 @@ const MAX_COVER_LENGTH = 5000;
       }
 
       this._updateTabIndicator();
-      requestAnimationFrame(() => {
-        this._updateTabIndicator();
-        this._updateOverlayScrollbar();
-      });
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          this._updateTabIndicator();
+          this._updateOverlayScrollbar();
+        });
+      }
       this._syncQueueActions();
       if (this._isExpanded && tabName === 'queue') {
         const stream = this._shadow.querySelector('[data-el="queue-stream"]');
@@ -6003,10 +5908,6 @@ const MAX_COVER_LENGTH = 5000;
       }
     }
 
-    _syncLogActions() {
-      this._syncQueueActions();
-    }
-
     _syncQueueActions() {
       if (!this._shadow) return;
       const count = this._queue ? this._queue.length : 0;
@@ -6014,7 +5915,6 @@ const MAX_COVER_LENGTH = 5000;
         this._resetClearQueueBtn();
       }
 
-      // Clear queue button
       const clearBtn = this._shadow.querySelector('[data-action="clear-queue"]') || this._shadow.querySelector('[data-el="clear-queue-btn"]');
       if (clearBtn) {
         if (count > 0) {
@@ -6061,10 +5961,10 @@ const MAX_COVER_LENGTH = 5000;
       const minX = padding + halfW;
       const maxX = Math.max(minX, winW - padding - halfW);
 
-      const flyoutH = 420;
+      const flyoutH = 520;
       const gap = 8;
       const pillH = 36;
-      const maxFlyoutH = Math.max(120, winH - pillH - gap - padding * 2);
+      const maxFlyoutH = Math.max(120, winH - 100);
       const finalH = Math.min(flyoutH, maxFlyoutH);
 
       const maxY = Math.max(padding, winH - pillH - padding);
@@ -6079,16 +5979,22 @@ const MAX_COVER_LENGTH = 5000;
     // --- DOM Assembly ---
 
     _render() {
+      const hasError = Boolean(this._lastErrorPayload);
+      const errorHumanText = hasError ? formatHumanError(this._lastErrorPayload.code, this._lastErrorPayload.message) : '';
+      const errCode = this._lastErrorPayload?.code || '';
+      const errMsg = this._lastErrorPayload?.message || '';
+      const errorCodeText = hasError ? (errCode ? (errMsg && errMsg !== errCode ? `${errCode}: ${errMsg}` : errCode) : errMsg) : '';
+
       this._shadow.innerHTML = `
         <style>${STYLES}</style>
-        <div class="hha-root" data-el="root">
+        <div class="hha-root" data-el="root" data-active-tab="${this._activeTab}">
           <div class="hha-pill" data-el="pill">
             <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и очередь">
               <div class="hha-pill-progress-fill" data-el="pill-progress-fill"></div>
               <div class="hha-pill-status">
                 <span class="hha-pill-progress" data-el="pill-progress"><span class="hha-current-count" data-el="pill-current-count">0</span> / <span class="hha-pill-limit-val" data-el="pill-limit-val">${MAX_DAILY_LIMIT}</span></span>
               </div>
-              <span class="hha-pill-error-dot" data-el="pill-error-dot" style="display: none;"></span>
+              <span class="hha-pill-error-dot" data-el="pill-error-dot" style="${hasError ? 'display: inline-block;' : 'display: none;'}"></span>
             </div>
             <span class="hha-pill-queue-badge" data-action="open-queue-tab" data-el="pill-queue-badge" data-tooltip="Вакансии с анкетами в очереди" tabindex="0" role="button" aria-label="Очередь вакансий"></span>
             <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="pill-quick-btn">
@@ -6096,7 +6002,7 @@ const MAX_COVER_LENGTH = 5000;
             </button>
           </div>
 
-          <!-- Flyout Overlay (390px wide, max 320px height) -->
+          <!-- Flyout Overlay (390px wide, max 320px/520px height) -->
           <div class="hha-flyout" data-el="flyout" role="dialog" aria-modal="false" aria-label="Панель управления откликами">
             <!-- Top Header: Drag Handle & Collapse Button -->
             <header class="hha-island-header" data-el="island-header">
@@ -6109,23 +6015,11 @@ const MAX_COVER_LENGTH = 5000;
             <!-- Floating Tooltip -->
             <div class="hha-tooltip" data-el="tooltip"></div>
 
-            <!-- Error Banner inside Flyout -->
-            <div class="hha-error-banner" data-el="error-banner" style="display: none;">
-              <div class="hha-error-banner-main">
-                <span class="hha-error-icon">${ICONS.alert}</span>
-                <span class="hha-error-text" data-el="error-banner-text">Ошибка</span>
-              </div>
-              <div class="hha-error-banner-actions">
-                <button type="button" class="hha-btn-copy-error" data-action="copy-last-error" title="Скопировать детали ошибки">Скопировать</button>
-                <button type="button" class="hha-btn-dismiss-error" data-action="dismiss-error" aria-label="Закрыть">✕</button>
-              </div>
-            </div>
-
             <!-- Panels -->
             <div class="hha-panels">
               <!-- Tab 1: Settings / Cover (Письмо) -->
               <div class="hha-panel ${this._activeTab === 'settings' ? 'active' : ''}" data-panel="settings"${this._activeTab === 'settings' ? '' : ' aria-hidden="true" inert'}>
-                <div class="hha-card hha-card-cover">
+                <div class="hha-card hha-card-cover" data-el="cover-card"${hasError ? ' style="display: none;"' : ''}>
                   <div class="hha-switch-row">
                     <label class="hha-switch-label" for="hha-use-cover-input">
                       <span class="hha-row-label">Отправлять сопроводительное письмо</span>
@@ -6138,6 +6032,17 @@ const MAX_COVER_LENGTH = 5000;
                   <div class="hha-cover-container" data-el="setting-cover-container">
                     <textarea class="hha-cover-textarea" data-el="setting-cover-text" maxlength="${MAX_COVER_LENGTH}" placeholder="Текст сопроводительного письма..."></textarea>
                     <div class="hha-char-counter" data-el="setting-cover-counter">0 / ${MAX_COVER_LENGTH}</div>
+                  </div>
+                </div>
+
+                <div class="hha-card hha-card-error" data-el="error-card"${hasError ? '' : ' style="display: none;"'}>
+                  <div class="hha-card-error-body">
+                    <div class="hha-card-error-title" data-el="error-card-title">${errorHumanText}</div>
+                    <div class="hha-card-error-code" data-el="error-card-code">${errorCodeText}</div>
+                  </div>
+                  <div class="hha-card-error-actions">
+                    <button type="button" class="hha-btn-copy-error" data-action="copy-last-error" data-el="error-copy-btn" title="Скопировать детали ошибки">Скопировать</button>
+                    <button type="button" class="hha-btn-dismiss-error" data-action="dismiss-error" data-el="error-dismiss-btn">Понятно</button>
                   </div>
                 </div>
               </div>
@@ -6174,7 +6079,7 @@ const MAX_COVER_LENGTH = 5000;
               </div>
               <div class="hha-tabs" data-active="${this._activeTab}" role="tablist" aria-label="Разделы панели">
                 <div class="hha-tab-indicator" data-el="tab-indicator" style="left: ${this._activeTab === 'queue' ? 102 : 3}px; width: 97px;" aria-hidden="true"></div>
-                <button type="button" class="hha-tab-btn ${this._activeTab === 'settings' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'settings' ? 'true' : 'false'}" data-action="switch-tab" data-tab="settings"><span>Письмо</span></button>
+                <button type="button" class="hha-tab-btn ${this._activeTab === 'settings' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'settings' ? 'true' : 'false'}" data-action="switch-tab" data-tab="settings"><span>Письмо</span><span class="hha-tab-error-dot" data-el="settings-error-dot" style="${hasError ? 'display: inline-block;' : 'display: none;'}"></span></button>
                 <button type="button" class="hha-tab-btn ${this._activeTab === 'queue' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'queue' ? 'true' : 'false'}" data-action="switch-tab" data-tab="queue"><span>Очередь</span><span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
               </div>
               <div class="hha-footer-actions">
@@ -6197,13 +6102,11 @@ const MAX_COVER_LENGTH = 5000;
       const header = this._shadow.querySelector('[data-el="island-header"]');
       if (!root || !pill) return;
 
-      // Drag & Drop Pointer Events on Pill
       pill.addEventListener('pointerdown', (e) => this._onPointerDown(e, 'pill'));
       pill.addEventListener('pointermove', this._onPointerMove);
       pill.addEventListener('pointerup', this._onPointerUp);
       pill.addEventListener('pointercancel', this._onPointerUp);
 
-      // Drag & Drop Pointer Events on Island Header
       if (header) {
         header.addEventListener('pointerdown', (e) => this._onPointerDown(e, 'header'));
         header.addEventListener('pointermove', this._onPointerMove);
@@ -6211,10 +6114,8 @@ const MAX_COVER_LENGTH = 5000;
         header.addEventListener('pointercancel', this._onPointerUp);
       }
 
-      // Event delegation for clicks inside Shadow Root
       root.addEventListener('click', (e) => this._handleRootClick(e));
 
-      // Floating Tooltip Event Delegation
       root.addEventListener('pointerover', (e) => {
         const target = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-tooltip]') : null;
         if (target && target.getAttribute('data-tooltip')) {
@@ -6234,7 +6135,6 @@ const MAX_COVER_LENGTH = 5000;
         this._hideTooltip();
       }, { capture: true, passive: true });
 
-      // Keyboard navigation for interactive elements (Enter / Space)
       root.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
           const target = e.target && typeof e.target.closest === 'function' 
@@ -6252,7 +6152,6 @@ const MAX_COVER_LENGTH = 5000;
         }
       });
 
-      // Keyboard support for status group
       const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
       if (statusGroup) {
         statusGroup.addEventListener('keydown', (e) => {
@@ -6265,7 +6164,6 @@ const MAX_COVER_LENGTH = 5000;
         });
       }
 
-      // Keyboard support for pill queue badge
       const pillQueueBadge = this._shadow.querySelector('[data-el="pill-queue-badge"]');
       if (pillQueueBadge) {
         pillQueueBadge.addEventListener('keydown', (e) => {
@@ -6495,13 +6393,17 @@ const MAX_COVER_LENGTH = 5000;
       update('[data-el="queue-stream"]', '[data-el="queue-scrollbar"]', '[data-el="queue-scroll-thumb"]');
     }
 
+    _handleAssistantError(payload) {
+      return this._showError(payload);
+    }
+
     _showError(errPayload) {
       if (!errPayload) return;
       const time = formatTime(errPayload.timestamp || Date.now());
       const code = errPayload.code || (errPayload.level === 'ERR' ? 'ERROR' : 'INFO');
       const message = String(errPayload.message || 'Произошла непредвиденная ошибка');
       const details = errPayload.details || errPayload.context || {};
-      const url = details.url || (typeof window !== 'undefined' ? window.location.href : '');
+      const url = details.url || (typeof window !== 'undefined' && window.location ? window.location.href : (typeof location !== 'undefined' ? location.href : ''));
 
       this._lastErrorPayload = {
         time,
@@ -6514,17 +6416,27 @@ const MAX_COVER_LENGTH = 5000;
       if (!this._shadow) return;
 
       const humanMsg = formatHumanError(code, message);
+      const codeMsg = code ? (message && message !== code ? `${code}: ${message}` : code) : message;
 
-      // 1. Update and show Banner (inside flyout)
-      const banner = this._shadow.querySelector('[data-el="error-banner"]');
-      const bannerText = this._shadow.querySelector('[data-el="error-banner-text"]');
-      if (banner && bannerText) {
-        bannerText.textContent = humanMsg;
-        bannerText.setAttribute('title', `${humanMsg}\n(${code}: ${message})`);
-        banner.style.display = 'flex';
-      }
+      // 1. Update and show Error Card inside Settings tab, hide Cover Card
+      const coverCard = this._shadow.querySelector('[data-el="cover-card"]');
+      const errorCard = this._shadow.querySelector('[data-el="error-card"]');
+      const errorTitle = this._shadow.querySelector('[data-el="error-card-title"]');
+      const errorCode = this._shadow.querySelector('[data-el="error-card-code"]');
 
-      // 2. Show refined error indicator on collapsed pill
+      if (coverCard) coverCard.style.display = 'none';
+      if (errorCard) errorCard.style.display = 'flex';
+      if (errorTitle) errorTitle.textContent = humanMsg;
+      if (errorCode) errorCode.textContent = codeMsg;
+
+      // 2. Show red error indicator on Settings tab button
+      const settingsDot = this._shadow.querySelector('[data-el="settings-error-dot"]');
+      if (settingsDot) settingsDot.style.display = 'inline-block';
+
+      // 3. Switch tab to settings
+      this._switchTab('settings');
+
+      // 4. Show refined error indicator on collapsed pill
       const errorDot = this._shadow.querySelector('[data-el="pill-error-dot"]');
       if (errorDot) {
         errorDot.style.display = 'inline-block';
@@ -6542,29 +6454,24 @@ const MAX_COVER_LENGTH = 5000;
         clearTimeout(this._toastTimer);
         this._toastTimer = null;
       }
+      this._lastErrorPayload = null;
       if (!this._shadow) return;
-      const banner = this._shadow.querySelector('[data-el="error-banner"]');
-      if (banner && banner.style.display !== 'none') {
-        banner.style.transition = 'opacity 160ms cubic-bezier(0.3,0,0.8,0.15), transform 160ms cubic-bezier(0.3,0,0.8,0.15)';
-        banner.style.opacity = '0';
-        banner.style.transform = 'translate3d(0, -4px, 0)';
-        setTimeout(() => {
-          banner.style.display = 'none';
-          banner.style.opacity = '';
-          banner.style.transform = '';
-          banner.style.transition = '';
-        }, 160);
-      }
+
+      // Hide error card, reveal cover card
+      const coverCard = this._shadow.querySelector('[data-el="cover-card"]');
+      const errorCard = this._shadow.querySelector('[data-el="error-card"]');
+      if (errorCard) errorCard.style.display = 'none';
+      if (coverCard) coverCard.style.display = 'flex';
+
+      // Hide red error indicator on Settings tab button
+      const settingsDot = this._shadow.querySelector('[data-el="settings-error-dot"]');
+      if (settingsDot) settingsDot.style.display = 'none';
+
       const errorDot = this._shadow.querySelector('[data-el="pill-error-dot"]');
       if (errorDot) errorDot.style.display = 'none';
       const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
       if (statusGroup) statusGroup.classList.remove('has-error');
-      this._lastErrorPayload = null;
       this._syncDocumentTitle();
-    }
-
-    _dismissToast() {
-      this._dismissError();
     }
 
     _handleRootClick(e) {
@@ -6733,7 +6640,7 @@ const MAX_COVER_LENGTH = 5000;
         `Time: ${err.time || formatTime()}`,
         `Code: ${err.code || 'UNKNOWN'}`,
         `Message: ${err.message || ''}`,
-        `URL: ${err.url || (typeof window !== 'undefined' ? window.location.href : '')}`,
+        `URL: ${err.url || (typeof window !== 'undefined' && window.location ? window.location.href : (typeof location !== 'undefined' ? location.href : ''))}`,
         `User-Agent: ${typeof navigator !== 'undefined' ? navigator.userAgent : ''}`
       ];
       if (err.details && Object.keys(err.details).length > 0) {
@@ -6749,7 +6656,7 @@ const MAX_COVER_LENGTH = 5000;
       if (btnEl) {
         const origHtml = btnEl.innerHTML;
         btnEl.classList.add('is-copied');
-        btnEl.innerHTML = `${ICONS.check} <span>Скопировано!</span>`;
+        btnEl.textContent = 'Скопировано!';
         setTimeout(() => {
           btnEl.classList.remove('is-copied');
           btnEl.innerHTML = origHtml;
@@ -6969,10 +6876,10 @@ const MAX_COVER_LENGTH = 5000;
         const flyoutMaxW = 390;
         const halfW = flyoutMaxW / 2;
         const padding = 16;
-        const flyoutH = 420;
+        const flyoutH = 520;
         const gap = 8;
         const pillH = 36;
-        const maxFlyoutH = Math.max(120, winH - pillH - gap - padding * 2);
+        const maxFlyoutH = Math.max(120, winH - 100);
         const finalH = Math.min(flyoutH, maxFlyoutH);
         const maxY = Math.max(padding, winH - pillH - padding);
         const minY = Math.min(maxY, finalH + gap + padding);
@@ -7078,8 +6985,12 @@ const MAX_COVER_LENGTH = 5000;
         root.style.setProperty('--center-x', `${clampedCenterX}px`);
         const pillWidth = this._getPillWidth();
         root.style.setProperty('--pill-width', `${pillWidth}px`);
-        const maxFlyoutH = Math.max(120, winH - 36 - 8 - padding * 2);
-        const finalH = Math.min(320, maxFlyoutH);
+        const isQueue = this._activeTab === 'queue';
+        const baseH = isQueue ? 520 : 320;
+        const maxFlyoutH = isQueue
+          ? Math.max(120, winH - 100)
+          : Math.max(120, winH - 36 - 8 - padding * 2);
+        const finalH = Math.min(baseH, maxFlyoutH);
         root.style.setProperty('--flyout-height', `${finalH}px`);
       }
 
@@ -7159,28 +7070,23 @@ const MAX_COVER_LENGTH = 5000;
         root.classList.toggle('is-running', isRunning);
       }
 
-      // Pill & Footer Quick Buttons
       const quickBtns = this._shadow.querySelectorAll('.hha-btn-quick');
       if (quickBtns.length > 0) {
         let targetClass = 'hha-btn-start';
-        let targetIcon = ICONS.play;
         let targetLabel = 'Старт';
         let targetTitle = 'Запустить автоматизацию';
 
         if (isRunning) {
           targetClass = 'hha-btn-stop';
-          targetIcon = ICONS.stop;
           targetLabel = 'Стоп';
           targetTitle = 'Остановить автоматизацию';
         } else if (status === 'done' || (this._status && this._status.code === 'DAILY_LIMIT_REACHED')) {
           targetClass = 'hha-btn-done';
-          targetIcon = ICONS.check;
           const isDaily = this._status && this._status.code === 'DAILY_LIMIT_REACHED';
           targetLabel = isDaily ? 'Лимит 24ч' : 'Готово';
           targetTitle = isDaily ? `Достигнут суточный лимит HeadHunter (${MAX_DAILY_LIMIT} откликов за 24 часа)` : 'Лимит достигнут. Кликните для настройки';
         } else if (status === 'error') {
           targetClass = 'hha-btn-error';
-          targetIcon = ICONS.reset;
           targetLabel = 'Сброс';
           targetTitle = 'Ошибка. Кликните для перезапуска';
         }
@@ -7269,10 +7175,6 @@ const MAX_COVER_LENGTH = 5000;
       this._syncDocumentTitle();
     }
 
-    _syncLogs() {
-      this._syncQueue();
-    }
-
     _syncQueue() {
       if (!this._shadow) return;
       this._hideTooltip();
@@ -7334,7 +7236,6 @@ const MAX_COVER_LENGTH = 5000;
         }, 300);
       }
 
-      // Update queue count badge in tabs
       const queueTabCount = this._shadow.querySelector('[data-el="queue-tab-count"]');
       if (queueTabCount) {
         if (count > 0) {
@@ -7351,8 +7252,6 @@ const MAX_COVER_LENGTH = 5000;
         this._updateTabIndicator();
       }
 
-
-      // Render Queue Stream
       const queueStream = this._shadow.querySelector('[data-el="queue-stream"]');
       if (queueStream) {
         if (this._queue && this._queue.length > 0) {
@@ -7413,19 +7312,15 @@ const MAX_COVER_LENGTH = 5000;
       }
     }
 
-
-
     _syncConfig() {
       if (!this._shadow) return;
       const c = this._config || {};
 
-      // Limit
       const limitEl = this._shadow.querySelector('.hha-pill-limit-val') || this._shadow.querySelector('[data-el="pill-limit-val"]');
       if (limitEl) {
         limitEl.textContent = String(MAX_DAILY_LIMIT);
       }
 
-      // Cover Letter
       const useCoverCb = this._shadow.querySelector('[data-el="setting-use-cover"]');
       const coverTextarea = this._shadow.querySelector('[data-el="setting-cover-text"]');
       const coverCounter = this._shadow.querySelector('[data-el="setting-cover-counter"]');
