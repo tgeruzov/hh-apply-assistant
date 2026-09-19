@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.0.8
+// @version      0.0.9
 // @author       Timur Geruzov
 // @description  HH Apply Assistant - Автоматизация откликов на вакансии hh.ru с эргономичным плавающим HUD интерфейсом
 // @license      GPL-3.0-only
@@ -3008,6 +3008,24 @@ const MAX_COVER_LENGTH = 5000;
       --md-sys-motion-duration-medium4: 400ms;
       --md-sys-motion-duration-long1: 450ms;
       --md-sys-motion-duration-long2: 500ms;
+
+      /* ── Centralized HUD Motion Specification Tokens ── */
+      --hha-motion-expand-duration: 320ms;
+      --hha-motion-expand-easing: cubic-bezier(0.16, 1, 0.3, 1);
+      --hha-motion-spring-easing: cubic-bezier(0.34, 1.15, 0.64, 1);
+      --hha-motion-collapse-duration: 220ms;
+      --hha-motion-collapse-easing: cubic-bezier(0.36, 0, 0.66, -0.05);
+      --hha-motion-tab-duration: 150ms;
+      --hha-motion-tab-easing: cubic-bezier(0.2, 0, 0, 1);
+      --hha-motion-tab-shift: 6px;
+      --hha-motion-indicator-duration: 200ms;
+      --hha-motion-indicator-easing: cubic-bezier(0.2, 0, 0, 1);
+
+      /* Dynamic Island Shared Element Layout Tokens */
+      --pill-width: 166px;
+      --flyout-width: min(390px, calc(100vw - 16px));
+      --shared-counter-offset: calc((var(--flyout-width, 390px) - var(--pill-width, 166px)) / 2 - 8px);
+      --shared-btn-offset: calc(-1 * var(--shared-counter-offset));
     }
 
     /* ── M3 Color System: Dark Scheme (Activated only via explicit dark-mode class) ── */
@@ -3076,10 +3094,9 @@ const MAX_COVER_LENGTH = 5000;
       left: var(--center-x, 0px);
       bottom: 24px;
       top: auto;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
+      display: grid;
+      place-items: end center;
+      gap: 0;
       padding: 0;
       margin: 0;
       font-size: 0;
@@ -3089,6 +3106,12 @@ const MAX_COVER_LENGTH = 5000;
       transform: translateX(-50%);
     }
 
+    .hha-root > * {
+      grid-area: 1 / 1;
+      justify-self: center;
+      align-self: end;
+    }
+
     .hha-root.is-snapping {
       transition: left 240ms cubic-bezier(0.05, 0.7, 0.1, 1),
                   top 240ms cubic-bezier(0.05, 0.7, 0.1, 1),
@@ -3096,7 +3119,11 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     .hha-root.dir-up {
-      flex-direction: column-reverse;
+      place-items: end center;
+    }
+
+    .hha-root:not(.dir-up) {
+      place-items: start center;
     }
 
     /* ─── 3. PILL (DYNAMIC ISLAND) ────────────────────────────────── */
@@ -3125,7 +3152,16 @@ const MAX_COVER_LENGTH = 5000;
       touch-action: none;
       white-space: nowrap;
       position: relative;
+      z-index: 2;
+      opacity: 1;
+      visibility: visible;
+      transform: scale(1) translate3d(0, 0, 0);
+      transform-origin: center bottom;
+      will-change: transform, opacity;
       transition: 
+        opacity 140ms ease-out 70ms,
+        transform 200ms cubic-bezier(0.34, 1.25, 0.64, 1) 60ms,
+        visibility 0s linear 70ms,
         box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), 
         border-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
         background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard);
@@ -3136,19 +3172,14 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     .hha-root.is-expanded .hha-pill {
-      box-shadow: var(--md-sys-elevation-level3);
-    }
-
-    .hha-root.is-expanded .hha-pill-queue-badge {
-      width: 0;
-      min-width: 0;
-      max-width: 0;
-      margin-left: -6px;
-      padding: 0;
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
-      transform: scale(0.7);
+      transform: translate3d(0, 0, 0);
+      transition:
+        opacity 60ms ease-out 0s,
+        transform 80ms ease-out 0s,
+        visibility 0s linear 60ms;
     }
 
     .hha-pill-status-group {
@@ -3344,9 +3375,11 @@ const MAX_COVER_LENGTH = 5000;
     .hha-btn-reset,
     .hha-btn-quick {
       margin-left: auto;
-      width: auto;
+      width: 76px;
       min-width: 76px;
-      padding: 0 16px;
+      max-width: 76px;
+      flex: 0 0 76px;
+      padding: 0 4px;
       border-radius: var(--md-sys-shape-corner-full);
       border: none;
       font-family: var(--md-sys-typescale-font-family);
@@ -3368,8 +3401,7 @@ const MAX_COVER_LENGTH = 5000;
         background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard), 
         color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard), 
         box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), 
-        transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard),
-        min-width var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate);
+        transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
     .hha-btn-label {
@@ -3383,6 +3415,21 @@ const MAX_COVER_LENGTH = 5000;
     .hha-btn-label.is-swapping {
       transform: translateY(3px);
       opacity: 0;
+    }
+
+    .hha-pill .hha-btn-quick {
+      opacity: 1;
+      transition:
+        opacity 140ms ease-out 60ms,
+        background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard), 
+        color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard), 
+        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), 
+        transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-root.is-expanded .hha-pill .hha-btn-quick {
+      opacity: 0;
+      transition: opacity 50ms ease-out 0s;
     }
 
     /* M3 Filled Button for Start (Primary Role) */
@@ -3505,22 +3552,22 @@ const MAX_COVER_LENGTH = 5000;
       box-shadow: none;
     }
 
-    /* ─── 5. FLYOUT PANEL ─────────────────────────────────────────── */
+    /* ─── 5. FLYOUT PANEL (DYNAMIC ISLAND EXPANDED SURFACE) ───────── */
     .hha-flyout {
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-body-small-size);
       line-height: var(--md-sys-typescale-body-small-line-height);
-      pointer-events: auto;
+      pointer-events: none;
       width: min(390px, calc(100vw - 16px));
       max-width: calc(100vw - 16px);
-      height: 420px;
-      min-height: 160px;
-      max-height: min(420px, calc(100vh - 56px));
+      height: var(--flyout-height, 420px);
+      min-height: var(--flyout-height, 420px);
+      max-height: min(var(--flyout-height, 420px), calc(100vh - 56px));
       box-sizing: border-box;
       background: var(--md-sys-color-surface-container);
       border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: var(--md-sys-shape-corner-extra-large);
-      box-shadow: var(--md-sys-elevation-level3);
+      border-radius: 20px;
+      box-shadow: var(--md-sys-elevation-level2);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
       display: flex;
@@ -3532,57 +3579,366 @@ const MAX_COVER_LENGTH = 5000;
       margin: 0;
       opacity: 0;
       visibility: hidden;
-      pointer-events: none;
-      will-change: opacity, transform;
+      z-index: 1;
+      transform-origin: center bottom;
+      transform: scale(calc(var(--pill-width, 196px) / 390px), calc(40px / var(--flyout-height, 420px)));
+      will-change: transform, opacity, border-radius, box-shadow;
       backface-visibility: hidden;
       transition:
-        opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-accelerate),
-        transform var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-accelerate),
-        visibility var(--md-sys-motion-duration-short4);
+        transform var(--hha-motion-collapse-duration, 220ms) var(--hha-motion-collapse-easing, cubic-bezier(0.36, 0, 0.66, -0.05)),
+        opacity var(--hha-motion-collapse-duration, 220ms) ease-out,
+        border-radius var(--hha-motion-collapse-duration, 220ms) var(--hha-motion-collapse-easing, cubic-bezier(0.36, 0, 0.66, -0.05)),
+        box-shadow var(--hha-motion-collapse-duration, 220ms) var(--hha-motion-collapse-easing, cubic-bezier(0.36, 0, 0.66, -0.05)),
+        visibility 0s linear var(--hha-motion-collapse-duration, 220ms);
     }
 
     .hha-root.dir-up .hha-flyout {
-      margin: 0;
       transform-origin: center bottom;
-      transform: scale(0.95) translate3d(0, 8px, 0);
     }
 
     .hha-root:not(.dir-up) .hha-flyout {
-      margin: 0;
       transform-origin: center top;
-      transform: scale(0.95) translate3d(0, -8px, 0);
     }
 
     .hha-root.is-animating .hha-panel,
-    .hha-root:not(.is-expanded) .hha-panel {
-      overflow: hidden;
-      overflow-y: hidden;
+    .hha-root.is-animating .hha-log-stream,
+    .hha-root:not(.is-expanded) .hha-panel,
+    .hha-root:not(.is-expanded) .hha-log-stream {
+      overflow: hidden !important;
+      overflow-y: hidden !important;
+    }
+
+    .hha-root.is-animating .hha-panel::-webkit-scrollbar,
+    .hha-root:not(.is-expanded) .hha-panel::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+
+    .hha-root.is-animating .hha-overlay-scrollbar,
+    .hha-root:not(.is-expanded) .hha-overlay-scrollbar {
+      opacity: 0 !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
     }
 
     .hha-root.is-expanded .hha-flyout {
+      border-radius: var(--md-sys-shape-corner-extra-large);
+      box-shadow: var(--md-sys-elevation-level3);
       opacity: 1;
       visibility: visible;
       pointer-events: auto;
+      z-index: 3;
       transform: scale(1) translate3d(0, 0, 0);
       transition:
-        opacity var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate),
-        transform var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate),
-        visibility var(--md-sys-motion-duration-medium2);
+        transform var(--hha-motion-expand-duration, 360ms) var(--hha-motion-expand-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        opacity 180ms ease-out 0s,
+        border-radius var(--hha-motion-expand-duration, 360ms) var(--hha-motion-expand-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        box-shadow var(--hha-motion-expand-duration, 360ms) var(--hha-motion-expand-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        visibility 0s linear 0s;
     }
 
-    /* ─── 6. BOTTOM NAVIGATION BAR (M3 FOOTER DOCK) ─────────────────── */
-    .hha-tabs {
+    /* ─── Inner Elements Unified Synchronous Transitions ─── */
+    .hha-flyout .hha-island-header {
+      flex-shrink: 0;
+      opacity: 0;
+      transform: translate3d(0, -8px, 0) scale(0.96);
+      transition: opacity 140ms ease-out, transform 140ms ease-out;
+    }
+
+    .hha-root.is-expanded .hha-island-header {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1);
+      transition: opacity 220ms ease-out 50ms, transform 300ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 50ms;
+    }
+
+    .hha-flyout .hha-panels {
+      opacity: 0;
+      transform: translate3d(0, 10px, 0) scale(0.94);
+      transition: opacity 140ms ease-out, transform 140ms ease-out;
+    }
+
+    .hha-root.is-expanded .hha-panels {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1);
+      transition: opacity 220ms ease-out 60ms, transform 320ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 60ms;
+    }
+
+    .hha-flyout .hha-island-footer {
+      opacity: 0;
+      transform: translate3d(0, 0, 0);
+      transition: opacity 140ms ease-out, transform 140ms ease-out;
+    }
+
+    .hha-root.is-expanded .hha-island-footer {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+      transition: opacity 180ms ease-out 40ms, transform 300ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 40ms;
+    }
+
+    .hha-root.is-expanded .hha-panel.active .hha-card:nth-child(1),
+    .hha-root.is-expanded .hha-panel.active .hha-card:nth-child(2),
+    .hha-root.is-expanded .hha-panel.active .hha-log-card {
+      animation: none !important;
+    }
+
+    /* ─── 5.1 ISLAND HEADER (M3 COMPACT BAR) ───────────────────────── */
+    .hha-island-header {
       display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      height: 42px;
+      min-height: 42px;
+      padding: 0 12px;
+      background: var(--md-sys-color-surface-container-low);
+      border-bottom: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0;
+      gap: 8px;
+      user-select: none;
+      cursor: grab;
+      touch-action: none;
+      box-sizing: border-box;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .hha-island-header:active {
+      cursor: grabbing;
+    }
+
+    .hha-header-drag-handle {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .hha-header-grip {
+      width: 32px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--md-sys-color-outline-variant);
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), width var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-island-header:hover .hha-header-grip {
+      background: var(--md-sys-color-outline);
+      width: 40px;
+    }
+
+    .hha-btn-collapse {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      min-width: 28px;
+      min-height: 28px;
+      border-radius: var(--md-sys-shape-corner-full);
+      background: transparent;
+      border: none;
+      color: var(--md-sys-color-on-surface-variant);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+      position: relative;
+      z-index: 1;
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-btn-collapse:hover {
+      background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
+      color: var(--md-sys-color-on-surface);
+    }
+
+    .hha-btn-collapse:active {
+      transform: scale(0.92);
+      background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
+    }
+
+    /* ─── 6. BOTTOM NAVIGATION & ACTION DOCK (M3 FOOTER) ───────────── */
+    .hha-island-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       background: var(--md-sys-color-surface-container-low);
       margin: 0;
-      padding: 8px;
+      padding: 8px 12px;
       border: none;
       border-top: 1px solid var(--md-sys-color-outline-variant);
       border-radius: 0 0 var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large);
       gap: 8px;
       flex-shrink: 0;
       box-sizing: border-box;
-      min-height: 50px;
+      min-height: 52px;
+    }
+
+    .hha-footer-status-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      position: relative;
+      overflow: hidden;
+      isolation: isolate;
+      border-radius: var(--md-sys-shape-corner-full);
+      height: var(--md-comp-control-height);
+      min-height: var(--md-comp-control-height);
+      padding: 0 8px 0 10px;
+      background: transparent;
+      border: none;
+      box-sizing: border-box;
+      line-height: 1;
+      vertical-align: middle;
+      cursor: pointer;
+      user-select: none;
+      flex-shrink: 0;
+      opacity: 0;
+      transform: translate3d(var(--shared-counter-offset, 104px), 0, 0);
+      will-change: transform, opacity;
+      transition: 
+        transform 180ms cubic-bezier(0.36, 0, 0.66, -0.05),
+        opacity 120ms ease-out,
+        background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard), 
+        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-root.is-expanded .hha-footer-status-group {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+      transition:
+        transform 300ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 50ms,
+        opacity 160ms ease-out 50ms,
+        background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard), 
+        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-footer-status-group:hover {
+      background: var(--md-sys-color-surface-container);
+    }
+
+    .hha-footer-status {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 44px;
+      height: var(--md-comp-control-height);
+      min-height: var(--md-comp-control-height);
+      box-sizing: border-box;
+      padding: 0 2px;
+      z-index: 2;
+    }
+
+    .hha-footer-progress-fill {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      height: 100%;
+      width: 0%;
+      background: var(--md-sys-color-secondary-container);
+      opacity: 0.75;
+      border-radius: var(--md-sys-shape-corner-full);
+      z-index: 1;
+      pointer-events: none;
+      transition: width var(--md-sys-motion-duration-medium4) var(--md-sys-motion-easing-emphasized-decelerate);
+    }
+
+    .hha-footer-progress {
+      font-size: var(--md-sys-typescale-label-medium-size);
+      font-weight: var(--md-sys-typescale-label-medium-weight);
+      letter-spacing: var(--md-sys-typescale-label-medium-tracking);
+      color: var(--md-sys-color-on-surface-variant);
+      font-variant-numeric: tabular-nums;
+      position: relative;
+      z-index: 2;
+    }
+
+    .hha-island-footer .hha-tabs {
+      display: inline-flex;
+      align-items: center;
+      margin: 0;
+      padding: 3px;
+      border: 1px solid var(--md-sys-color-outline-variant);
+      background: var(--md-sys-color-surface-container-high);
+      border-radius: var(--md-sys-shape-corner-full);
+      gap: 2px;
+      min-height: auto;
+      flex: 0 0 auto;
+      position: relative;
+      opacity: 0;
+      transform: scale(0.85);
+      will-change: transform, opacity;
+      transition:
+        transform 160ms ease-in,
+        opacity 120ms ease-in;
+    }
+
+    .hha-root.is-expanded .hha-island-footer .hha-tabs {
+      opacity: 1;
+      transform: scale(1);
+      transition:
+        transform 300ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 70ms,
+        opacity 200ms ease-out 70ms;
+    }
+
+    .hha-tab-indicator {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      height: 28px;
+      border-radius: var(--md-sys-shape-corner-full);
+      background: var(--md-sys-color-surface-container-lowest);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+      pointer-events: none;
+      z-index: 0;
+      box-sizing: border-box;
+      will-change: transform, width;
+      transition:
+        transform var(--hha-motion-indicator-duration, 200ms) var(--hha-motion-indicator-easing, cubic-bezier(0.22, 1, 0.36, 1)),
+        width var(--hha-motion-indicator-duration, 200ms) var(--hha-motion-indicator-easing, cubic-bezier(0.22, 1, 0.36, 1));
+    }
+
+    .hha-footer-actions {
+      display: inline-flex;
+      align-items: center;
+      flex-shrink: 0;
+      margin-left: 0;
+    }
+
+    .hha-footer-actions .hha-btn-quick {
+      height: var(--md-comp-control-height);
+      min-height: var(--md-comp-control-height);
+      width: 76px;
+      min-width: 76px;
+      max-width: 76px;
+      flex: 0 0 76px;
+      padding: 0 4px;
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-label-medium-size);
+      font-weight: var(--md-sys-typescale-label-medium-weight);
+      letter-spacing: var(--md-sys-typescale-label-medium-tracking);
+      opacity: 0;
+      transform: translate3d(var(--shared-btn-offset, -104px), 0, 0);
+      will-change: transform, opacity;
+      transition:
+        transform 180ms cubic-bezier(0.36, 0, 0.66, -0.05),
+        opacity 120ms ease-out;
+    }
+
+    .hha-root.is-expanded .hha-footer-actions .hha-btn-quick {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+      transition:
+        transform 300ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 50ms,
+        opacity 160ms ease-out 50ms;
     }
 
     /* Segmented Tab Badges */
@@ -3590,73 +3946,82 @@ const MAX_COVER_LENGTH = 5000;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 16px;
-      height: 16px;
-      padding: 0 4px;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
       border-radius: var(--md-sys-shape-corner-full);
       font-size: var(--md-sys-typescale-label-small-size);
       font-weight: 700;
       line-height: 1;
       box-sizing: border-box;
-      margin-left: 4px;
       background: var(--md-sys-color-surface-container-highest);
       color: var(--md-sys-color-on-surface-variant);
       border: none;
-      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+      transition: background-color var(--hha-motion-indicator-duration, 200ms) var(--hha-motion-indicator-easing, cubic-bezier(0.22, 1, 0.36, 1)),
+                  color var(--hha-motion-indicator-duration, 200ms) var(--hha-motion-indicator-easing, cubic-bezier(0.22, 1, 0.36, 1));
     }
 
     .hha-tab-badge.is-queue {
       background: var(--md-sys-color-surface-container-highest);
       color: var(--md-sys-color-on-surface-variant);
-      border: none;
     }
 
     .hha-tab-btn:hover .hha-tab-badge.is-queue {
-      background: var(--md-sys-color-surface-container-high);
+      background: var(--md-sys-color-outline-variant);
       color: var(--md-sys-color-on-surface);
     }
 
     .hha-tab-btn {
-      flex: 1;
+      flex: 0 0 auto;
       min-width: 0;
-      height: 34px;
+      height: 28px;
+      padding: 0 14px;
       background: transparent;
       border: none;
       outline: none;
-      border-radius: 14px;
+      border-radius: var(--md-sys-shape-corner-full);
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-label-medium-size);
-      font-weight: var(--md-sys-typescale-label-medium-weight);
+      font-weight: 500;
       letter-spacing: var(--md-sys-typescale-label-medium-tracking);
       color: var(--md-sys-color-on-surface-variant);
       cursor: pointer;
-      display: flex;
+      display: inline-flex;
       align-items: center;
       justify-content: center;
-      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
+      gap: 6px;
+      position: relative;
+      z-index: 1;
+      transition: color var(--hha-motion-indicator-duration, 200ms) var(--hha-motion-indicator-easing, cubic-bezier(0.22, 1, 0.36, 1));
       box-shadow: none;
       -webkit-appearance: none;
       appearance: none;
+      user-select: none;
     }
 
-    .hha-tab-btn:hover {
+    .hha-tab-btn:hover:not(.active) {
       color: var(--md-sys-color-on-surface);
       background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent);
     }
 
-    .hha-tab-btn:active {
+    .hha-tab-btn:active:not(.active) {
       transform: scale(0.97);
       background: color-mix(in srgb, var(--md-sys-color-on-surface) 10%, transparent);
     }
 
     /* M3 Active Tab Indicator */
     .hha-tab-btn.active {
-      background: var(--md-sys-color-secondary-container) !important;
+      background: transparent !important;
       border: none !important;
-      border-radius: var(--md-sys-shape-corner-full);
       box-shadow: none !important;
-      color: var(--md-sys-color-on-secondary-container) !important;
+      color: var(--md-sys-color-primary) !important;
       font-weight: 600;
+    }
+
+    .hha-tab-btn.active .hha-tab-badge,
+    .hha-tab-btn.active .hha-tab-badge.is-queue {
+      background: var(--md-sys-color-primary-container);
+      color: var(--md-sys-color-on-primary-container);
     }
 
     .hha-tab-btn.active:active {
@@ -3693,20 +4058,21 @@ const MAX_COVER_LENGTH = 5000;
     /* ─── 7. TAB PANELS ───────────────────────────────────────────── */
     .hha-panels {
       flex: 1;
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-columns: 100%;
+      grid-template-rows: 100%;
       overflow: hidden;
       overflow-x: hidden;
-      padding: 10px 10px 8px 10px;
+      padding: 10px 12px;
       box-sizing: border-box;
       position: relative;
     }
 
     .hha-panel {
-      display: none;
+      grid-area: 1 / 1;
+      display: flex;
       flex-direction: column;
-      gap: 0;
-      flex: 1;
+      gap: 8px;
       width: 100%;
       height: 100%;
       min-height: 0;
@@ -3717,6 +4083,15 @@ const MAX_COVER_LENGTH = 5000;
       scrollbar-width: thin;
       scrollbar-color: var(--md-sys-color-outline-variant) transparent;
       position: relative;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translate3d(0, 0, 0);
+      will-change: opacity, transform;
+      transition:
+        opacity var(--hha-motion-tab-duration, 140ms) var(--hha-motion-tab-easing, ease-out),
+        transform var(--hha-motion-tab-duration, 140ms) var(--hha-motion-tab-easing, ease-out),
+        visibility 0s linear var(--hha-motion-tab-duration, 140ms);
     }
 
     .hha-panel::-webkit-scrollbar {
@@ -3739,7 +4114,22 @@ const MAX_COVER_LENGTH = 5000;
 
     .hha-panel.active {
       display: flex;
-      animation: hhaPanelEnter var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-emphasized-decelerate) both;
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: translate3d(0, 0, 0);
+      transition:
+        opacity var(--hha-motion-tab-duration, 140ms) var(--hha-motion-tab-easing, ease-out),
+        transform var(--hha-motion-tab-duration, 140ms) var(--hha-motion-tab-easing, ease-out),
+        visibility 0s linear 0s;
+    }
+
+    .hha-panels.slide-forward .hha-panel:not(.active) {
+      transform: translate3d(calc(-1 * var(--hha-motion-tab-shift, 6px)), 0, 0);
+    }
+
+    .hha-panels.slide-backward .hha-panel:not(.active) {
+      transform: translate3d(var(--hha-motion-tab-shift, 6px), 0, 0);
     }
 
     /* ─── 8. QUEUE & LOG CONTAINERS ───────────────────────────────── */
@@ -3855,12 +4245,41 @@ const MAX_COVER_LENGTH = 5000;
       pointer-events: none;
     }
 
+    .hha-log-empty-subtext {
+      font-size: var(--md-sys-typescale-label-small-size);
+      color: var(--md-sys-color-outline);
+      text-align: center;
+      line-height: 1.35;
+      max-width: 240px;
+    }
+
+    /* Queue Toolbar (M3 Secondary List Header) */
+    .hha-queue-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px;
+      background: var(--md-sys-color-surface-container-low);
+      border-bottom: 1px solid var(--md-sys-color-outline-variant);
+      gap: 8px;
+      box-sizing: border-box;
+      min-height: 36px;
+      flex-shrink: 0;
+    }
+
+    .hha-queue-toolbar-title {
+      font-size: var(--md-sys-typescale-label-small-size);
+      font-weight: 600;
+      color: var(--md-sys-color-on-surface-variant);
+      letter-spacing: 0.2px;
+    }
+
     /* Queue List Items (M3 Unified List Pattern) */
     .hha-queue-card {
       display: flex;
       flex-direction: column;
       gap: 4px;
-      padding: 10px 14px;
+      padding: 8px 14px;
       background: transparent;
       border: none;
       border-bottom: 1px solid var(--md-sys-color-outline-variant);
@@ -3909,24 +4328,27 @@ const MAX_COVER_LENGTH = 5000;
       box-shadow: none;
     }
 
-    /* Viewed Queue Card state (M3 Subdued State) */
+    /* Viewed Queue Card state (M3 Accessible Subdued State) */
     .hha-queue-card.is-viewed {
-      opacity: 0.65;
-      background: color-mix(in srgb, var(--md-sys-color-surface-container) 45%, transparent);
+      opacity: 1;
+      background: var(--md-sys-color-surface-container-low);
     }
 
     .hha-queue-card.is-viewed:hover {
-      opacity: 0.95;
       background: var(--md-sys-state-hover);
     }
 
     .hha-queue-card.is-viewed .hha-queue-title-link {
-      color: var(--md-sys-color-on-surface-variant);
+      color: var(--md-sys-color-outline);
       font-weight: 500;
     }
 
     .hha-queue-card.is-viewed .hha-queue-title-link:hover {
       color: var(--md-sys-color-primary);
+    }
+
+    .hha-queue-card.is-viewed .hha-queue-salary {
+      opacity: 0.75;
     }
 
     .hha-queue-card-top {
@@ -3935,6 +4357,8 @@ const MAX_COVER_LENGTH = 5000;
       justify-content: space-between;
       gap: 8px;
       min-width: 0;
+      height: 20px;
+      min-height: 20px;
     }
 
     .hha-queue-title-link {
@@ -3943,11 +4367,12 @@ const MAX_COVER_LENGTH = 5000;
       gap: 4px;
       min-width: 0;
       flex: 1;
+      height: 20px;
+      line-height: 20px;
       color: var(--md-sys-color-on-surface);
       text-decoration: none;
       font-size: var(--md-sys-typescale-label-large-size);
       font-weight: var(--md-sys-typescale-label-large-weight);
-      line-height: var(--md-sys-typescale-label-large-line-height);
       overflow: hidden;
       cursor: pointer;
       transition: color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
@@ -3961,30 +4386,62 @@ const MAX_COVER_LENGTH = 5000;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      line-height: 20px;
+    }
+
+    .hha-queue-card-mid {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+      height: 16px;
+      min-height: 16px;
+      line-height: 16px;
+      margin: 0;
+    }
+
+    .hha-queue-employer {
+      font-size: var(--md-sys-typescale-body-small-size);
+      font-weight: 500;
+      color: var(--md-sys-color-on-surface-variant);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      height: 16px;
+      line-height: 16px;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .hha-queue-card.is-viewed .hha-queue-employer {
+      color: var(--md-sys-color-outline);
     }
 
     .hha-queue-card-bottom {
       display: flex;
       align-items: center;
-      gap: 6px;
-      font-size: var(--md-sys-typescale-label-small-size);
-      color: var(--md-sys-color-on-surface-variant);
+      gap: 8px;
       min-width: 0;
       overflow: hidden;
-      line-height: var(--md-sys-typescale-label-small-line-height);
+      height: 20px;
+      min-height: 20px;
+      line-height: 20px;
+      margin: 0;
     }
 
     /* M3 Assist Chips / Badges */
     .hha-queue-badge {
       display: inline-flex;
       align-items: center;
-      padding: 2px 7px;
+      height: 18px;
+      line-height: 18px;
+      padding: 0 7px;
+      box-sizing: border-box;
       border-radius: var(--md-sys-shape-corner-small);
       font-size: 10px;
       font-weight: 500;
       letter-spacing: 0.1px;
       flex-shrink: 0;
-      line-height: 1.3;
     }
 
     .hha-queue-badge.badge-warning {
@@ -4019,21 +4476,26 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     .hha-queue-salary {
+      display: inline-flex;
+      align-items: center;
+      height: 18px;
+      line-height: 18px;
+      font-size: var(--md-sys-typescale-label-small-size);
+      font-weight: 600;
+      color: var(--md-sys-color-primary);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      font-weight: 600;
-      color: var(--md-sys-color-primary);
       min-width: 0;
       flex-shrink: 1;
     }
 
     /* Delete item button with M3 Icon Button state layers */
     .hha-log-item-delete {
-      width: 24px;
-      height: 24px;
-      min-width: 24px;
-      min-height: 24px;
+      width: 20px;
+      height: 20px;
+      min-width: 20px;
+      min-height: 20px;
       padding: 0;
       display: inline-flex;
       align-items: center;
@@ -4043,9 +4505,9 @@ const MAX_COVER_LENGTH = 5000;
       border-radius: var(--md-sys-shape-corner-full);
       color: var(--md-sys-color-on-surface-variant);
       cursor: pointer;
-      font-size: 13px;
+      font-size: 11px;
       font-weight: 500;
-      line-height: 1;
+      line-height: 20px;
       font-family: var(--md-sys-typescale-font-family);
       transition: color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
@@ -4064,11 +4526,11 @@ const MAX_COVER_LENGTH = 5000;
     /* ─── 9. ERROR BANNER & TOAST ALERTS ──────────────────────────── */
     .hha-error-banner {
       display: none;
-      align-items: center;
+      align-items: flex-start;
       justify-content: space-between;
       gap: 8px;
       margin: 8px 8px 0 8px;
-      padding: 6px 12px;
+      padding: 8px 12px;
       background: var(--md-sys-color-error-container);
       border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent);
       border-radius: var(--md-sys-shape-corner-small);
@@ -4084,7 +4546,7 @@ const MAX_COVER_LENGTH = 5000;
 
     .hha-error-banner-main {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 8px;
       min-width: 0;
       flex: 1;
@@ -4097,16 +4559,20 @@ const MAX_COVER_LENGTH = 5000;
       color: var(--md-sys-color-error);
       line-height: 1;
       flex-shrink: 0;
+      margin-top: 1px;
     }
 
     .hha-error-text {
       font-size: var(--md-sys-typescale-body-small-size);
       font-weight: 500;
       color: var(--md-sys-color-on-error-container);
-      line-height: var(--md-sys-typescale-body-small-line-height);
-      white-space: nowrap;
+      line-height: 1.35;
+      white-space: normal;
       overflow: hidden;
-      text-overflow: ellipsis;
+      word-break: break-word;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
       flex: 1;
       min-width: 0;
     }
@@ -4291,7 +4757,7 @@ const MAX_COVER_LENGTH = 5000;
       border: 1px solid var(--md-sys-color-outline-variant);
       border-radius: var(--md-sys-shape-corner-medium);
       box-shadow: none;
-      margin-bottom: 8px;
+      margin-bottom: 0;
       overflow: visible;
       box-sizing: border-box;
     }
@@ -4300,12 +4766,20 @@ const MAX_COVER_LENGTH = 5000;
       margin-bottom: 0;
     }
 
+    .hha-card-cover {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      margin-bottom: 0 !important;
+    }
+
     .hha-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 8px 12px;
-      min-height: 48px;
+      padding: 6px 12px;
+      min-height: 44px;
       box-sizing: border-box;
     }
 
@@ -4317,8 +4791,8 @@ const MAX_COVER_LENGTH = 5000;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 8px 12px;
-      min-height: 48px;
+      padding: 6px 12px;
+      min-height: 44px;
       box-sizing: border-box;
       border-top: 1px solid var(--md-sys-color-outline-variant);
       flex-wrap: nowrap;
@@ -4435,9 +4909,9 @@ const MAX_COVER_LENGTH = 5000;
       justify-content: center;
       text-align: center;
       font-family: var(--md-sys-typescale-font-family);
-      font-size: var(--md-sys-typescale-label-small-size);
+      font-size: 11.5px;
       font-weight: 500;
-      letter-spacing: var(--md-sys-typescale-label-small-tracking);
+      letter-spacing: 0.1px;
       line-height: 1;
       border: none;
       background: transparent;
@@ -4479,18 +4953,15 @@ const MAX_COVER_LENGTH = 5000;
 
     /* M3 Selected Segment */
     .hha-segmented-btn.is-active {
-      background: var(--md-sys-color-secondary-container) !important;
-      border: none !important;
-      box-shadow: none !important;
-      color: var(--md-sys-color-on-secondary-container) !important;
-      font-weight: 600 !important;
+      background: var(--md-sys-color-secondary-container);
+      box-shadow: none;
+      color: var(--md-sys-color-on-secondary-container);
+      font-weight: 600;
     }
 
     .hha-segmented-btn.is-active:hover {
-      background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 8%, var(--md-sys-color-secondary-container)) !important;
+      background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 8%, var(--md-sys-color-secondary-container));
     }
-
-
 
     /* ─── 12. SWITCH & COVER LETTER ───────────────────────────────── */
     .hha-card-cover {
@@ -4515,7 +4986,8 @@ const MAX_COVER_LENGTH = 5000;
     .hha-switch-row {
       display: flex;
       align-items: center;
-      padding: 8px 12px;
+      padding: 6px 12px;
+      min-height: 44px;
       box-sizing: border-box;
       border-bottom: 1px solid var(--md-sys-color-outline-variant);
       width: 100%;
@@ -4648,7 +5120,7 @@ const MAX_COVER_LENGTH = 5000;
       font-size: var(--md-sys-typescale-body-small-size);
       line-height: var(--md-sys-typescale-body-small-line-height);
       font-family: var(--md-sys-typescale-font-family);
-      padding: 8px 10px 28px 10px;
+      padding: 10px 12px 28px 12px;
       margin: 0;
       resize: none;
       outline: none;
@@ -4747,7 +5219,27 @@ const MAX_COVER_LENGTH = 5000;
     @keyframes hhaPanelEnter {
       from {
         opacity: 0;
-        transform: translate3d(0, 4px, 0);
+      }
+      to {
+        opacity: 1;
+      }
+    }
+
+    @keyframes hhaCardStagger {
+      from {
+        opacity: 0;
+        transform: translate3d(0, 8px, 0) scale(0.985);
+      }
+      to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+      }
+    }
+
+    @keyframes hhaDockStagger {
+      from {
+        opacity: 0;
+        transform: translate3d(0, 6px, 0);
       }
       to {
         opacity: 1;
@@ -4755,12 +5247,20 @@ const MAX_COVER_LENGTH = 5000;
       }
     }
 
-    /* Accessibility: M3 Motion Reduction */
+    /* Accessibility: M3 Motion Reduction (opacity only, <= 100ms, no transforms or growth) */
     @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
+      .hha-pill-progress-fill,
+      .hha-btn-stop {
+        animation: none !important;
+      }
+
+      .hha-pill,
+      .hha-flyout,
+      .hha-panel,
+      .hha-tab-indicator {
+        transform: none !important;
+        transition-duration: 100ms !important;
+        transition-delay: 0s !important;
       }
     }
   `;
@@ -4894,6 +5394,9 @@ const MAX_COVER_LENGTH = 5000;
       if (this._badgeClearTimer) { clearTimeout(this._badgeClearTimer); this._badgeClearTimer = null; }
       if (this._badgeAnimTimer) { clearTimeout(this._badgeAnimTimer); this._badgeAnimTimer = null; }
       if (this._queueConfirmTimer) { clearTimeout(this._queueConfirmTimer); this._queueConfirmTimer = null; }
+      if (this._originalDocTitle && typeof document !== 'undefined') {
+        document.title = this._originalDocTitle;
+      }
     }
 
     // --- Public API ---
@@ -5092,10 +5595,17 @@ const MAX_COVER_LENGTH = 5000;
       if (this._shadow) {
         const flyout = this._shadow.querySelector('.hha-flyout');
         const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
+        const pill = this._shadow.querySelector('[data-el="pill"]');
         const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
         if (statusGroup) {
           statusGroup.setAttribute('aria-expanded', String(this._isExpanded));
           statusGroup.setAttribute('aria-label', this._isExpanded ? 'Свернуть панель управления' : 'Открыть настройки и журнал');
+        }
+        if (pill && typeof pill.offsetWidth === 'number' && pill.offsetWidth > 0 && pill.offsetWidth < 300) {
+          this._collapsedPillWidth = pill.offsetWidth;
+        }
+        if (root && typeof root.style.setProperty === 'function') {
+          root.style.setProperty('--pill-width', `${this._collapsedPillWidth || 196}px`);
         }
         if (root) {
           root.classList.toggle('is-expanded', this._isExpanded);
@@ -5105,10 +5615,16 @@ const MAX_COVER_LENGTH = 5000;
           flyout.classList.add('is-animating');
         }
         this._updatePosition();
+        if (this._isExpanded) {
+          this._updateTabIndicator();
+        }
 
         if (this._animTimer) clearTimeout(this._animTimer);
         if (this._isExpanded && this._activeTab === 'queue') {
-          this._syncQueue();
+          const stream = this._shadow.querySelector('[data-el="queue-stream"]');
+          if (!stream || !stream.children.length) {
+            this._syncQueue();
+          }
         }
         this._animTimer = setTimeout(() => {
           this._isAnimating = false;
@@ -5119,12 +5635,15 @@ const MAX_COVER_LENGTH = 5000;
             this._updateOverlayScrollbar();
           }
           if (!this._isExpanded && this._shadow) {
-            const pill = this._shadow.querySelector('[data-el="pill"]');
-            if (pill && typeof pill.offsetWidth === 'number' && pill.offsetWidth > 0 && pill.offsetWidth < 300) {
-              this._collapsedPillWidth = pill.offsetWidth;
+            const pillEl = this._shadow.querySelector('[data-el="pill"]');
+            if (pillEl && typeof pillEl.offsetWidth === 'number' && pillEl.offsetWidth > 0 && pillEl.offsetWidth < 300) {
+              this._collapsedPillWidth = pillEl.offsetWidth;
+              if (root && typeof root.style.setProperty === 'function') {
+                root.style.setProperty('--pill-width', `${this._collapsedPillWidth}px`);
+              }
             }
           }
-        }, this._isExpanded ? 300 : 200);
+        }, this._isExpanded ? 330 : 230);
       } else {
         this._isAnimating = false;
       }
@@ -5142,6 +5661,7 @@ const MAX_COVER_LENGTH = 5000;
       if (!['settings', 'queue'].includes(tabName)) {
         tabName = 'settings';
       }
+      const prevTab = this._activeTab;
       this._activeTab = tabName;
       this._resetClearQueueBtn();
       this._hideTooltip();
@@ -5153,6 +5673,16 @@ const MAX_COVER_LENGTH = 5000;
       } catch (_) {}
 
       if (!this._shadow) return;
+
+      const tabOrder = { settings: 0, queue: 1 };
+      const prevIdx = tabOrder[prevTab] !== undefined ? tabOrder[prevTab] : 0;
+      const nextIdx = tabOrder[tabName] !== undefined ? tabOrder[tabName] : 0;
+      const panelsContainer = this._shadow.querySelector('.hha-panels');
+      if (panelsContainer) {
+        panelsContainer.classList.toggle('slide-forward', nextIdx >= prevIdx);
+        panelsContainer.classList.toggle('slide-backward', nextIdx < prevIdx);
+      }
+
       const tabs = this._shadow.querySelectorAll('.hha-tab-btn');
       tabs.forEach(t => {
         const isActive = t.dataset.tab === tabName;
@@ -5161,13 +5691,44 @@ const MAX_COVER_LENGTH = 5000;
       });
 
       const panels = this._shadow.querySelectorAll('.hha-panel');
-      panels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabName));
+      panels.forEach(p => {
+        const isActive = p.dataset.panel === tabName;
+        p.classList.toggle('active', isActive);
+        if (isActive) {
+          p.removeAttribute('aria-hidden');
+          p.removeAttribute('inert');
+          p.inert = false;
+        } else {
+          p.setAttribute('aria-hidden', 'true');
+          p.setAttribute('inert', '');
+          p.inert = true;
+        }
+      });
 
+      this._updateTabIndicator();
       this._syncQueueActions();
       if (this._isExpanded && tabName === 'queue') {
-        this._syncQueue();
+        const stream = this._shadow.querySelector('[data-el="queue-stream"]');
+        if (!stream || !stream.children.length) {
+          this._syncQueue();
+        }
       }
       requestAnimationFrame(() => this._updateOverlayScrollbar());
+    }
+
+    _updateTabIndicator() {
+      if (!this._shadow) return;
+      const indicator = this._shadow.querySelector('[data-el="tab-indicator"]');
+      const activeBtn = this._shadow.querySelector(`.hha-tab-btn[data-tab="${this._activeTab}"]`);
+      const tabs = this._shadow.querySelector('.hha-tabs');
+      if (!indicator || !activeBtn || !tabs) return;
+
+      const left = activeBtn.offsetLeft - tabs.clientLeft - 3;
+      const width = activeBtn.offsetWidth;
+      if (width > 0) {
+        indicator.style.width = `${width}px`;
+        indicator.style.transform = `translate3d(${left}px, 0, 0)`;
+      }
     }
 
     _resetClearQueueBtn() {
@@ -5179,7 +5740,7 @@ const MAX_COVER_LENGTH = 5000;
       const btn = this._shadow.querySelector('[data-action="clear-queue"]') || this._shadow.querySelector('[data-el="clear-queue-btn"]');
       if (btn) {
         btn.classList.remove('is-confirming');
-        btn.innerHTML = `<span class="hha-btn-clear-all-icon">${ICONS.trash}</span><span class="hha-btn-clear-all-text">Очистить всё</span>`;
+        btn.innerHTML = `<span class="hha-btn-clear-all-text">Очистить всё</span>`;
       }
     }
 
@@ -5235,13 +5796,21 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     _clampPillCoordinates(centerX, y, winW, winH) {
-      const padding = 8;
+      const padding = 16;
       const flyoutMaxW = 390;
       const halfW = flyoutMaxW / 2;
       const minX = padding + halfW;
       const maxX = Math.max(minX, winW - padding - halfW);
-      const minY = padding;
-      const maxY = winH - 36 - padding;
+
+      const flyoutH = 420;
+      const gap = 8;
+      const pillH = 36;
+      const maxFlyoutH = Math.max(120, winH - pillH - gap - padding * 2);
+      const finalH = Math.min(flyoutH, maxFlyoutH);
+
+      const maxY = Math.max(padding, winH - pillH - padding);
+      const minY = Math.min(maxY, finalH + gap + padding);
+
       return {
         x: Math.round(clamp(centerX, minX, maxX)),
         y: Math.round(clamp(y, minY, maxY))
@@ -5270,6 +5839,14 @@ const MAX_COVER_LENGTH = 5000;
 
           <!-- Flyout Overlay (390px wide, max 420px height) -->
           <div class="hha-flyout" data-el="flyout" role="dialog" aria-modal="false" aria-label="Панель управления откликами">
+            <!-- Top Header: Drag Handle & Collapse Button -->
+            <header class="hha-island-header" data-el="island-header">
+              <div class="hha-header-drag-handle" title="Перетащите для перемещения">
+                <span class="hha-header-grip"></span>
+              </div>
+              <button type="button" class="hha-btn-collapse" data-action="collapse-island" aria-label="Свернуть панель" title="Свернуть">✕</button>
+            </header>
+
             <!-- Floating Tooltip -->
             <div class="hha-tooltip" data-el="tooltip"></div>
 
@@ -5328,10 +5905,17 @@ const MAX_COVER_LENGTH = 5000;
               <!-- Tab 2: Queue (Очередь) -->
               <div class="hha-panel" data-panel="queue">
                 <div class="hha-log-card">
+                  <div class="hha-queue-toolbar">
+                    <span class="hha-queue-toolbar-title" data-el="queue-toolbar-title">Вакансии с анкетами</span>
+                    <button type="button" class="hha-btn-clear-all" data-action="clear-queue" data-el="clear-queue-btn">
+                      <span class="hha-btn-clear-all-text">Очистить всё</span>
+                    </button>
+                  </div>
                   <div class="hha-log-stream" data-el="queue-stream">
                     <div class="hha-log-empty">
                       <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
                       <div class="hha-log-empty-text">Очередь пуста</div>
+                      <div class="hha-log-empty-subtext">Сюда попадают вакансии с тестами и анкетами для ручного отклика</div>
                     </div>
                   </div>
                   <div class="hha-overlay-scrollbar" data-el="queue-scrollbar">
@@ -5341,11 +5925,25 @@ const MAX_COVER_LENGTH = 5000;
               </div>
             </div>
 
-            <!-- Segmented Control Tabs (2 columns) -->
-            <div class="hha-tabs" role="tablist" aria-label="Разделы панели">
-              <button type="button" class="hha-tab-btn active" role="tab" aria-selected="true" data-action="switch-tab" data-tab="settings">Настройки</button>
-              <button type="button" class="hha-tab-btn" role="tab" aria-selected="false" data-action="switch-tab" data-tab="queue"><span>Очередь</span> <span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
-            </div>
+            <!-- Bottom Dock: Counter on the Left + Tabs in Center + Quick Action Button on the Right -->
+            <footer class="hha-island-footer">
+              <div class="hha-footer-status-group" data-action="toggle-expand" data-el="footer-status-group" tabindex="0" role="button" aria-expanded="true" aria-label="Свернуть панель" title="Отклики: текущие / лимит">
+                <div class="hha-footer-progress-fill" data-el="footer-progress-fill"></div>
+                <div class="hha-footer-status">
+                  <span class="hha-footer-progress" data-el="footer-progress"><span class="hha-current-count" data-el="footer-current-count">0</span> / <span class="hha-pill-limit-val" data-el="footer-limit-val">50</span></span>
+                </div>
+              </div>
+              <div class="hha-tabs" role="tablist" aria-label="Разделы панели">
+                <div class="hha-tab-indicator" data-el="tab-indicator" aria-hidden="true"></div>
+                <button type="button" class="hha-tab-btn active" role="tab" aria-selected="true" data-action="switch-tab" data-tab="settings">Настройки</button>
+                <button type="button" class="hha-tab-btn" role="tab" aria-selected="false" data-action="switch-tab" data-tab="queue"><span>Очередь</span> <span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
+              </div>
+              <div class="hha-footer-actions">
+                <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="footer-quick-btn">
+                  <span class="hha-btn-label" data-el="footer-quick-label">Старт</span>
+                </button>
+              </div>
+            </footer>
           </div>
         </div>
       `;
@@ -5357,6 +5955,7 @@ const MAX_COVER_LENGTH = 5000;
 
       const root = this._shadow.querySelector('[data-el="root"]');
       const pill = this._shadow.querySelector('[data-el="pill"]');
+      const header = this._shadow.querySelector('[data-el="island-header"]');
       if (!root || !pill) return;
 
       // Drag & Drop Pointer Events on Pill
@@ -5364,6 +5963,14 @@ const MAX_COVER_LENGTH = 5000;
       pill.addEventListener('pointermove', this._onPointerMove);
       pill.addEventListener('pointerup', this._onPointerUp);
       pill.addEventListener('pointercancel', this._onPointerUp);
+
+      // Drag & Drop Pointer Events on Island Header
+      if (header) {
+        header.addEventListener('pointerdown', (e) => this._onPointerDown(e, 'header'));
+        header.addEventListener('pointermove', this._onPointerMove);
+        header.addEventListener('pointerup', this._onPointerUp);
+        header.addEventListener('pointercancel', this._onPointerUp);
+      }
 
       // Event delegation for clicks inside Shadow Root
       root.addEventListener('click', (e) => this._handleRootClick(e));
@@ -5541,6 +6148,7 @@ const MAX_COVER_LENGTH = 5000;
         };
 
         const showScrollbar = () => {
+          if (this._isAnimating || !this._isExpanded) return;
           if (stream.scrollHeight > stream.clientHeight + 1) {
             this._updateOverlayScrollbar();
             scrollbar.classList.add('is-visible');
@@ -5634,6 +6242,7 @@ const MAX_COVER_LENGTH = 5000;
       };
 
       attach('[data-el="queue-stream"]', '[data-el="queue-scrollbar"]', '[data-el="queue-scroll-thumb"]');
+      this._updateTabIndicator();
     }
 
     _updateOverlayScrollbar() {
@@ -5648,7 +6257,7 @@ const MAX_COVER_LENGTH = 5000;
         const clientH = stream.clientHeight;
         const trackH = scrollbar.clientHeight;
 
-        if (scrollH <= clientH + 1 || trackH <= 0) {
+        if (this._isAnimating || !this._isExpanded || scrollH <= clientH + 1 || trackH <= 0) {
           scrollbar.classList.remove('is-visible');
           thumb.style.height = '0px';
           return;
@@ -5705,6 +6314,7 @@ const MAX_COVER_LENGTH = 5000;
       if (statusGroup) {
         statusGroup.classList.add('has-error');
       }
+      this._syncDocumentTitle();
     }
 
     _dismissError() {
@@ -5730,6 +6340,7 @@ const MAX_COVER_LENGTH = 5000;
       const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
       if (statusGroup) statusGroup.classList.remove('has-error');
       this._lastErrorPayload = null;
+      this._syncDocumentTitle();
     }
 
     _dismissToast() {
@@ -5769,7 +6380,7 @@ const MAX_COVER_LENGTH = 5000;
       } else if (action === 'toggle-expand') {
         e.stopPropagation();
         this.toggleExpand();
-      } else if (action === 'close-flyout') {
+      } else if (action === 'close-flyout' || action === 'collapse-island') {
         e.stopPropagation();
         this.toggleExpand(false);
       } else if (action === 'switch-tab') {
@@ -6049,7 +6660,7 @@ const MAX_COVER_LENGTH = 5000;
 
     _onPointerDown(e, handleType) {
       if (e.target && typeof e.target.closest === 'function') {
-        if (e.target.closest('button, input, textarea, a, select, .hha-pill-queue-badge')) {
+        if (e.target.closest('button, input, textarea, a, select, .hha-pill-queue-badge, [data-action="collapse-island"]')) {
           return; // Let interactive controls handle their own events
         }
       }
@@ -6060,8 +6671,6 @@ const MAX_COVER_LENGTH = 5000;
       if (root) {
         root.classList.add('is-dragging');
       }
-
-      this._dragOpenDirection = root ? root.classList.contains('dir-up') : null;
 
       const target = e.currentTarget;
       this._isPointerDown = true;
@@ -6150,6 +6759,14 @@ const MAX_COVER_LENGTH = 5000;
         const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
         const flyoutMaxW = 390;
         const halfW = flyoutMaxW / 2;
+        const padding = 16;
+        const flyoutH = 420;
+        const gap = 8;
+        const pillH = 36;
+        const maxFlyoutH = Math.max(120, winH - pillH - gap - padding * 2);
+        const finalH = Math.min(flyoutH, maxFlyoutH);
+        const maxY = Math.max(padding, winH - pillH - padding);
+        const minY = Math.min(maxY, finalH + gap + padding);
 
         let snappedX = this._pillPos.x;
         let snappedY = this._pillPos.y;
@@ -6157,8 +6774,8 @@ const MAX_COVER_LENGTH = 5000;
 
         const leftDist = this._pillPos.x - halfW;
         const rightDist = winW - (this._pillPos.x + halfW);
-        const topDist = this._pillPos.y;
-        const bottomDist = winH - 36 - this._pillPos.y;
+        const topDist = this._pillPos.y - minY;
+        const bottomDist = maxY - this._pillPos.y;
 
         if (leftDist < 36) {
           snappedX = 16 + halfW;
@@ -6169,10 +6786,10 @@ const MAX_COVER_LENGTH = 5000;
         }
 
         if (topDist < 36) {
-          snappedY = 16;
+          snappedY = minY;
           didSnap = true;
         } else if (bottomDist < 36) {
-          snappedY = winH - 36 - 16;
+          snappedY = maxY;
           didSnap = true;
         }
 
@@ -6234,27 +6851,12 @@ const MAX_COVER_LENGTH = 5000;
       const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
       const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
 
-      // Determine open direction dynamically based on available screen space
-      const flyoutH = 420;
-      const spaceBelow = Math.max(0, winH - (this._pillPos.y + 36) - 8);
-      const spaceAbove = Math.max(0, this._pillPos.y - 8);
-
-      let opensUp = false;
-      if (this._isPointerDown && this._dragOpenDirection !== null) {
-        opensUp = this._dragOpenDirection;
-      } else if (spaceBelow < flyoutH && spaceAbove >= flyoutH) {
-        opensUp = true;
-      } else if (spaceAbove < flyoutH && spaceBelow >= flyoutH) {
-        opensUp = false;
-      } else {
-        opensUp = spaceAbove > spaceBelow;
-      }
-
-      root.classList.toggle('dir-up', opensUp);
+      // Pill is ALWAYS at the bottom, flyout is ALWAYS above the pill
+      root.classList.add('dir-up');
       root.classList.toggle('is-expanded', this._isExpanded);
 
       // Strict Center Anchor positioning: Center X stays stable regardless of pill width expansions
-      const padding = 8;
+      const padding = 16;
       const flyoutMaxW = 390;
       const halfW = flyoutMaxW / 2;
       const minX = padding + halfW;
@@ -6262,29 +6864,25 @@ const MAX_COVER_LENGTH = 5000;
       const clampedCenterX = Math.round(clamp(this._pillPos.x, minX, maxX));
       root.style.left = `${clampedCenterX}px`;
       root.style.right = 'auto';
-      root.style.alignItems = 'center';
+      root.style.alignItems = 'end';
       if (typeof root.style.setProperty === 'function') {
         root.style.setProperty('--center-x', `${clampedCenterX}px`);
+        const pillWidth = this._getPillWidth();
+        root.style.setProperty('--pill-width', `${pillWidth}px`);
+        const maxFlyoutH = Math.max(120, winH - 36 - 8 - padding * 2);
+        const finalH = Math.min(420, maxFlyoutH);
+        root.style.setProperty('--flyout-height', `${finalH}px`);
       }
 
-      // Vertical positioning
-      if (opensUp) {
-        const bottomDist = Math.max(8, winH - (this._pillPos.y + 36));
-        root.style.top = 'auto';
-        root.style.bottom = `${bottomDist}px`;
-      } else {
-        root.style.top = `${this._pillPos.y}px`;
-        root.style.bottom = 'auto';
-      }
+      // Vertical positioning: bottom anchor
+      const bottomDist = Math.max(8, winH - (this._pillPos.y + 36));
+      root.style.top = 'auto';
+      root.style.bottom = `${bottomDist}px`;
 
-      // Lock flyout height dynamically to available screen space
       const flyout = this._shadow.querySelector('.hha-flyout');
       if (flyout) {
-        const availSpace = Math.floor(opensUp ? spaceAbove : spaceBelow);
-        const maxAvail = Math.max(100, Math.min(availSpace, winH - 44));
-        const finalH = Math.min(420, maxAvail);
-        flyout.style.maxHeight = `${finalH}px`;
-        flyout.style.height = `${finalH}px`;
+        flyout.style.maxHeight = '';
+        flyout.style.height = '';
       }
     }
 
@@ -6352,9 +6950,9 @@ const MAX_COVER_LENGTH = 5000;
         root.classList.toggle('is-running', isRunning);
       }
 
-      // Pill Quick Button
-      const quickBtn = this._shadow.querySelector('[data-el="pill-quick-btn"]');
-      if (quickBtn) {
+      // Pill & Footer Quick Buttons
+      const quickBtns = this._shadow.querySelectorAll('.hha-btn-quick');
+      if (quickBtns.length > 0) {
         let targetClass = 'hha-btn-start';
         let targetIcon = ICONS.play;
         let targetLabel = 'Старт';
@@ -6378,40 +6976,62 @@ const MAX_COVER_LENGTH = 5000;
           targetTitle = 'Ошибка. Кликните для перезапуска';
         }
 
-        quickBtn.title = targetTitle;
+        const labelChanged = this._lastBtnLabel !== targetLabel;
+        this._lastBtnLabel = targetLabel;
 
-        // Smooth background & color class update
-        const desiredClassName = `hha-btn-quick ${targetClass}`;
-        if (quickBtn.className !== desiredClassName) {
-          quickBtn.className = desiredClassName;
-        }
+        quickBtns.forEach(quickBtn => {
+          quickBtn.title = targetTitle;
+          const desiredClassName = `hha-btn-quick ${targetClass}`;
+          if (quickBtn.className !== desiredClassName) {
+            quickBtn.className = desiredClassName;
+          }
 
-        // Label smooth crossfade
-        let labelEl = quickBtn.querySelector('[data-el="pill-quick-label"]');
-
-        if (!labelEl) {
-          quickBtn.innerHTML = `<span class="hha-btn-label" data-el="pill-quick-label">${targetLabel}</span>`;
-          this._lastBtnLabel = targetLabel;
-          this._hasSyncedStatus = true;
-        } else if (!this._hasSyncedStatus) {
-          this._hasSyncedStatus = true;
-          labelEl.textContent = targetLabel;
-          this._lastBtnLabel = targetLabel;
-        } else {
-          const labelChanged = this._lastBtnLabel !== targetLabel;
-
-          if (labelChanged) {
-            this._lastBtnLabel = targetLabel;
+          let labelEl = quickBtn.querySelector('.hha-btn-label');
+          if (!labelEl) {
+            quickBtn.innerHTML = `<span class="hha-btn-label">${targetLabel}</span>`;
+          } else if (!this._hasSyncedStatus) {
+            labelEl.textContent = targetLabel;
+          } else if (labelChanged) {
             labelEl.classList.add('is-swapping');
-
             setTimeout(() => {
               if (labelEl) {
                 labelEl.textContent = targetLabel;
                 labelEl.classList.remove('is-swapping');
               }
             }, 80);
+          } else {
+            labelEl.textContent = targetLabel;
           }
-        }
+        });
+        this._hasSyncedStatus = true;
+      }
+      this._syncDocumentTitle();
+    }
+
+    _cleanDocTitle(str) {
+      if (!str) return 'HeadHunter';
+      return String(str)
+        .replace(/^[▶✓⚠]\s*(?:\([^)]*\))?\s*(?:Готово|Внимание!)?\s*[—–-]?\s*/i, '')
+        .trim();
+    }
+
+    _syncDocumentTitle() {
+      if (typeof document === 'undefined') return;
+      if (!this._originalDocTitle) {
+        this._originalDocTitle = document.title || 'HeadHunter';
+      }
+      const { status = 'idle', code = 'IDLE' } = this._status || {};
+      const { displayCurrent = 0, limit = 50 } = this._progress || {};
+      const baseTitle = this._cleanDocTitle(this._originalDocTitle);
+
+      if (status === 'running') {
+        document.title = `▶ (${displayCurrent}/${limit}) ${baseTitle}`;
+      } else if (code === 'CAPTCHA_DETECTED' || status === 'error') {
+        document.title = `⚠ Внимание! ${baseTitle}`;
+      } else if (status === 'done') {
+        document.title = `✓ (${displayCurrent}/${limit}) Готово — ${baseTitle}`;
+      } else if (this._originalDocTitle) {
+        document.title = this._originalDocTitle;
       }
     }
 
@@ -6422,25 +7042,23 @@ const MAX_COVER_LENGTH = 5000;
       const cur = displayCurrent !== undefined ? displayCurrent : Math.min(Math.max(0, sent), limitCount);
       const text = `${cur} / ${limitCount}`;
 
-      const pillProg = this._shadow.querySelector('[data-el="pill-progress"]');
-      const currentEl = this._shadow.querySelector('.hha-current-count') || this._shadow.querySelector('[data-el="pill-current-count"]');
-      const limitEl = this._shadow.querySelector('.hha-pill-limit-val') || this._shadow.querySelector('[data-el="pill-limit-val"]');
+      const currentEls = this._shadow.querySelectorAll('.hha-current-count');
+      currentEls.forEach(el => { el.textContent = String(cur); });
+      const limitEls = this._shadow.querySelectorAll('.hha-pill-limit-val');
+      limitEls.forEach(el => { el.textContent = String(limitCount); });
 
-      if (currentEl && limitEl) {
-        currentEl.textContent = String(cur);
-        limitEl.textContent = String(limitCount);
-      } else if (pillProg) {
+      const pillProg = this._shadow.querySelector('[data-el="pill-progress"]');
+      if (pillProg && currentEls.length === 0) {
         pillProg.textContent = text;
       }
 
-      const pillFill = this._shadow.querySelector('[data-el="pill-progress-fill"]');
-      if (pillFill) {
+      const pillFills = this._shadow.querySelectorAll('[data-el="pill-progress-fill"], [data-el="footer-progress-fill"]');
+      if (pillFills.length) {
         const percent = limitCount > 0 ? Math.min(100, Math.max(0, Math.round((cur / limitCount) * 100))) : 0;
-        pillFill.style.width = `${percent}%`;
+        pillFills.forEach(fill => { fill.style.width = `${percent}%`; });
       }
+      this._syncDocumentTitle();
     }
-
-
 
     _syncLogs() {
       this._syncQueue();
@@ -6450,6 +7068,11 @@ const MAX_COVER_LENGTH = 5000;
       if (!this._shadow) return;
       this._hideTooltip();
       const count = this._queue ? this._queue.length : 0;
+
+      const toolbarTitle = this._shadow.querySelector('[data-el="queue-toolbar-title"]');
+      if (toolbarTitle) {
+        toolbarTitle.textContent = count > 0 ? `Вакансии с анкетами (${count})` : 'Вакансии с анкетами';
+      }
 
       // Update contextual queue badge in pill with Dynamic Island spring animation
       const queueBadge = this._shadow.querySelector('[data-el="pill-queue-badge"]');
@@ -6516,6 +7139,7 @@ const MAX_COVER_LENGTH = 5000;
           queueTabCount.removeAttribute('aria-label');
           queueTabCount.style.display = 'none';
         }
+        this._updateTabIndicator();
       }
 
 
@@ -6539,6 +7163,7 @@ const MAX_COVER_LENGTH = 5000;
             if (!displayTitle || /^(?:отклик на вакансию|отклик без резюме)$/i.test(displayTitle)) {
               displayTitle = 'Вакансия';
             }
+            const displayEmployer = collapseSpaces(item.employer || '');
             const reasonInfo = formatQueueReasonInfo(item.reason);
             const cleanSalary = formatCleanSalary(item.salary || '');
             const isViewed = Boolean(item.viewed);
@@ -6551,6 +7176,10 @@ const MAX_COVER_LENGTH = 5000;
                   </a>
                   <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">✕</button>
                 </div>
+                ${displayEmployer ? `
+                <div class="hha-queue-card-mid">
+                  <span class="hha-queue-employer" title="${escapeHtml(displayEmployer)}">${escapeHtml(displayEmployer)}</span>
+                </div>` : ''}
                 <div class="hha-queue-card-bottom">
                   ${isViewed ? `<span class="hha-queue-badge badge-viewed">Просмотрено</span>` : ''}
                   <span class="hha-queue-badge badge-${escapeHtml(reasonInfo.type)}">${escapeHtml(reasonInfo.text)}</span>
@@ -6564,12 +7193,13 @@ const MAX_COVER_LENGTH = 5000;
             <div class="hha-log-empty">
               <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
               <div class="hha-log-empty-text">Очередь пуста</div>
+              <div class="hha-log-empty-subtext">Сюда попадают вакансии с тестами и анкетами для ручного отклика</div>
             </div>
           `;
         }
       }
 
-      if (this._isExpanded && this._activeTab === 'queue') {
+      if (this._isExpanded && this._activeTab === 'queue' && !this._isAnimating) {
         this._updateOverlayScrollbar();
       }
     }
