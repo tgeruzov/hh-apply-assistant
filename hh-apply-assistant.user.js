@@ -2941,49 +2941,49 @@ const MAX_COVER_LENGTH = 5000;
       --md-sys-state-pressed-state-layer-opacity: 0.12;
       --md-sys-state-dragged-state-layer-opacity: 0.16;
 
-      /* ── M3 Typography Scale ── */
-      --md-sys-typescale-font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-      --md-sys-typescale-font-family-mono: 'Roboto Mono', 'SFMono-Regular', Menlo, Monaco, Consolas, monospace;
+      /* ── Modern Apple HIG / iOS Typography Scale ── */
+      --md-sys-typescale-font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      --md-sys-typescale-font-family-mono: 'SF Mono', 'SFMono-Regular', ui-monospace, Menlo, Monaco, Consolas, monospace;
 
       --md-sys-typescale-title-small-size: 14px;
       --md-sys-typescale-title-small-line-height: 20px;
-      --md-sys-typescale-title-small-weight: 500;
-      --md-sys-typescale-title-small-tracking: 0.1px;
+      --md-sys-typescale-title-small-weight: 600;
+      --md-sys-typescale-title-small-tracking: -0.15px;
 
       --md-sys-typescale-title-medium-size: 16px;
-      --md-sys-typescale-title-medium-line-height: 24px;
-      --md-sys-typescale-title-medium-weight: 500;
-      --md-sys-typescale-title-medium-tracking: 0.15px;
+      --md-sys-typescale-title-medium-line-height: 22px;
+      --md-sys-typescale-title-medium-weight: 600;
+      --md-sys-typescale-title-medium-tracking: -0.2px;
 
-      --md-sys-typescale-body-large-size: 16px;
-      --md-sys-typescale-body-large-line-height: 24px;
+      --md-sys-typescale-body-large-size: 15px;
+      --md-sys-typescale-body-large-line-height: 22px;
       --md-sys-typescale-body-large-weight: 400;
-      --md-sys-typescale-body-large-tracking: 0.5px;
+      --md-sys-typescale-body-large-tracking: -0.1px;
 
-      --md-sys-typescale-body-medium-size: 14px;
-      --md-sys-typescale-body-medium-line-height: 20px;
+      --md-sys-typescale-body-medium-size: 13px;
+      --md-sys-typescale-body-medium-line-height: 18px;
       --md-sys-typescale-body-medium-weight: 400;
-      --md-sys-typescale-body-medium-tracking: 0.25px;
+      --md-sys-typescale-body-medium-tracking: -0.05px;
 
       --md-sys-typescale-body-small-size: 12px;
       --md-sys-typescale-body-small-line-height: 16px;
       --md-sys-typescale-body-small-weight: 400;
-      --md-sys-typescale-body-small-tracking: 0.4px;
+      --md-sys-typescale-body-small-tracking: 0;
 
       --md-sys-typescale-label-large-size: 14px;
-      --md-sys-typescale-label-large-line-height: 20px;
-      --md-sys-typescale-label-large-weight: 500;
-      --md-sys-typescale-label-large-tracking: 0.1px;
+      --md-sys-typescale-label-large-line-height: 18px;
+      --md-sys-typescale-label-large-weight: 600;
+      --md-sys-typescale-label-large-tracking: -0.15px;
 
       --md-sys-typescale-label-medium-size: 12px;
       --md-sys-typescale-label-medium-line-height: 16px;
-      --md-sys-typescale-label-medium-weight: 500;
-      --md-sys-typescale-label-medium-tracking: 0.5px;
+      --md-sys-typescale-label-medium-weight: 600;
+      --md-sys-typescale-label-medium-tracking: -0.05px;
 
       --md-sys-typescale-label-small-size: 11px;
-      --md-sys-typescale-label-small-line-height: 16px;
-      --md-sys-typescale-label-small-weight: 500;
-      --md-sys-typescale-label-small-tracking: 0.5px;
+      --md-sys-typescale-label-small-line-height: 14px;
+      --md-sys-typescale-label-small-weight: 600;
+      --md-sys-typescale-label-small-tracking: 0;
 
       /* Control Height (M3 Compact Standard) */
       --md-comp-control-height: 32px;
@@ -3104,6 +3104,9 @@ const MAX_COVER_LENGTH = 5000;
       pointer-events: none;
       transition: none;
       transform: translateX(-50%);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
     }
 
     .hha-root > * {
@@ -3871,7 +3874,11 @@ const MAX_COVER_LENGTH = 5000;
       border-radius: var(--md-sys-shape-corner-full);
       gap: 2px;
       min-height: auto;
-      flex: 0 0 auto;
+      width: 204px;
+      min-width: 204px;
+      max-width: 204px;
+      box-sizing: border-box;
+      flex: 0 0 204px;
       position: relative;
       opacity: 0;
       transform: scale(0.85);
@@ -3893,6 +3900,7 @@ const MAX_COVER_LENGTH = 5000;
       position: absolute;
       top: 3px;
       left: 3px;
+      width: 97px;
       height: 28px;
       border-radius: var(--md-sys-shape-corner-full);
       background: var(--md-sys-color-surface-container-lowest);
@@ -3900,10 +3908,21 @@ const MAX_COVER_LENGTH = 5000;
       pointer-events: none;
       z-index: 0;
       box-sizing: border-box;
-      will-change: transform, width;
+      will-change: left, width;
       transition:
-        transform var(--hha-motion-indicator-duration, 200ms) var(--hha-motion-indicator-easing, cubic-bezier(0.22, 1, 0.36, 1)),
+        left var(--hha-motion-indicator-duration, 200ms) var(--hha-motion-indicator-easing, cubic-bezier(0.22, 1, 0.36, 1)),
         width var(--hha-motion-indicator-duration, 200ms) var(--hha-motion-indicator-easing, cubic-bezier(0.22, 1, 0.36, 1));
+    }
+
+    .hha-tabs[data-active="settings"] .hha-tab-indicator,
+    .hha-tabs:not([data-active="queue"]) .hha-tab-indicator {
+      left: 3px;
+      width: 97px;
+    }
+
+    .hha-tabs[data-active="queue"] .hha-tab-indicator {
+      left: 102px;
+      width: 97px;
     }
 
     .hha-footer-actions {
@@ -3972,10 +3991,11 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     .hha-tab-btn {
-      flex: 0 0 auto;
+      flex: 1 1 50%;
+      width: 50%;
       min-width: 0;
       height: 28px;
-      padding: 0 14px;
+      padding: 0 8px;
       background: transparent;
       border: none;
       outline: none;
@@ -3997,6 +4017,8 @@ const MAX_COVER_LENGTH = 5000;
       -webkit-appearance: none;
       appearance: none;
       user-select: none;
+      box-sizing: border-box;
+      white-space: nowrap;
     }
 
     .hha-tab-btn:hover:not(.active) {
@@ -4402,7 +4424,7 @@ const MAX_COVER_LENGTH = 5000;
 
     .hha-queue-employer {
       font-size: var(--md-sys-typescale-body-small-size);
-      font-weight: 500;
+      font-weight: 400;
       color: var(--md-sys-color-on-surface-variant);
       white-space: nowrap;
       overflow: hidden;
@@ -4438,9 +4460,9 @@ const MAX_COVER_LENGTH = 5000;
       padding: 0 7px;
       box-sizing: border-box;
       border-radius: var(--md-sys-shape-corner-small);
-      font-size: 10px;
+      font-size: 10.5px;
       font-weight: 500;
-      letter-spacing: 0.1px;
+      letter-spacing: -0.05px;
       flex-shrink: 0;
     }
 
@@ -4482,6 +4504,7 @@ const MAX_COVER_LENGTH = 5000;
       line-height: 18px;
       font-size: var(--md-sys-typescale-label-small-size);
       font-weight: 600;
+      font-variant-numeric: tabular-nums;
       color: var(--md-sys-color-primary);
       white-space: nowrap;
       overflow: hidden;
@@ -5117,8 +5140,9 @@ const MAX_COVER_LENGTH = 5000;
       border: none;
       border-radius: 0;
       color: var(--md-sys-color-on-surface);
-      font-size: var(--md-sys-typescale-body-small-size);
-      line-height: var(--md-sys-typescale-body-small-line-height);
+      font-size: 13px;
+      line-height: 19px;
+      letter-spacing: -0.05px;
       font-family: var(--md-sys-typescale-font-family);
       padding: 10px 12px 28px 12px;
       margin: 0;
@@ -5256,8 +5280,7 @@ const MAX_COVER_LENGTH = 5000;
 
       .hha-pill,
       .hha-flyout,
-      .hha-panel,
-      .hha-tab-indicator {
+      .hha-panel {
         transform: none !important;
         transition-duration: 100ms !important;
         transition-delay: 0s !important;
@@ -5357,6 +5380,8 @@ const MAX_COVER_LENGTH = 5000;
             statusGroup.setAttribute('aria-label', 'Свернуть панель управления');
           }
           this._updatePosition();
+          this._updateTabIndicator();
+          requestAnimationFrame(() => this._updateTabIndicator());
         }
       }
 
@@ -5617,6 +5642,7 @@ const MAX_COVER_LENGTH = 5000;
         this._updatePosition();
         if (this._isExpanded) {
           this._updateTabIndicator();
+          requestAnimationFrame(() => this._updateTabIndicator());
         }
 
         if (this._animTimer) clearTimeout(this._animTimer);
@@ -5631,8 +5657,11 @@ const MAX_COVER_LENGTH = 5000;
           if (root) root.classList.remove('is-animating');
           if (flyout) flyout.classList.remove('is-animating');
           this._animTimer = null;
-          if (this._isExpanded && this._activeTab === 'queue') {
-            this._updateOverlayScrollbar();
+          if (this._isExpanded) {
+            this._updateTabIndicator();
+            if (this._activeTab === 'queue') {
+              this._updateOverlayScrollbar();
+            }
           }
           if (!this._isExpanded && this._shadow) {
             const pillEl = this._shadow.querySelector('[data-el="pill"]');
@@ -5650,7 +5679,10 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     open() {
-      return this.toggleExpand(true);
+      const res = this.toggleExpand(true);
+      this._updateTabIndicator();
+      requestAnimationFrame(() => this._updateTabIndicator());
+      return res;
     }
 
     close() {
@@ -5705,7 +5737,16 @@ const MAX_COVER_LENGTH = 5000;
         }
       });
 
+      const tabsContainer = this._shadow.querySelector('.hha-tabs');
+      if (tabsContainer) {
+        tabsContainer.dataset.active = tabName;
+      }
+
       this._updateTabIndicator();
+      requestAnimationFrame(() => {
+        this._updateTabIndicator();
+        this._updateOverlayScrollbar();
+      });
       this._syncQueueActions();
       if (this._isExpanded && tabName === 'queue') {
         const stream = this._shadow.querySelector('[data-el="queue-stream"]');
@@ -5713,22 +5754,23 @@ const MAX_COVER_LENGTH = 5000;
           this._syncQueue();
         }
       }
-      requestAnimationFrame(() => this._updateOverlayScrollbar());
     }
 
     _updateTabIndicator() {
       if (!this._shadow) return;
       const indicator = this._shadow.querySelector('[data-el="tab-indicator"]');
-      const activeBtn = this._shadow.querySelector(`.hha-tab-btn[data-tab="${this._activeTab}"]`);
       const tabs = this._shadow.querySelector('.hha-tabs');
-      if (!indicator || !activeBtn || !tabs) return;
+      if (!indicator || !tabs) return;
 
-      const left = activeBtn.offsetLeft - tabs.clientLeft - 3;
-      const width = activeBtn.offsetWidth;
-      if (width > 0) {
-        indicator.style.width = `${width}px`;
-        indicator.style.transform = `translate3d(${left}px, 0, 0)`;
-      }
+      tabs.dataset.active = this._activeTab;
+
+      const isQueue = this._activeTab === 'queue';
+      const left = isQueue ? 102 : 3;
+      const width = 97;
+
+      indicator.style.left = `${left}px`;
+      indicator.style.width = `${width}px`;
+      indicator.style.transform = 'none';
     }
 
     _resetClearQueueBtn() {
@@ -5865,7 +5907,7 @@ const MAX_COVER_LENGTH = 5000;
             <!-- Panels -->
             <div class="hha-panels">
               <!-- Tab 1: Settings (Настройки) -->
-              <div class="hha-panel active" data-panel="settings">
+              <div class="hha-panel ${this._activeTab === 'settings' ? 'active' : ''}" data-panel="settings"${this._activeTab === 'settings' ? '' : ' aria-hidden="true" inert'}>
                 <div class="hha-card">
                   <div class="hha-row">
                     <span class="hha-row-label">Лимит откликов</span>
@@ -5903,7 +5945,7 @@ const MAX_COVER_LENGTH = 5000;
               </div>
 
               <!-- Tab 2: Queue (Очередь) -->
-              <div class="hha-panel" data-panel="queue">
+              <div class="hha-panel ${this._activeTab === 'queue' ? 'active' : ''}" data-panel="queue"${this._activeTab === 'queue' ? '' : ' aria-hidden="true" inert'}>
                 <div class="hha-log-card">
                   <div class="hha-queue-toolbar">
                     <span class="hha-queue-toolbar-title" data-el="queue-toolbar-title">Вакансии с анкетами</span>
@@ -5933,10 +5975,10 @@ const MAX_COVER_LENGTH = 5000;
                   <span class="hha-footer-progress" data-el="footer-progress"><span class="hha-current-count" data-el="footer-current-count">0</span> / <span class="hha-pill-limit-val" data-el="footer-limit-val">50</span></span>
                 </div>
               </div>
-              <div class="hha-tabs" role="tablist" aria-label="Разделы панели">
-                <div class="hha-tab-indicator" data-el="tab-indicator" aria-hidden="true"></div>
-                <button type="button" class="hha-tab-btn active" role="tab" aria-selected="true" data-action="switch-tab" data-tab="settings">Настройки</button>
-                <button type="button" class="hha-tab-btn" role="tab" aria-selected="false" data-action="switch-tab" data-tab="queue"><span>Очередь</span> <span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
+              <div class="hha-tabs" data-active="${this._activeTab}" role="tablist" aria-label="Разделы панели">
+                <div class="hha-tab-indicator" data-el="tab-indicator" style="left: ${this._activeTab === 'queue' ? 102 : 3}px; width: 97px;" aria-hidden="true"></div>
+                <button type="button" class="hha-tab-btn ${this._activeTab === 'settings' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'settings' ? 'true' : 'false'}" data-action="switch-tab" data-tab="settings">Настройки</button>
+                <button type="button" class="hha-tab-btn ${this._activeTab === 'queue' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'queue' ? 'true' : 'false'}" data-action="switch-tab" data-tab="queue"><span>Очередь</span> <span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
               </div>
               <div class="hha-footer-actions">
                 <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="footer-quick-btn">
@@ -6377,6 +6419,9 @@ const MAX_COVER_LENGTH = 5000;
         e.stopPropagation();
         this.setActiveTab('queue');
         this.open();
+        requestAnimationFrame(() => {
+          this._updateTabIndicator();
+        });
       } else if (action === 'toggle-expand') {
         e.stopPropagation();
         this.toggleExpand();
