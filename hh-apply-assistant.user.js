@@ -3738,6 +3738,7 @@ function cleanVid(vid) {
     .hha-btn-start,
     .hha-btn-stop,
     .hha-btn-done,
+    .hha-btn-limit,
     .hha-btn-error,
     .hha-btn-quick {
       margin-left: auto;
@@ -3885,6 +3886,24 @@ function cleanVid(vid) {
     .hha-btn-done:active {
       background: color-mix(in srgb, var(--md-sys-color-primary) 88%, var(--md-sys-color-on-primary));
       box-shadow: var(--md-sys-elevation-level1);
+      transform: scale(0.97);
+    }
+
+    /* M3 Neutral Tonal Button for Daily Limit Reached */
+    .hha-btn-limit {
+      background: var(--md-sys-color-surface-container-highest);
+      color: var(--md-sys-color-on-surface-variant);
+      border: 1px solid var(--md-sys-color-outline-variant);
+      box-shadow: none;
+    }
+
+    .hha-btn-limit:hover {
+      background: color-mix(in srgb, var(--md-sys-color-surface-container-highest) 85%, var(--md-sys-color-on-surface-variant));
+      color: var(--md-sys-color-on-surface);
+      border-color: var(--md-sys-color-outline);
+    }
+
+    .hha-btn-limit:active {
       transform: scale(0.97);
     }
 
@@ -4355,16 +4374,6 @@ function cleanVid(vid) {
       color: var(--md-sys-color-on-surface-variant);
     }
 
-    .hha-tab-error-dot {
-      display: inline-block;
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--md-sys-color-error);
-      flex-shrink: 0;
-      margin-left: 2px;
-      box-shadow: 0 0 0 1px var(--md-sys-color-surface-container-low);
-    }
 
     .hha-tab-btn:hover .hha-tab-badge.is-queue {
       background: var(--md-sys-color-outline-variant);
@@ -4536,6 +4545,10 @@ function cleanVid(vid) {
 
     /* ─── 8. QUEUE & LOG CONTAINERS ───────────────────────────────── */
     /* Tab 2: Queue Container (M3 Unified List Surface) */
+    [data-panel="queue"] {
+      overflow: hidden !important;
+    }
+
     [data-panel="queue"] .hha-log-card {
       flex: 1;
       height: 100%;
@@ -4935,7 +4948,8 @@ function cleanVid(vid) {
       min-height: 0;
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
+      justify-content: flex-start;
+      gap: 12px;
       box-sizing: border-box;
       padding: 16px;
       margin-bottom: 0 !important;
@@ -4989,10 +5003,8 @@ function cleanVid(vid) {
       align-items: center;
       justify-content: flex-end;
       gap: 8px;
-      margin-top: 12px;
-      padding-top: 8px;
+      margin-top: 4px;
       flex-shrink: 0;
-      border-top: 1px solid color-mix(in srgb, var(--md-sys-color-error) 15%, transparent);
     }
 
     .hha-card-error-actions .hha-btn-copy-error {
@@ -5035,9 +5047,9 @@ function cleanVid(vid) {
       height: 32px;
       padding: 0 16px;
       border-radius: var(--md-sys-shape-corner-full);
-      background: var(--md-sys-color-error);
-      color: var(--md-sys-color-on-error);
-      border: none;
+      background: var(--md-sys-color-error-container);
+      color: var(--md-sys-color-error);
+      border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent);
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-label-medium-size);
       font-weight: 600;
@@ -5048,7 +5060,7 @@ function cleanVid(vid) {
     }
 
     .hha-card-error-actions .hha-btn-dismiss-error:hover {
-      background: color-mix(in srgb, var(--md-sys-color-error) 85%, black);
+      background: color-mix(in srgb, var(--md-sys-color-error-container) 85%, var(--md-sys-color-error));
     }
 
     .hha-card-error-actions .hha-btn-dismiss-error:active {
@@ -5364,35 +5376,6 @@ function cleanVid(vid) {
       cursor: not-allowed;
     }
 
-    .hha-char-counter {
-      position: absolute;
-      bottom: 8px;
-      right: 12px;
-      z-index: 2;
-      pointer-events: none;
-      font-size: var(--md-sys-typescale-label-small-size);
-      font-family: var(--md-sys-typescale-font-family-mono);
-      line-height: 1;
-      color: var(--md-sys-color-on-surface-variant);
-      font-weight: 500;
-      font-variant-numeric: tabular-nums;
-      background: transparent;
-      padding: 0;
-      border: none;
-      box-shadow: none;
-      transition: color var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard), opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
-    }
-
-    .hha-cover-textarea:disabled ~ .hha-char-counter,
-    .hha-cover-textarea.is-disabled ~ .hha-char-counter {
-      opacity: 0.38;
-      background: transparent;
-    }
-
-    .hha-char-counter.is-limit {
-      color: var(--md-sys-color-error);
-      font-weight: 600;
-    }
 
     /* ─── 13. KEYFRAMES ───────────────────────────────────────────── */
     @keyframes hhaBadgePop {
@@ -5635,6 +5618,10 @@ function cleanVid(vid) {
       if (this._toastTimer) {
         clearTimeout(this._toastTimer);
         this._toastTimer = null;
+      }
+      if (this._copyErrorTimer) {
+        clearTimeout(this._copyErrorTimer);
+        this._copyErrorTimer = null;
       }
       this._copyBtnOrigHtml = null;
       this._copyBtnOrigColor = null;
@@ -5980,10 +5967,9 @@ function cleanVid(vid) {
 
     _render() {
       const hasError = Boolean(this._lastErrorPayload);
-      const errorHumanText = hasError ? formatHumanError(this._lastErrorPayload.code, this._lastErrorPayload.message) : '';
+      const errorHumanText = hasError ? escapeHtml(formatHumanError(this._lastErrorPayload.code, this._lastErrorPayload.message)) : '';
       const errCode = this._lastErrorPayload?.code || '';
-      const errMsg = this._lastErrorPayload?.message || '';
-      const errorCodeText = hasError ? (errCode ? (errMsg && errMsg !== errCode ? `${errCode}: ${errMsg}` : errCode) : errMsg) : '';
+      const errorCodeText = hasError ? escapeHtml(errCode ? `Код: ${errCode}` : 'Код: ERROR') : '';
 
       this._shadow.innerHTML = `
         <style>${STYLES}</style>
@@ -6031,7 +6017,6 @@ function cleanVid(vid) {
                   </div>
                   <div class="hha-cover-container" data-el="setting-cover-container">
                     <textarea class="hha-cover-textarea" data-el="setting-cover-text" maxlength="${MAX_COVER_LENGTH}" placeholder="Текст сопроводительного письма..."></textarea>
-                    <div class="hha-char-counter" data-el="setting-cover-counter">0 / ${MAX_COVER_LENGTH}</div>
                   </div>
                 </div>
 
@@ -6079,7 +6064,7 @@ function cleanVid(vid) {
               </div>
               <div class="hha-tabs" data-active="${this._activeTab}" role="tablist" aria-label="Разделы панели">
                 <div class="hha-tab-indicator" data-el="tab-indicator" style="left: ${this._activeTab === 'queue' ? 102 : 3}px; width: 97px;" aria-hidden="true"></div>
-                <button type="button" class="hha-tab-btn ${this._activeTab === 'settings' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'settings' ? 'true' : 'false'}" data-action="switch-tab" data-tab="settings"><span>Письмо</span><span class="hha-tab-error-dot" data-el="settings-error-dot" style="${hasError ? 'display: inline-block;' : 'display: none;'}"></span></button>
+                <button type="button" class="hha-tab-btn ${this._activeTab === 'settings' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'settings' ? 'true' : 'false'}" data-action="switch-tab" data-tab="settings"><span>Письмо</span></button>
                 <button type="button" class="hha-tab-btn ${this._activeTab === 'queue' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'queue' ? 'true' : 'false'}" data-action="switch-tab" data-tab="queue"><span>Очередь</span><span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
               </div>
               <div class="hha-footer-actions">
@@ -6179,7 +6164,6 @@ function cleanVid(vid) {
 
       const useCoverCb = this._shadow.querySelector('[data-el="setting-use-cover"]');
       const coverTextarea = this._shadow.querySelector('[data-el="setting-cover-text"]');
-      const coverCounter = this._shadow.querySelector('[data-el="setting-cover-counter"]');
 
       if (useCoverCb) {
         useCoverCb.addEventListener('change', () => {
@@ -6193,23 +6177,14 @@ function cleanVid(vid) {
       }
 
       if (coverTextarea) {
-        const updateCharCounter = () => {
-          const len = coverTextarea.value.length;
-          if (coverCounter) {
-            coverCounter.textContent = `${len} / ${MAX_COVER_LENGTH}`;
-            coverCounter.classList.toggle('is-limit', len >= MAX_COVER_LENGTH);
-          }
-        };
         const flushCoverText = () => {
           if (this._coverDebounceTimer) {
             clearTimeout(this._coverDebounceTimer);
             this._coverDebounceTimer = null;
           }
-          updateCharCounter();
           this._applyConfig({ coverText: coverTextarea.value });
         };
         coverTextarea.addEventListener('input', () => {
-          updateCharCounter();
           if (this._coverDebounceTimer) clearTimeout(this._coverDebounceTimer);
           this._coverDebounceTimer = setTimeout(flushCoverText, 300);
         });
@@ -6413,12 +6388,18 @@ function cleanVid(vid) {
         url
       };
 
+      // 1. Switch active tab to settings so user sees error immediately (even before shadow is attached)
+      this._switchTab('settings');
+
       if (!this._shadow) return;
 
       const humanMsg = formatHumanError(code, message);
-      const codeMsg = code ? (message && message !== code ? `${code}: ${message}` : code) : message;
+      let codeMsg = code ? `Код: ${code}` : 'Код: ERROR';
+      if (details && details.vid) {
+        codeMsg += ` [вакансия #${details.vid}]`;
+      }
 
-      // 1. Update and show Error Card inside Settings tab, hide Cover Card
+      // 2. Update and show Error Card inside Settings tab, hide Cover Card
       const coverCard = this._shadow.querySelector('[data-el="cover-card"]');
       const errorCard = this._shadow.querySelector('[data-el="error-card"]');
       const errorTitle = this._shadow.querySelector('[data-el="error-card-title"]');
@@ -6429,12 +6410,6 @@ function cleanVid(vid) {
       if (errorTitle) errorTitle.textContent = humanMsg;
       if (errorCode) errorCode.textContent = codeMsg;
 
-      // 2. Show red error indicator on Settings tab button
-      const settingsDot = this._shadow.querySelector('[data-el="settings-error-dot"]');
-      if (settingsDot) settingsDot.style.display = 'inline-block';
-
-      // 3. Switch tab to settings
-      this._switchTab('settings');
 
       // 4. Show refined error indicator on collapsed pill
       const errorDot = this._shadow.querySelector('[data-el="pill-error-dot"]');
@@ -6454,6 +6429,10 @@ function cleanVid(vid) {
         clearTimeout(this._toastTimer);
         this._toastTimer = null;
       }
+      if (this._copyErrorTimer) {
+        clearTimeout(this._copyErrorTimer);
+        this._copyErrorTimer = null;
+      }
       this._lastErrorPayload = null;
       if (!this._shadow) return;
 
@@ -6463,9 +6442,18 @@ function cleanVid(vid) {
       if (errorCard) errorCard.style.display = 'none';
       if (coverCard) coverCard.style.display = 'flex';
 
-      // Hide red error indicator on Settings tab button
-      const settingsDot = this._shadow.querySelector('[data-el="settings-error-dot"]');
-      if (settingsDot) settingsDot.style.display = 'none';
+      // Reset copy button state
+      const copyBtn = this._shadow.querySelector('[data-el="error-copy-btn"]');
+      if (copyBtn) {
+        copyBtn.classList.remove('is-copied');
+        if (copyBtn.dataset && copyBtn.dataset.origText) {
+          copyBtn.textContent = copyBtn.dataset.origText;
+          delete copyBtn.dataset.origText;
+        } else {
+          copyBtn.textContent = 'Скопировать';
+        }
+      }
+
 
       const errorDot = this._shadow.querySelector('[data-el="pill-error-dot"]');
       if (errorDot) errorDot.style.display = 'none';
@@ -6654,12 +6642,21 @@ function cleanVid(vid) {
       this._copyText(text);
 
       if (btnEl) {
-        const origHtml = btnEl.innerHTML;
+        if (this._copyErrorTimer) {
+          clearTimeout(this._copyErrorTimer);
+          this._copyErrorTimer = null;
+        }
+        if (!btnEl.dataset || !btnEl.dataset.origText) {
+          if (!btnEl.dataset) btnEl.dataset = {};
+          btnEl.dataset.origText = btnEl.textContent || 'Скопировать';
+        }
         btnEl.classList.add('is-copied');
         btnEl.textContent = 'Скопировано!';
-        setTimeout(() => {
+        this._copyErrorTimer = setTimeout(() => {
           btnEl.classList.remove('is-copied');
-          btnEl.innerHTML = origHtml;
+          btnEl.textContent = (btnEl.dataset && btnEl.dataset.origText) || 'Скопировать';
+          if (btnEl.dataset) delete btnEl.dataset.origText;
+          this._copyErrorTimer = null;
         }, 1800);
       }
     }
@@ -6676,12 +6673,6 @@ function cleanVid(vid) {
         if (typeof this._assistant.stop === 'function') this._assistant.stop();
       } else if (this._status.status === 'done') {
         if (this._status.code === 'DAILY_LIMIT_REACHED') {
-          if (this._assistant && typeof this._assistant.detectDailyLimit === 'function' && this._assistant.detectDailyLimit()) {
-            this.open();
-            this.setActiveTab('settings');
-            return;
-          }
-          this.updateStatus('idle', 'IDLE');
           return;
         }
         const lim = this._progress ? this._progress.limit : ((this._config && this._config.limit) || 50);
@@ -6987,9 +6978,7 @@ function cleanVid(vid) {
         root.style.setProperty('--pill-width', `${pillWidth}px`);
         const isQueue = this._activeTab === 'queue';
         const baseH = isQueue ? 520 : 320;
-        const maxFlyoutH = isQueue
-          ? Math.max(120, winH - 100)
-          : Math.max(120, winH - 36 - 8 - padding * 2);
+        const maxFlyoutH = Math.max(120, winH - 100);
         const finalH = Math.min(baseH, maxFlyoutH);
         root.style.setProperty('--flyout-height', `${finalH}px`);
       }
@@ -7081,9 +7070,9 @@ function cleanVid(vid) {
           targetLabel = 'Стоп';
           targetTitle = 'Остановить автоматизацию';
         } else if (status === 'done' || (this._status && this._status.code === 'DAILY_LIMIT_REACHED')) {
-          targetClass = 'hha-btn-done';
           const isDaily = this._status && this._status.code === 'DAILY_LIMIT_REACHED';
-          targetLabel = isDaily ? 'Лимит 24ч' : 'Готово';
+          targetClass = isDaily ? 'hha-btn-limit' : 'hha-btn-done';
+          targetLabel = isDaily ? 'Лимит' : 'Готово';
           targetTitle = isDaily ? `Достигнут суточный лимит HeadHunter (${MAX_DAILY_LIMIT} откликов за 24 часа)` : 'Лимит достигнут. Кликните для настройки';
         } else if (status === 'error') {
           targetClass = 'hha-btn-error';
@@ -7323,7 +7312,6 @@ function cleanVid(vid) {
 
       const useCoverCb = this._shadow.querySelector('[data-el="setting-use-cover"]');
       const coverTextarea = this._shadow.querySelector('[data-el="setting-cover-text"]');
-      const coverCounter = this._shadow.querySelector('[data-el="setting-cover-counter"]');
 
       const isCoverActive = Boolean(c.useCover);
       if (useCoverCb) useCoverCb.checked = isCoverActive;
@@ -7334,11 +7322,6 @@ function cleanVid(vid) {
         if (!isFocused && coverTextarea.value !== (c.coverText || '')) {
           coverTextarea.value = c.coverText || '';
         }
-      }
-      if (coverCounter) {
-        const len = coverTextarea ? coverTextarea.value.length : (c.coverText || '').length;
-        coverCounter.textContent = `${len} / ${MAX_COVER_LENGTH}`;
-        coverCounter.classList.toggle('is-limit', len >= MAX_COVER_LENGTH);
       }
     }
   }
