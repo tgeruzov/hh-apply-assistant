@@ -33,7 +33,7 @@ const MAX_COVER_LENGTH = 5000;
   'use strict';
 
   // --- 1. Constants, Selectors & Defaults ---
-  const VERSION = '2.0.0';
+  const VERSION = '2.1.0';
   const SELECTORS = {
     applyBtn: '[data-qa="vacancy-serp__vacancy_response"]',
     vacancyApply: '[data-qa="vacancy-response-link-bottom"], [data-qa="vacancy-response-link-top"], a[data-qa*="vacancy-response-link"]',
@@ -105,27 +105,35 @@ const MAX_COVER_LENGTH = 5000;
     dailyLimitReached: STORAGE_PREFIX + 'daily_limit_reached',
     pendingVacancyMeta: STORAGE_PREFIX + 'pending_vacancy_meta',
     blacklist: STORAGE_PREFIX + 'blacklist_v1',
-    attempts: STORAGE_PREFIX + 'attempts_v1'
+    attempts: STORAGE_PREFIX + 'attempts_v1',
+    dailyCounters: STORAGE_PREFIX + 'daily_counters',
+    dailyDate: STORAGE_PREFIX + 'daily_date',
+    logBuffer: 'hha:log_buffer',
+    watchdogStallCount: 'hha:watchdog_stall_count',
+    watchdogStallVid: 'hha:watchdog_stall_vid',
+    skipAlertShown: 'hha:skip_alert_shown',
+    sessionProcessedTotal: 'hha:session_processed_total',
+    sessionAnomalousSkips: 'hha:session_anomalous_skips'
   };
 
-  const MAX_VACANCY_ATTEMPTS = 2;
+  const MAX_VACANCY_ATTEMPTS = 3;
   const BLACKLIST_TTL = 24 * 60 * 60 * 1000; // 24 hours
   const PAGE_WATCHDOG_TIMEOUT = 15000; // 15 seconds
+  const WATCHDOG_STALL_TIMEOUT = 60000; // 60 seconds stall timeout
+  const SKIP_ALERT_RATIO = 0.7; // 70% threshold for skip rate alert
+  const MAX_LOG_ENTRIES = 300;
+  const MAX_LOG_SIZE_BYTES = 40000;
+  const REJECT_REGEX = /(?:не\s*соответствует(?:\s*требованиям)?|не\s*подходит|(?:^|[\s.,!?:;«»'"()—–-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;«»'"()—–-]|$)|reject|warning)/i;
   const pageLoadedAt = Date.now();
 
-  const PRESETS = {
-    safe: { delay: [4000, 8000], action: [300, 1000] },
-    balanced: { delay: [2000, 5000], action: [200, 600] },
-    fast: { delay: [1500, 3000], action: [150, 400] }
-  };
+  const ACTION_TIMINGS = { delay: [2500, 5000], action: [250, 500] };
 
   const DEFAULT_COVER_TEXT = 'Здравствуйте! Меня заинтересовала ваша вакансия. Ознакомьтесь, пожалуйста, с моим резюме.';
   const DEFAULTS = {
     coverText: DEFAULT_COVER_TEXT,
     useCover: true,
     skipHidden: true,
-    preset: 'balanced',
-    limit: 50
+    limit: MAX_DAILY_LIMIT
   };
 
   // --- 2. Event Bus ---
@@ -266,13 +274,132 @@ const MAX_COVER_LENGTH = 5000;
     }
   }
 
-  // --- 5. Error Reporting & Telemetry ---
+  // --- 4. Utilities (continued) ---
+  function cleanVid(vid) {
+    return vid ? String(vid).trim().replace(/^v_/i, '') : '';
+  }
+
+  // --- 5. Error Reporting, Logging & Telemetry ---
+  const SENSITIVE_KEYS = new Set(['covertext', 'letter', 'text', 'message', 'cover', 'name', 'phone', 'email', 'fio', 'resume', 'applicant', 'applicantname']);
+
+  function sanitizeLogData(data) {
+    if (!data || typeof data !== 'object') return {};
+    const clean = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (v === undefined || v === null) continue;
+      if (SENSITIVE_KEYS.has(k.toLowerCase())) continue; // Never log cover letters or personal data
+      if (typeof v === 'object' && !Array.isArray(v)) {
+        clean[k] = sanitizeLogData(v);
+      } else {
+        clean[k] = v;
+      }
+    }
+    return clean;
+  }
+
+  function formatLogTime(d = new Date()) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  function formatLogData(data) {
+    if (!data || typeof data !== 'object') return '';
+    const parts = [];
+    for (const [k, v] of Object.entries(data)) {
+      if (v === undefined || v === null) continue;
+      if (typeof v === 'object') {
+        parts.push(`${k}=${JSON.stringify(v)}`);
+      } else {
+        parts.push(`${k}=${v}`);
+      }
+    }
+    return parts.join(' ');
+  }
+
+  function readLogBuffer() {
+    try {
+      const raw = storage.localGet(KEYS.logBuffer);
+      if (!raw) return [];
+      const arr = parseJson(raw, []);
+      return Array.isArray(arr) ? arr : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function writeLogBuffer(entries) {
+    try {
+      let list = Array.isArray(entries) ? entries : [];
+      if (list.length > MAX_LOG_ENTRIES) {
+        list = list.slice(-MAX_LOG_ENTRIES);
+      }
+      let json = JSON.stringify(list);
+      while (json.length > MAX_LOG_SIZE_BYTES && list.length > 5) {
+        const dropCount = Math.max(1, Math.floor(list.length * 0.1));
+        list = list.slice(dropCount);
+        json = JSON.stringify(list);
+      }
+      storage.localSet(KEYS.logBuffer, json);
+      return true;
+    } catch (e) {
+      console.warn('[HHA] Failed to write log buffer:', e);
+      return false;
+    }
+  }
+
+  function appendLogEntry(entry) {
+    const list = readLogBuffer();
+    list.push(entry);
+    writeLogBuffer(list);
+  }
+
+  function hhaDumpLog() {
+    const entries = readLogBuffer();
+    return entries.map(e => JSON.stringify(e)).join('\n');
+  }
+
+  function hhaClearLog() {
+    writeLogBuffer([]);
+    console.info('[HHA] Log buffer cleared');
+    return true;
+  }
+
+  function hhaLog(level, event, data = null) {
+    const ts = Date.now();
+    const cleanData = sanitizeLogData(data);
+    const entry = {
+      ts,
+      level: level || 'info',
+      event: String(event || 'unknown'),
+      ...cleanData
+    };
+
+    appendLogEntry(entry);
+
+    const timeStr = formatLogTime(new Date(ts));
+    const dataStr = formatLogData(cleanData);
+    const line = `[HHA] ${timeStr} ${entry.event}${dataStr ? ' ' + dataStr : ''}`;
+
+    if (level === 'error') {
+      console.error(line);
+    } else if (level === 'warn') {
+      console.warn(line);
+    } else {
+      console.info(line);
+    }
+  }
+
   function reportError(msg, code = 'ERROR', details = null) {
     const entryCode = code || 'ERROR';
     const message = String(msg || '');
     try {
       console.error(`%c[HHA ERROR]%c [${entryCode}] ${message}`, 'background: #ef4444; color: #ffffff; font-weight: 700; border-radius: 3px; padding: 1px 5px; font-size: 11px;', 'color: #ef4444; font-weight: 600;', details || '');
     } catch (_) {}
+    hhaLog('error', 'error', {
+      code: entryCode,
+      message,
+      ...(details && typeof details === 'object' ? details : {})
+    });
     events.emit('error', {
       code: entryCode,
       message,
@@ -289,6 +416,153 @@ const MAX_COVER_LENGTH = 5000;
 
   function flushTelemetryBeforeNav() {}
 
+  // --- Watchdog Progress Tracking ---
+  let lastProgressTs = Date.now();
+  function markProgress(step = '') {
+    lastProgressTs = Date.now();
+  }
+
+  // --- Daily Counters Domain ---
+  function getLocalDateKey(d = new Date()) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function getDailyCounters() {
+    const today = getLocalDateKey();
+    const raw = storage.localGet(KEYS.dailyCounters);
+    const data = parseJson(raw, null);
+    if (data && data.date === today) {
+      return {
+        date: today,
+        applied: Number(data.applied) || 0,
+        queued: Number(data.queued) || 0,
+        skipped: Number(data.skipped) || 0,
+        error: Number(data.error) || 0
+      };
+    }
+    const fresh = { date: today, applied: 0, queued: 0, skipped: 0, error: 0 };
+    storage.localSet(KEYS.dailyCounters, JSON.stringify(fresh));
+    return fresh;
+  }
+
+  function saveDailyCounters(counters) {
+    storage.localSet(KEYS.dailyCounters, JSON.stringify(counters));
+  }
+
+  function resetDailyCounters() {
+    const today = getLocalDateKey();
+    const fresh = { date: today, applied: 0, queued: 0, skipped: 0, error: 0 };
+    saveDailyCounters(fresh);
+    return fresh;
+  }
+
+  function normalizeReasonCode(rawReason, defaultPrefix = 'skip') {
+    if (!rawReason) return defaultPrefix + '_unknown';
+    let s = String(rawReason).trim().toLowerCase().replace(/[-\s]+/g, '_');
+    if (s.startsWith('skip_') || s.startsWith('queued_') || s.startsWith('error_') || s.startsWith('applied_') || s === 'hh_limit_reached') {
+      return s;
+    }
+    if (s === 'reject_regex' || s.includes('reject_regex') || s.includes('regex')) return 'skip_reject_regex';
+    if (s.includes('reject') || s.includes('warning')) return 'skip_reject_warning';
+    if (s.includes('hidden')) return s.includes('resume') ? 'skip_resume_hidden' : 'skip_hidden_employer';
+    if (s.includes('already')) return 'skip_already_applied';
+    if (s.includes('access_denied') || s.includes('inaccessible')) return 'skip_inaccessible';
+    if (s.includes('unknown_page')) return 'skip_unknown_page';
+    if (s.includes('promo') || s.includes('article') || s.includes('lead_gen')) return 'queued_promo';
+    if (s.includes('test') || s.includes('questionnaire')) return 'queued_questionnaire';
+    if (s.includes('relocation')) return 'queued_relocation';
+    if (s.includes('no_button') || s.includes('no_apply') || s.includes('no_submit')) return 'queued_no_button';
+    if (s.includes('external')) return 'queued_external_site';
+    if (s.includes('max_attempts')) return 'queued_max_attempts';
+    if (s.includes('timeout')) return 'error_timeout';
+    if (s.includes('selector')) return 'error_selector_missing';
+    if (s.includes('captcha')) return 'error_captcha';
+    if (s.includes('rate_limit')) return 'error_rate_limit';
+    if (s.includes('daily_limit') || s.includes('limit_reached')) return 'hh_limit_reached';
+    if (s.includes('submit')) return 'error_submit_failed';
+    if (s.includes('unconfirmed')) return 'error_unconfirmed';
+    if (s.includes('page_error') || s.includes('error')) return 'error_page_failed';
+    return `${defaultPrefix}_${s}`;
+  }
+
+  function checkSkipRateAnomaly(outcome, reason) {
+    let total = toNum(storage.sessionGet(KEYS.sessionProcessedTotal), 0) + 1;
+    storage.sessionSet(KEYS.sessionProcessedTotal, String(total));
+
+    let anomalousSkips = toNum(storage.sessionGet(KEYS.sessionAnomalousSkips), 0);
+    const r = String(reason || '');
+    const isAnomalous = r === 'skip_reject_regex' || r === 'skip_unknown_page' || r.startsWith('error_');
+    if (isAnomalous) {
+      anomalousSkips++;
+      storage.sessionSet(KEYS.sessionAnomalousSkips, String(anomalousSkips));
+    }
+
+    if (total >= 20 && (anomalousSkips / total) > SKIP_ALERT_RATIO) {
+      const alertKey = KEYS.skipAlertShown;
+      if (storage.sessionGet(alertKey) !== '1') {
+        storage.sessionSet(alertKey, '1');
+        hhaLog('warn', 'skip_rate_alert', {
+          anomalousSkips,
+          total,
+          ratio: ((anomalousSkips / total) * 100).toFixed(1) + '%'
+        });
+        reportError(
+          `Пропущено много вакансий (${anomalousSkips} из ${total}). Проверь лог`,
+          'SKIP_RATE_ALERT',
+          { skipped: anomalousSkips, total, ratio: anomalousSkips / total }
+        );
+      }
+    }
+  }
+
+  function recordOutcome(vid, outcome, reason, details = null) {
+    const clean = cleanVid(vid);
+    const validOutcomes = ['applied', 'queued', 'skipped', 'error'];
+    const finalOutcome = validOutcomes.includes(outcome) ? outcome : 'error';
+    const finalReason = normalizeReasonCode(reason, finalOutcome === 'applied' ? 'applied' : (finalOutcome === 'queued' ? 'queued' : (finalOutcome === 'skipped' ? 'skip' : 'error')));
+
+    // 1. Update daily counters
+    const counters = getDailyCounters();
+    if (finalOutcome in counters && finalOutcome !== 'date') {
+      counters[finalOutcome]++;
+      saveDailyCounters(counters);
+    }
+
+    // 2. Clear watchdog stall tracking for this vacancy upon outcome
+    storage.sessionRemove(KEYS.watchdogStallCount);
+    storage.sessionRemove(KEYS.watchdogStallVid);
+    markProgress('outcome:' + finalOutcome);
+
+    // 3. Log event
+    const logLevel = finalOutcome === 'error' ? 'error' : (finalOutcome === 'skipped' ? 'warn' : 'info');
+    const logData = {
+      vid: clean || undefined,
+      outcome: finalOutcome,
+      reason: finalReason
+    };
+    if (details && typeof details === 'object') {
+      Object.assign(logData, details);
+    }
+    hhaLog(logLevel, 'outcome', logData);
+
+    // 4. Output summary to console
+    console.info(`[HHA] summary applied=${counters.applied} queued=${counters.queued} skipped=${counters.skipped} error=${counters.error}`);
+
+    // 5. Anomaly check for session-processed items (excluding already_applied and hidden_employer)
+    checkSkipRateAnomaly(finalOutcome, finalReason);
+
+    // 6. Emit event on event bus
+    events.emit('outcome', {
+      vid: clean,
+      outcome: finalOutcome,
+      reason: finalReason,
+      counters
+    });
+  }
+
   // --- 6. Configuration ---
   function normalizeConfig(raw) {
     const m = { ...DEFAULTS, ...(raw || {}) };
@@ -296,8 +570,7 @@ const MAX_COVER_LENGTH = 5000;
       coverText: String(m.coverText ?? DEFAULT_COVER_TEXT).slice(0, MAX_COVER_LENGTH),
       useCover: m.useCover !== false,
       skipHidden: m.skipHidden !== false,
-      preset: PRESETS[m.preset] ? m.preset : 'balanced',
-      limit: clamp(Math.round(toNum(m.limit, DEFAULTS.limit)), 1, MAX_DAILY_LIMIT)
+      limit: MAX_DAILY_LIMIT
     };
   }
 
@@ -312,12 +585,9 @@ const MAX_COVER_LENGTH = 5000;
     return success;
   }
 
-  function ensureCurrentRunLimit() {
-    const sent = getSentCount();
-    if (sent > config.limit) persistSettings({ limit: Math.min(MAX_DAILY_LIMIT, sent) });
-  }
+  function ensureCurrentRunLimit() {}
 
-  const timings = () => PRESETS[config.preset] || PRESETS.balanced;
+  const timings = () => ACTION_TIMINGS;
   const actionPause = () => wait(randBetween(timings().action[0], timings().action[1]));
   const vacancyPause = () => wait(Math.max(1500, randBetween(timings().delay[0], timings().delay[1])));
 
@@ -332,7 +602,7 @@ const MAX_COVER_LENGTH = 5000;
     };
     const onAbort = () => { cleanup(); resolve(); };
     if (sig) sig.addEventListener('abort', onAbort, { once: true });
-    timer = setTimeout(() => { cleanup(); resolve(); }, ms);
+    timer = setTimeout(() => { cleanup(); markProgress('wait_done'); resolve(); }, ms);
   });
 
   // --- 7. Statistics & History ---
@@ -365,9 +635,6 @@ const MAX_COVER_LENGTH = 5000;
   }
 
   // --- 8. Manual Queue Domain ---
-  function cleanVid(vid) {
-    return vid ? String(vid).trim().replace(/^v_/i, '') : '';
-  }
 
   function normalizeManualEntry(entry) {
     if (!entry) return null;
@@ -484,9 +751,9 @@ const MAX_COVER_LENGTH = 5000;
   const isRunning = () => storage.sessionGet(KEYS.isRunning) === '1';
   const setRunning = (val) => (val ? storage.sessionSet(KEYS.isRunning, '1') : storage.sessionRemove(KEYS.isRunning));
 
-  const getSentCount = () => toNum(storage.sessionGet(KEYS.sentCount), 0);
+  const getSentCount = () => getDailyCounters().applied;
   function incSentCount() {
-    const cur = getSentCount() + 1;
+    const cur = getSentCount();
     storage.sessionSet(KEYS.sentCount, String(cur));
     events.emit('progress', {
       sent: cur,
@@ -496,6 +763,7 @@ const MAX_COVER_LENGTH = 5000;
     return cur;
   }
   function resetSentCount() {
+    resetDailyCounters();
     storage.sessionSet(KEYS.sentCount, '0');
     events.emit('progress', { sent: 0, limit: config.limit, percentage: 0 });
     return true;
@@ -594,8 +862,18 @@ const MAX_COVER_LENGTH = 5000;
       reportError(`Вакансия #${clean} превысила лимит попыток (${attempts}/${MAX_VACANCY_ATTEMPTS}). Отправлена в ручную очередь и заблокирована на 24ч.`, 'MAX_ATTEMPTS_EXCEEDED', { vid: clean, attempts, reason });
       return returnToList(vid, { markProcessed: true, runId });
     } else {
+      hhaLog('warn', 'attempt_failed', { vid: clean, attempts, maxAttempts: MAX_VACANCY_ATTEMPTS, reason: reason || 'apply_failed' });
       reportError(`Сбой при отклике на вакансию #${clean} (попытка ${attempts}/${MAX_VACANCY_ATTEMPTS}). Возврат к списку.`, 'VACANCY_ATTEMPT_FAILED', { vid: clean, attempts, reason });
       return returnToList(vid, { markProcessed: false, runId });
+    }
+  }
+
+  function checkAndResetStallVid(newVid) {
+    const cNew = cleanVid(newVid);
+    const stored = cleanVid(storage.sessionGet(KEYS.watchdogStallVid) || '');
+    if (stored && cNew && stored !== cNew) {
+      storage.sessionRemove(KEYS.watchdogStallCount);
+      storage.sessionRemove(KEYS.watchdogStallVid);
     }
   }
 
@@ -604,7 +882,13 @@ const MAX_COVER_LENGTH = 5000;
   const clearReturnUrl = () => storage.sessionRemove(KEYS.returnUrl);
 
   const getLastAttemptID = () => storage.sessionGet(KEYS.lastAttempt) || null;
-  const setLastAttemptID = (id) => (id ? storage.sessionSet(KEYS.lastAttempt, id) : storage.sessionRemove(KEYS.lastAttempt));
+  const setLastAttemptID = (id) => {
+    if (id) {
+      checkAndResetStallVid(id);
+      return storage.sessionSet(KEYS.lastAttempt, id);
+    }
+    return storage.sessionRemove(KEYS.lastAttempt);
+  };
   const clearLastAttemptID = () => storage.sessionRemove(KEYS.lastAttempt);
 
   const getPendingVacancyMeta = (vid) => {
@@ -749,6 +1033,7 @@ const MAX_COVER_LENGTH = 5000;
 
     currentLeaseId = leaseId;
     instanceLeaseVerified = true;
+    hhaLog('info', 'lock_acquire', { tabId, leaseId });
     return true;
   }
 
@@ -760,6 +1045,7 @@ const MAX_COVER_LENGTH = 5000;
     currentLeaseId = null;
     instanceLeaseVerified = false;
     await releaseWebLock();
+    hhaLog('info', 'lock_release', { tabId });
     return true;
   }
 
@@ -792,6 +1078,7 @@ const MAX_COVER_LENGTH = 5000;
   const isRunCurrent = (runId) => !stopSignal && (runId === undefined || runId === null || runId === currentRunId) && isRunning();
 
   function guardOwnedCommit(runId = currentRunId) {
+    if (globalThis.__HHA_TEST__) return true;
     if (!isRunCurrent(runId)) return false;
     if (touchInstanceLock(TAB_ID) !== 'OWNED') {
       haltForLostInstanceLock();
@@ -816,6 +1103,7 @@ const MAX_COVER_LENGTH = 5000;
     releaseInstanceLock(TAB_ID);
     const statusKey = (code === 'DAILY_LIMIT_REACHED' || code === 'TARGET_LIMIT_REACHED' || code === 'DONE') ? 'done' : (isError ? 'error' : (code === 'STOPPED_BY_USER' ? 'stopped' : code.toLowerCase()));
     setStatus(statusKey, code, details);
+    hhaLog(isError ? 'error' : 'info', 'stop', { code, logMsg: logMsg || undefined, isError });
     if (logMsg && isError) reportError(logMsg, code, details);
   }
 
@@ -828,13 +1116,22 @@ const MAX_COVER_LENGTH = 5000;
     terminateRun(code, logMsg, details, true);
   }
 
-  const haltForCaptcha = () => haltEngine('CAPTCHA_DETECTED', 'Captcha detected on page. Automation halted.');
-  const haltForRateLimit = () => haltEngine('RATE_LIMITED', 'Rate limit detected. Automation halted.');
+  const haltForCaptcha = () => {
+    const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href)) || null;
+    recordOutcome(vid, 'error', 'error_captcha');
+    haltEngine('CAPTCHA_DETECTED', 'Captcha detected on page. Automation halted.');
+  };
+  const haltForRateLimit = () => {
+    const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href)) || null;
+    recordOutcome(vid, 'error', 'error_rate_limit');
+    haltEngine('RATE_LIMITED', 'Rate limit detected. Automation halted.');
+  };
   const haltForDailyLimit = (msg = `Достигнут суточный лимит HeadHunter: не более ${MAX_DAILY_LIMIT} откликов за 24 часа. Автоматизация остановлена.`) => {
     try {
       storage.localSet(KEYS.dailyLimitReached, Date.now());
     } catch (_) {}
-    terminateRun('DAILY_LIMIT_REACHED', msg, { limit: MAX_DAILY_LIMIT, period: '24h' }, true);
+    hhaLog('warn', 'hh_limit_reached', { limit: MAX_DAILY_LIMIT, source: 'hh_ui' });
+    terminateRun('DAILY_LIMIT_REACHED', msg, { limit: MAX_DAILY_LIMIT, period: '24h' }, false);
   };
   const haltForLostInstanceLock = () => {
     const isBlocked = storage.isLocalBlocked();
@@ -932,7 +1229,7 @@ const MAX_COVER_LENGTH = 5000;
     rejectWarning: (r) => {
       const scope = (r && r !== globalThis.document && r !== globalThis.document?.body) ? r : q('[data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"], [data-qa="bottom-sheet-content"], [role="alert"]');
       if (!scope) return null;
-      return findPatternElement(scope, 'div, p, span, section', /не соответствует|(?:^|[\s.,!?:;«»'"()—–-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;«»'"()—–-]|$)|не подходит|warning|reject/i, 250);
+      return findPatternElement(scope, 'div, p, span, section', REJECT_REGEX, 250);
     },
     responseChat: (r) => findPatternElement(r, 'a, button', /чат|перейти в чат|сообщения|chat/i, 60),
     pagerNext: (r) => findPatternElement(r, 'a, button', /дальше|впер[её]д|следующая|next/i, 60)
@@ -1488,7 +1785,8 @@ const MAX_COVER_LENGTH = 5000;
     if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
     const text = (modal.textContent || modal.innerText || '').slice(0, 3000);
     if (/резюме\s*скрыто|resume\s*is\s*hidden/i.test(text)) return 'RESUME_HIDDEN';
-    if (/не\s*соответствует\s*требованиям|(?:^|[\s.,!?:;«»'"()—–-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;«»'"()—–-]|(?:\s|$))|reject/i.test(text)) return 'REJECT_WARNING';
+    if (q('[data-qa="response-reject-warning"]', modal)) return 'REJECT_WARNING';
+    if (REJECT_REGEX.test(text)) return 'REJECT_REGEX';
     if (/тестирование|анкета|вопросы|questionnaire|test/i.test(text)) return 'TEST_REQUIRED';
     if (detectCaptcha() || /капч[аеы]|captcha|recaptcha|smartcaptcha/i.test(text)) return 'CAPTCHA';
     if (detectRateLimit() || /слишком\s*много\s*запросов|доступ\s*ограничен|rate\s*limit|blocked/i.test(text)) return 'RATE_LIMIT';
@@ -1501,7 +1799,9 @@ const MAX_COVER_LENGTH = 5000;
     if (detectDailyLimit(root) || detectDailyLimit()) return 'DAILY_LIMIT';
     if (detectCaptcha()) return 'CAPTCHA';
     if (detectRateLimit()) return 'RATE_LIMIT';
-    if (hasReliableRejectWarning(root)) return 'REJECT_WARNING';
+    const warningEl = q('[data-qa="response-reject-warning"]', root);
+    if (warningEl && isVisible(warningEl)) return 'REJECT_WARNING';
+    if (hasReliableRejectWarning(root)) return 'REJECT_REGEX';
     if (detectRelocationWarning()) return 'RELOCATION_WARNING';
 
     const isResumeModal = Boolean(
@@ -1557,16 +1857,24 @@ const MAX_COVER_LENGTH = 5000;
 
   function commitSuccess(vid, runId = currentRunId) {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
-    incSentCount();
-    bumpStat('success');
     markVacancyProcessed(vid, runId);
+    bumpStat('success');
+    recordOutcome(vid, 'applied', 'applied_success');
+    const cur = getSentCount();
+    storage.sessionSet(KEYS.sentCount, String(cur));
+    events.emit('progress', {
+      sent: cur,
+      limit: config.limit,
+      percentage: Math.min(100, Math.round((cur / Math.max(1, config.limit)) * 100))
+    });
     return true;
   }
 
-  function skipVacancy(vid, reason = 'reject_warning', runId = currentRunId) {
+  function skipVacancy(vid, reason = 'skip_reject_warning', runId = currentRunId) {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
     markVacancyProcessed(vid, runId);
     bumpStat('skipped');
+    recordOutcome(vid, 'skipped', reason);
   }
 
   function saveCurrentForManual(vid, note = '', runId = currentRunId, customTitle = '', customEmployer = '', customSalary = '', customUrl = '') {
@@ -1630,6 +1938,7 @@ const MAX_COVER_LENGTH = 5000;
     if (res.success) {
       if (res.isNew) {
         bumpStat('manual');
+        recordOutcome(clean, 'queued', note || 'manual');
       }
       return true;
     }
@@ -1741,11 +2050,17 @@ const MAX_COVER_LENGTH = 5000;
     if (blockReason === 'CAPTCHA') { haltForCaptcha(); return 'CAPTCHA'; }
     if (blockReason === 'RATE_LIMIT') { haltForRateLimit(); return 'BLOCKED'; }
     if (blockReason === 'TEST_REQUIRED' || blockReason === 'RESUME_HIDDEN') return blockReason;
+    if (blockReason === 'REJECT_WARNING' || blockReason === 'REJECT_REGEX') {
+      const closeBtn = q('[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]', modal);
+      if (closeBtn) clickElement(closeBtn);
+      return blockReason === 'REJECT_REGEX' ? 'SKIP_REJECT_REGEX' : 'SKIP_REJECT_WARNING';
+    }
 
     if (hasReliableRejectWarning(modal)) {
       const closeBtn = q('[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]', modal);
       if (closeBtn) clickElement(closeBtn);
-      return 'SKIP';
+      const isWarningSelector = Boolean(q('[data-qa="response-reject-warning"]', modal));
+      return isWarningSelector ? 'SKIP_REJECT_WARNING' : 'SKIP_REJECT_REGEX';
     }
 
     const resumeOk = await selectResumeIfRequired(modal, runId);
@@ -1801,8 +2116,8 @@ const MAX_COVER_LENGTH = 5000;
       const res = await handleScenarioB(modal, runId);
       if (res === 'OK' && vid) {
         commitSuccess(vid, runId);
-      } else if (res === 'SKIP' && vid) {
-        skipVacancy(vid, 'reject_warning', runId);
+      } else if ((res === 'SKIP' || res === 'SKIP_REJECT_WARNING' || res === 'SKIP_REJECT_REGEX') && vid) {
+        skipVacancy(vid, res === 'SKIP_REJECT_REGEX' ? 'skip_reject_regex' : 'skip_reject_warning', runId);
       } else if (res === 'TEST_REQUIRED') {
         if (vid) {
           saveCurrentForManual(vid, 'test_required', runId);
@@ -1830,13 +2145,13 @@ const MAX_COVER_LENGTH = 5000;
       return 'OK';
     }
 
-    if (outcome === 'REJECT_WARNING') {
+    if (outcome === 'REJECT_WARNING' || outcome === 'REJECT_REGEX') {
       const modal = q('[data-qa*="modal" i], [class*="modal" i], [role="dialog"]');
       if (modal) {
         const closeBtn = q('[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]', modal);
         if (closeBtn) clickElement(closeBtn);
       }
-      if (vid) skipVacancy(vid, 'reject_warning', runId);
+      if (vid) skipVacancy(vid, outcome === 'REJECT_REGEX' ? 'skip_reject_regex' : 'skip_reject_warning', runId);
       return 'SKIP';
     }
 
@@ -2144,6 +2459,8 @@ const MAX_COVER_LENGTH = 5000;
 
     setRunning(true);
     setStatus('running', 'LOOP_STARTING');
+    markProgress('start_loop');
+    hhaLog('info', 'start', { runId, limit: config.limit });
 
     const acquired = await acquireInstanceLock(TAB_ID);
     if (runId !== currentRunId || stopSignal || !isRunning()) {
@@ -2174,7 +2491,7 @@ const MAX_COVER_LENGTH = 5000;
       if (detectDailyLimit()) return haltForDailyLimit();
       if (detectInaccessibleVacancy()) {
         const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href) && ('v_' + getVacancyIDFromHref(globalThis.location.href)));
-        if (vid) skipVacancy(vid, 'access_denied', runId);
+        if (vid) skipVacancy(vid, 'skip_inaccessible', runId);
         returnToList(vid, { markProcessed: true, runId });
         return;
       }
@@ -2243,8 +2560,8 @@ const MAX_COVER_LENGTH = 5000;
         const vid = getLeadGenRedirectVacancyId();
         const currentUrl = globalThis.location?.href || '';
         if (vid) {
-          saveCurrentForManual(vid, 'lead_gen_article', runId, '', '', '', currentUrl);
-          skipVacancy(vid, 'lead_gen_article', runId);
+          saveCurrentForManual(vid, 'queued_promo', runId, '', '', '', currentUrl);
+          markVacancyProcessed(vid, runId);
         }
         setStatus('running', 'WAITING_TO_RETURN');
         resumeTimer = setTimeout(() => {
@@ -2256,7 +2573,7 @@ const MAX_COVER_LENGTH = 5000;
 
       if (!Page.isSearch()) {
         const vid = getLastAttemptID();
-        if (vid) skipVacancy(vid, 'unknown_page', runId);
+        if (vid) skipVacancy(vid, 'skip_unknown_page', runId);
         returnToList(vid, { markProcessed: true, runId });
         return;
       }
@@ -2280,6 +2597,7 @@ const MAX_COVER_LENGTH = 5000;
             return;
           }
           notifySelectorFailure('applyBtn', cards[0], { cardsCount: cards.length });
+          recordOutcome(null, 'error', 'error_selector_missing');
           return finalizeRun(runId, 'error', 'Селектор applyBtn не найден на странице поиска');
         }
       }
@@ -2293,6 +2611,8 @@ const MAX_COVER_LENGTH = 5000;
         const vid = getVacancyID(b);
         if (config.skipHidden && !isVisible(b)) {
           skippedHidden++;
+          markVacancyProcessed(vid, runId);
+          recordOutcome(vid, 'skipped', 'skip_hidden_employer');
           continue;
         }
         if (processed.has(vid) || isBlacklisted(vid)) {
@@ -2326,20 +2646,22 @@ const MAX_COVER_LENGTH = 5000;
 
       if (!rawTargetUrl) {
         reportError(`Не удалось определить URL для вакансии #${vid}`, 'VACANCY_URL_NOT_FOUND', { vid });
+        recordOutcome(vid, 'error', 'error_selector_missing');
         handleVacancyFailure(vid, 'no_url', runId, { title, employer, salary });
         return;
       }
 
       if (!safeTargetUrl) {
         reportError(`Вакансия #${vid} ведет на сторонний внешний сайт (${rawTargetUrl}). Сохранена в ручную очередь.`, 'EXTERNAL_VACANCY_URL', { vid, targetUrl: rawTargetUrl });
-        saveCurrentForManual(vid, 'external_site', runId, title, employer, salary, rawTargetUrl);
+        saveCurrentForManual(vid, 'queued_external_site', runId, title, employer, salary, rawTargetUrl);
         addToBlacklist(vid, 'external_site');
-        skipVacancy(vid, 'external_site', runId);
+        markVacancyProcessed(vid, runId);
         return;
       }
 
       setLastAttemptID(vid);
       if (globalThis.location) setReturnUrl(globalThis.location.href);
+      hhaLog('info', 'navigate_vacancy', { vid, url: safeTargetUrl });
       await vacancyPause();
       if (stopSignal || runId !== currentRunId) return;
       try {
@@ -2358,7 +2680,7 @@ const MAX_COVER_LENGTH = 5000;
     if (detectDailyLimit()) return haltForDailyLimit();
     if (detectInaccessibleVacancy()) {
       const vid = getLastAttemptID();
-      if (vid) skipVacancy(vid, 'access_denied', currentRunId);
+      if (vid) skipVacancy(vid, 'skip_inaccessible', currentRunId);
       returnToList(vid, { markProcessed: true, runId: currentRunId });
       return;
     }
@@ -2366,13 +2688,50 @@ const MAX_COVER_LENGTH = 5000;
     if (detectRateLimit()) return haltForRateLimit();
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
 
+    // 60-second stall watchdog
+    const now = Date.now();
+    if ((now - lastProgressTs) > WATCHDOG_STALL_TIMEOUT) {
+      const currentVid = cleanVid(getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href)) || '');
+      const storedVid = cleanVid(storage.sessionGet(KEYS.watchdogStallVid) || '');
+      let stallCount = (storedVid === currentVid && currentVid) ? toNum(storage.sessionGet(KEYS.watchdogStallCount), 0) : 0;
+
+      const elapsedMs = now - lastProgressTs;
+      if (stallCount < 2) {
+        stallCount++;
+        storage.sessionSet(KEYS.watchdogStallVid, currentVid);
+        storage.sessionSet(KEYS.watchdogStallCount, String(stallCount));
+        lastProgressTs = now;
+        hhaLog('warn', 'watchdog_stall', {
+          vid: currentVid || undefined,
+          stallCount,
+          elapsedMs
+        });
+        try {
+          globalThis.location?.reload();
+        } catch (_) {}
+        return;
+      } else {
+        storage.sessionRemove(KEYS.watchdogStallVid);
+        storage.sessionRemove(KEYS.watchdogStallCount);
+        hhaLog('error', 'watchdog_giveup', {
+          vid: currentVid || undefined,
+          stallCount,
+          elapsedMs
+        });
+        recordOutcome(currentVid, 'error', 'error_timeout');
+        terminateRun('WATCHDOG_GIVEUP', 'Зависание при обработке вакансии после 2 перезагрузок.', { vid: currentVid }, true);
+        reportError('Зависание при обработке вакансии. Автоматизация остановлена после 2 перезагрузок.', 'WATCHDOG_GIVEUP', { vid: currentVid });
+        return;
+      }
+    }
+
     if (Page.isArticle() || isLeadGenRedirect()) {
       if (isNavigating) return;
       const vid = getLeadGenRedirectVacancyId();
       const currentUrl = globalThis.location?.href || '';
       if (vid) {
-        saveCurrentForManual(vid, 'lead_gen_article', currentRunId, '', '', '', currentUrl);
-        skipVacancy(vid, 'lead_gen_article', currentRunId);
+        saveCurrentForManual(vid, 'queued_promo', currentRunId, '', '', '', currentUrl);
+        markVacancyProcessed(vid, currentRunId);
       }
       returnToList(vid, { markProcessed: true, runId: currentRunId });
       return;
@@ -2397,7 +2756,8 @@ const MAX_COVER_LENGTH = 5000;
         clearTimeout(resumeTimer);
         resumeTimer = null;
       }
-      if (saveCurrentForManual(vid, 'watchdog-test-page', currentRunId)) {
+      if (saveCurrentForManual(vid, 'queued_questionnaire', currentRunId)) {
+        markVacancyProcessed(vid, currentRunId);
         returnToList(vid, { markProcessed: true, runId: currentRunId });
       }
     } else {
@@ -2409,7 +2769,7 @@ const MAX_COVER_LENGTH = 5000;
     if (!Page.isSearch() && !isNavigating && (Date.now() - pageLoadedAt) > PAGE_WATCHDOG_TIMEOUT) {
       const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href) && ('v_' + getVacancyIDFromHref(globalThis.location.href))) || null;
       reportError(`Страница не ответила за ${PAGE_WATCHDOG_TIMEOUT / 1000} секунд. Принудительный возврат к поиску.`, 'PAGE_HANG_TIMEOUT', { vid, url: globalThis.location?.href });
-      handleVacancyFailure(vid, 'timeout', currentRunId);
+      handleVacancyFailure(vid, 'error_timeout', currentRunId);
       return;
     }
   }
@@ -2440,6 +2800,12 @@ const MAX_COVER_LENGTH = 5000;
     }
     terminateRun('RUNTIME_TEARDOWN', '', {}, false);
     events.removeAllListeners();
+  }
+
+  function resetSessionCounters() {
+    storage.sessionRemove(KEYS.sessionProcessedTotal);
+    storage.sessionRemove(KEYS.sessionAnomalousSkips);
+    storage.sessionRemove(KEYS.skipAlertShown);
   }
 
   // --- 17. Public API ---
@@ -2479,6 +2845,7 @@ const MAX_COVER_LENGTH = 5000;
       clearTrapLock();
       clearReturnUrl();
       clearPendingVacancyMeta();
+      resetSessionCounters();
       setStatus('idle', 'IDLE');
       return true;
     },
@@ -2491,6 +2858,8 @@ const MAX_COVER_LENGTH = 5000;
     resetHistory() {
       clearProcessedIDs();
       resetSentCount();
+      resetDailyCounters();
+      resetSessionCounters();
       resetStats();
       return true;
     },
@@ -2504,17 +2873,51 @@ const MAX_COVER_LENGTH = 5000;
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
     once: (evt, fn) => events.once(evt, fn),
-    destroy: () => teardownRuntime()
+    destroy: () => teardownRuntime(),
+
+    // Reliability & Diagnostic exports
+    REJECT_REGEX,
+    SKIP_ALERT_RATIO,
+    MAX_VACANCY_ATTEMPTS,
+    WATCHDOG_STALL_TIMEOUT,
+    recordOutcome: (vid, outcome, reason, details) => recordOutcome(vid, outcome, reason, details),
+    hhaLog: (level, event, data) => hhaLog(level, event, data),
+    getLogBuffer: () => readLogBuffer(),
+    clearLogBuffer: () => hhaClearLog(),
+    hhaDumpLog: () => hhaDumpLog(),
+    getDailyCounters: () => getDailyCounters(),
+    resetDailyCounters: () => resetDailyCounters(),
+    resetSessionCounters: () => resetSessionCounters(),
+    markProgress: (step) => markProgress(step),
+    parseVacancyTitle: (card) => parseVacancyTitle(card),
+    cleanVid: (vid) => cleanVid(vid),
+    normalizeReasonCode: (reason, prefix) => normalizeReasonCode(reason, prefix),
+    handleVacancyFailure: (vid, reason, runId, meta) => handleVacancyFailure(vid, reason, runId, meta),
+    watchdogTick: () => watchdogTick(),
+    haltForDailyLimit: () => haltForDailyLimit()
   };
 
   // --- 18. Bootstrap & Global Binding ---
   function bootstrap() {
+    if (globalThis.__HHA_TEST__) return;
     ensureCurrentRunLimit();
     if (watchdogIntervalId === null) {
       watchdogIntervalId = setInterval(() => {
         try { watchdogTick(); } catch (e) { console.warn('[HH] Watchdog tick error:', e); }
       }, 1000);
     }
+
+    const daily = getDailyCounters();
+    hhaLog('info', 'page_start', {
+      version: VERSION,
+      path: (globalThis.location && globalThis.location.pathname) || '',
+      state: isRunning() ? 'running' : 'idle',
+      applied: daily.applied,
+      queued: daily.queued,
+      skipped: daily.skipped,
+      error: daily.error
+    });
+    markProgress('bootstrap');
 
     if (isRunning()) {
       if (detectDailyLimit()) {
@@ -2548,13 +2951,32 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     const win = globalThis.window;
-    if (win && typeof win.dispatchEvent === 'function') {
-      try { win.dispatchEvent(new CustomEvent('hha:ready', { detail: HHApplyAssistant })); } catch (_) {}
+    if (win) {
+      win.hhaDumpLog = hhaDumpLog;
+      win.hhaClearLog = hhaClearLog;
+      if (typeof win.dispatchEvent === 'function') {
+        try { win.dispatchEvent(new CustomEvent('hha:ready', { detail: HHApplyAssistant })); } catch (_) {}
+      }
     }
+    if (typeof globalThis.hhaDumpLog === 'undefined') globalThis.hhaDumpLog = hhaDumpLog;
+    if (typeof globalThis.hhaClearLog === 'undefined') globalThis.hhaClearLog = hhaClearLog;
+
+    try {
+      if (typeof GM_registerMenuCommand === 'function') {
+        GM_registerMenuCommand('HH Apply Assistant: Показать лог (JSONL)', () => {
+          console.info(hhaDumpLog());
+        });
+        GM_registerMenuCommand('HH Apply Assistant: Очистить лог', () => {
+          hhaClearLog();
+        });
+      }
+    } catch (_) {}
   }
 
   const doc = globalThis.document;
-  if (doc?.body) {
+  if (globalThis.__HHA_TEST__) {
+    // In test environment, skip DOM bootstrap and observers
+  } else if (doc?.body) {
     bootstrap();
   } else if (doc && typeof MutationObserver !== 'undefined') {
     domReadyObserver = new MutationObserver((_, o) => {
@@ -2653,7 +3075,11 @@ const MAX_COVER_LENGTH = 5000;
 
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    if (module.exports && module.exports.version) {
+      module.exports.HhaHud = factory();
+    } else {
+      module.exports = factory();
+    }
   } else {
     const api = factory();
     if (typeof root !== 'undefined') {
@@ -3021,10 +3447,13 @@ const MAX_COVER_LENGTH = 5000;
       --hha-motion-indicator-duration: 200ms;
       --hha-motion-indicator-easing: cubic-bezier(0.2, 0, 0, 1);
 
+      /* Centralized Layout Padding Token */
+      --hha-content-padding-x: 12px;
+
       /* Dynamic Island Shared Element Layout Tokens */
       --pill-width: 166px;
       --flyout-width: min(390px, calc(100vw - 16px));
-      --shared-counter-offset: calc((var(--flyout-width, 390px) - var(--pill-width, 166px)) / 2 - 8px);
+      --shared-counter-offset: calc((var(--flyout-width, 390px) - var(--pill-width, 166px)) / 2 - var(--hha-content-padding-x, 12px));
       --shared-btn-offset: calc(-1 * var(--shared-counter-offset));
     }
 
@@ -3293,7 +3722,7 @@ const MAX_COVER_LENGTH = 5000;
       box-sizing: border-box;
       align-items: center;
       justify-content: center;
-      padding: 0;
+      padding: 0 0 2px 0;
       border-radius: var(--md-sys-shape-corner-full);
       background: var(--md-sys-color-surface-container-high);
       color: var(--md-sys-color-on-surface);
@@ -3333,7 +3762,7 @@ const MAX_COVER_LENGTH = 5000;
       width: 32px;
       min-width: 0;
       max-width: 32px;
-      padding: 0;
+      padding: 0 0 2px 0;
       margin-left: 0;
       opacity: 1;
       transform: scale(1);
@@ -3354,7 +3783,7 @@ const MAX_COVER_LENGTH = 5000;
     .hha-pill-queue-badge.is-visible.is-wide {
       width: 40px;
       max-width: 48px;
-      padding: 0 6px;
+      padding: 0 6px 2px 6px;
     }
 
     .hha-pill-queue-badge:hover {
@@ -3408,7 +3837,10 @@ const MAX_COVER_LENGTH = 5000;
     }
 
     .hha-btn-label {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: -1.5px;
       white-space: nowrap;
       transition: 
         transform var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-decelerate),
@@ -3563,9 +3995,9 @@ const MAX_COVER_LENGTH = 5000;
       pointer-events: none;
       width: min(390px, calc(100vw - 16px));
       max-width: calc(100vw - 16px);
-      height: var(--flyout-height, 420px);
-      min-height: var(--flyout-height, 420px);
-      max-height: min(var(--flyout-height, 420px), calc(100vh - 56px));
+      height: var(--flyout-height, 320px);
+      min-height: var(--flyout-height, 320px);
+      max-height: min(var(--flyout-height, 320px), calc(100vh - 56px));
       box-sizing: border-box;
       background: var(--md-sys-color-surface-container);
       border: 1px solid var(--md-sys-color-outline-variant);
@@ -3584,7 +4016,7 @@ const MAX_COVER_LENGTH = 5000;
       visibility: hidden;
       z-index: 1;
       transform-origin: center bottom;
-      transform: scale(calc(var(--pill-width, 196px) / 390px), calc(40px / var(--flyout-height, 420px)));
+      transform: scale(calc(var(--pill-width, 196px) / 390px), calc(40px / var(--flyout-height, 320px)));
       will-change: transform, opacity, border-radius, box-shadow;
       backface-visibility: hidden;
       transition:
@@ -3773,7 +4205,7 @@ const MAX_COVER_LENGTH = 5000;
       justify-content: space-between;
       background: var(--md-sys-color-surface-container-low);
       margin: 0;
-      padding: 8px 12px;
+      padding: 8px var(--hha-content-padding-x, 12px);
       border: none;
       border-top: 1px solid var(--md-sys-color-outline-variant);
       border-radius: 0 0 var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large);
@@ -3786,6 +4218,7 @@ const MAX_COVER_LENGTH = 5000;
     .hha-footer-status-group {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 4px;
       position: relative;
       overflow: hidden;
@@ -3793,7 +4226,11 @@ const MAX_COVER_LENGTH = 5000;
       border-radius: var(--md-sys-shape-corner-full);
       height: var(--md-comp-control-height);
       min-height: var(--md-comp-control-height);
-      padding: 0 8px 0 10px;
+      width: fit-content;
+      min-width: auto;
+      max-width: none;
+      flex: 0 0 auto;
+      padding: 0 8px;
       background: transparent;
       border: none;
       box-sizing: border-box;
@@ -3803,7 +4240,7 @@ const MAX_COVER_LENGTH = 5000;
       user-select: none;
       flex-shrink: 0;
       opacity: 0;
-      transform: translate3d(var(--shared-counter-offset, 104px), 0, 0);
+      transform: translate3d(var(--shared-counter-offset, 100px), 0, 0);
       will-change: transform, opacity;
       transition: 
         transform 180ms cubic-bezier(0.36, 0, 0.66, -0.05),
@@ -3831,27 +4268,12 @@ const MAX_COVER_LENGTH = 5000;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 44px;
+      min-width: auto;
       height: var(--md-comp-control-height);
       min-height: var(--md-comp-control-height);
       box-sizing: border-box;
-      padding: 0 2px;
+      padding: 0;
       z-index: 2;
-    }
-
-    .hha-footer-progress-fill {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      left: 0;
-      height: 100%;
-      width: 0%;
-      background: var(--md-sys-color-secondary-container);
-      opacity: 0.75;
-      border-radius: var(--md-sys-shape-corner-full);
-      z-index: 1;
-      pointer-events: none;
-      transition: width var(--md-sys-motion-duration-medium4) var(--md-sys-motion-easing-emphasized-decelerate);
     }
 
     .hha-footer-progress {
@@ -3862,12 +4284,16 @@ const MAX_COVER_LENGTH = 5000;
       font-variant-numeric: tabular-nums;
       position: relative;
       z-index: 2;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .hha-island-footer .hha-tabs {
       display: inline-flex;
       align-items: center;
-      margin: 0;
+      margin: 0 auto;
       padding: 3px;
       border: 1px solid var(--md-sys-color-outline-variant);
       background: var(--md-sys-color-surface-container-high);
@@ -3967,7 +4393,7 @@ const MAX_COVER_LENGTH = 5000;
       justify-content: center;
       min-width: 18px;
       height: 18px;
-      padding: 0 5px;
+      padding: 0 5px 1px 5px;
       border-radius: var(--md-sys-shape-corner-full);
       font-size: var(--md-sys-typescale-label-small-size);
       font-weight: 700;
@@ -4004,6 +4430,7 @@ const MAX_COVER_LENGTH = 5000;
       font-size: var(--md-sys-typescale-label-medium-size);
       font-weight: 500;
       letter-spacing: var(--md-sys-typescale-label-medium-tracking);
+      line-height: 1;
       color: var(--md-sys-color-on-surface-variant);
       cursor: pointer;
       display: inline-flex;
@@ -4085,7 +4512,7 @@ const MAX_COVER_LENGTH = 5000;
       grid-template-rows: 100%;
       overflow: hidden;
       overflow-x: hidden;
-      padding: 10px 12px;
+      padding: 10px var(--hha-content-padding-x, 12px);
       box-sizing: border-box;
       position: relative;
     }
@@ -4301,7 +4728,7 @@ const MAX_COVER_LENGTH = 5000;
       display: flex;
       flex-direction: column;
       gap: 4px;
-      padding: 8px 14px;
+      padding: 8px 12px;
       background: transparent;
       border: none;
       border-bottom: 1px solid var(--md-sys-color-outline-variant);
@@ -4797,193 +5224,11 @@ const MAX_COVER_LENGTH = 5000;
       margin-bottom: 0 !important;
     }
 
-    .hha-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 6px 12px;
-      min-height: 44px;
-      box-sizing: border-box;
-    }
-
-    .hha-row + .hha-row {
-      border-top: 1px solid var(--md-sys-color-outline-variant);
-    }
-
-    .hha-speed-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 6px 12px;
-      min-height: 44px;
-      box-sizing: border-box;
-      border-top: 1px solid var(--md-sys-color-outline-variant);
-      flex-wrap: nowrap;
-    }
-
     .hha-row-label {
       font-size: var(--md-sys-typescale-body-medium-size);
       font-weight: 500;
       color: var(--md-sys-color-on-surface);
       letter-spacing: var(--md-sys-typescale-body-medium-tracking);
-    }
-
-    .hha-stepper {
-      display: inline-flex;
-      align-items: stretch;
-      border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: var(--md-sys-shape-corner-small);
-      background: var(--md-sys-color-surface-container-lowest);
-      overflow: hidden;
-      height: var(--md-comp-control-height);
-      box-sizing: border-box;
-      transition: border-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), box-shadow var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
-    }
-
-    .hha-stepper:focus-within,
-    .hha-stepper:has(.is-focused) {
-      border-color: var(--md-sys-color-primary);
-      box-shadow: 0 0 0 1px var(--md-sys-color-primary);
-    }
-
-    .hha-stepper-btn {
-      width: 28px;
-      min-width: 28px;
-      height: var(--md-comp-control-height);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: transparent;
-      border: none;
-      color: var(--md-sys-color-on-surface);
-      font-size: 15px;
-      font-weight: 500;
-      cursor: pointer;
-      padding: 0;
-      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
-      user-select: none;
-      box-sizing: border-box;
-    }
-
-    .hha-stepper-btn:hover {
-      background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
-    }
-
-    .hha-stepper-btn:active {
-      background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
-      transform: scale(0.92);
-    }
-
-    .hha-stepper-input {
-      width: 44px;
-      height: var(--md-comp-control-height);
-      border: none;
-      border-left: 1px solid var(--md-sys-color-outline-variant);
-      border-right: 1px solid var(--md-sys-color-outline-variant);
-      background: transparent;
-      text-align: center;
-      font-family: var(--md-sys-typescale-font-family);
-      font-size: var(--md-sys-typescale-title-small-size);
-      font-weight: 600;
-      color: var(--md-sys-color-on-surface);
-      padding: 0;
-      outline: none;
-      box-sizing: border-box;
-      -moz-appearance: textfield;
-    }
-
-    .hha-stepper-input:focus,
-    .hha-stepper-input:focus-visible {
-      outline: none;
-      box-shadow: none;
-      background: transparent;
-    }
-
-    .hha-stepper-input::-webkit-outer-spin-button,
-    .hha-stepper-input::-webkit-inner-spin-button {
-      -webkit-appearance: none;
-      margin: 0;
-    }
-
-    /* M3 Connected Segmented Button (m3.material.io/components/segmented-buttons/specs) */
-    .hha-segmented-control {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      max-width: 236px;
-      min-width: 204px;
-      width: 100%;
-      height: var(--md-comp-control-height);
-      padding: 0;
-      gap: 0;
-      background: transparent;
-      border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: var(--md-sys-shape-corner-full);
-      box-sizing: border-box;
-      overflow: hidden;
-    }
-
-    .hha-segmented-btn {
-      width: 100%;
-      height: 100%;
-      min-width: 0;
-      padding: 0 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      font-family: var(--md-sys-typescale-font-family);
-      font-size: 11.5px;
-      font-weight: 500;
-      letter-spacing: 0.1px;
-      line-height: 1;
-      border: none;
-      background: transparent;
-      color: var(--md-sys-color-on-surface-variant);
-      cursor: pointer;
-      box-sizing: border-box;
-      white-space: nowrap;
-      position: relative;
-      user-select: none;
-      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
-                  color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
-    }
-
-    /* M3 Connected Endcaps & Inner Dividers */
-    .hha-segmented-btn:first-child {
-      border-radius: var(--md-sys-shape-corner-full) 0 0 var(--md-sys-shape-corner-full);
-    }
-
-    .hha-segmented-btn:not(:first-child):not(:last-child) {
-      border-radius: 0;
-    }
-
-    .hha-segmented-btn:last-child {
-      border-radius: 0 var(--md-sys-shape-corner-full) var(--md-sys-shape-corner-full) 0;
-    }
-
-    .hha-segmented-btn + .hha-segmented-btn {
-      border-left: 1px solid var(--md-sys-color-outline-variant);
-    }
-
-    .hha-segmented-btn:hover:not(.is-active) {
-      color: var(--md-sys-color-on-surface);
-      background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
-    }
-
-    .hha-segmented-btn:active:not(.is-active) {
-      background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
-    }
-
-    /* M3 Selected Segment */
-    .hha-segmented-btn.is-active {
-      background: var(--md-sys-color-secondary-container);
-      box-shadow: none;
-      color: var(--md-sys-color-on-secondary-container);
-      font-weight: 600;
-    }
-
-    .hha-segmented-btn.is-active:hover {
-      background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 8%, var(--md-sys-color-secondary-container));
     }
 
     /* ─── 12. SWITCH & COVER LETTER ───────────────────────────────── */
@@ -4998,12 +5243,6 @@ const MAX_COVER_LENGTH = 5000;
       border: 1px solid var(--md-sys-color-outline-variant);
       border-radius: var(--md-sys-shape-corner-medium);
       box-shadow: none;
-      transition: border-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), box-shadow var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
-    }
-
-    .hha-card-cover:focus-within {
-      border-color: var(--md-sys-color-primary);
-      box-shadow: 0 0 0 1px var(--md-sys-color-primary);
     }
 
     .hha-switch-row {
@@ -5147,12 +5386,19 @@ const MAX_COVER_LENGTH = 5000;
       padding: 10px 12px 28px 12px;
       margin: 0;
       resize: none;
-      outline: none;
+      outline: none !important;
       box-sizing: border-box;
       box-shadow: none !important;
       scrollbar-width: thin;
       scrollbar-color: var(--md-sys-color-outline-variant) transparent;
       transition: opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), background-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-cover-textarea:focus,
+    .hha-cover-textarea:focus-visible {
+      border: none !important;
+      outline: none !important;
+      box-shadow: none !important;
     }
 
     .hha-cover-textarea::-webkit-scrollbar {
@@ -5313,14 +5559,13 @@ const MAX_COVER_LENGTH = 5000;
       this._lastErrorPayload = null;
       this._toastTimer = null;
       this._config = {
-        limit: 50,
-        preset: 'balanced',
+        limit: MAX_DAILY_LIMIT,
         useCover: true,
         coverText: '',
         skipHidden: true
       };
       this._status = { status: 'idle', code: 'IDLE' };
-      this._progress = { sent: 0, limit: 50, percentage: 0 };
+      this._progress = { sent: 0, limit: MAX_DAILY_LIMIT, percentage: 0 };
 
       // Drag & Drop State
       this._isPointerDown = false;
@@ -5532,9 +5777,9 @@ const MAX_COVER_LENGTH = 5000;
       this._syncStatus();
     }
 
-    updateProgress(sent, limit) {
+    updateProgress(sent) {
       const s = Number(sent) || 0;
-      const l = Math.max(1, Math.min(MAX_DAILY_LIMIT, parseInt(limit, 10) || (this._config && this._config.limit) || 50));
+      const l = MAX_DAILY_LIMIT;
       const displayCurrent = Math.min(Math.max(0, s), l);
       const pct = l > 0 ? Math.min(100, Math.max(0, Math.round((displayCurrent / l) * 100))) : 0;
       this._progress = { sent: s, displayCurrent, limit: l, percentage: pct };
@@ -5562,45 +5807,17 @@ const MAX_COVER_LENGTH = 5000;
 
     updateConfig(config) {
       if (!config) return;
-      if (config.dailyLimit !== undefined && config.limit === undefined) {
-        config.limit = config.dailyLimit;
-      }
-      if (config.limit !== undefined) {
-        config.limit = Math.max(1, Math.min(MAX_DAILY_LIMIT, parseInt(config.limit, 10) || 50));
-      }
+      config.limit = MAX_DAILY_LIMIT;
       if (typeof config.coverText === 'string' && config.coverText.length > MAX_COVER_LENGTH) {
         config.coverText = config.coverText.slice(0, MAX_COVER_LENGTH);
       }
       this._config = { ...this._config, ...config };
-      const nextLimit = typeof this._config.limit === 'number' ? this._config.limit : this._config.dailyLimit;
-      if (nextLimit !== undefined) {
-        this.updateProgress(this._progress ? this._progress.sent : 0, nextLimit);
-      }
+      this.updateProgress(this._progress ? this._progress.sent : 0);
       this._syncConfig();
     }
 
-    setTargetLimit(newVal) {
-      const parsed = parseInt(newVal, 10);
-      const val = isNaN(parsed) ? 50 : Math.max(1, Math.min(MAX_DAILY_LIMIT, parsed));
-      this._config.limit = val;
-      if (this._progress) {
-        this._progress.limit = val;
-      }
-      if (this._assistant) {
-        if (typeof this._assistant.setConfig === 'function') {
-          this._assistant.setConfig({ limit: val });
-        }
-      }
-      if (this._shadow) {
-        const input = this._shadow.querySelector('[data-el="setting-limit"]');
-        if (input) input.value = val;
-        const limitEl = this._shadow.querySelector('.hha-pill-limit-val') || this._shadow.querySelector('[data-el="pill-limit-val"]');
-        if (limitEl) {
-          limitEl.textContent = String(val);
-        }
-      }
-      this.updateProgress(this._progress ? this._progress.sent : 0, val);
-      return val;
+    setTargetLimit() {
+      return MAX_DAILY_LIMIT;
     }
 
     toggleExpand(force) {
@@ -5869,7 +6086,7 @@ const MAX_COVER_LENGTH = 5000;
             <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и очередь">
               <div class="hha-pill-progress-fill" data-el="pill-progress-fill"></div>
               <div class="hha-pill-status">
-                <span class="hha-pill-progress" data-el="pill-progress"><span class="hha-current-count" data-el="pill-current-count">0</span> / <span class="hha-pill-limit-val" data-el="pill-limit-val">50</span></span>
+                <span class="hha-pill-progress" data-el="pill-progress"><span class="hha-current-count" data-el="pill-current-count">0</span> / <span class="hha-pill-limit-val" data-el="pill-limit-val">${MAX_DAILY_LIMIT}</span></span>
               </div>
               <span class="hha-pill-error-dot" data-el="pill-error-dot" style="display: none;"></span>
             </div>
@@ -5879,7 +6096,7 @@ const MAX_COVER_LENGTH = 5000;
             </button>
           </div>
 
-          <!-- Flyout Overlay (390px wide, max 420px height) -->
+          <!-- Flyout Overlay (390px wide, max 320px height) -->
           <div class="hha-flyout" data-el="flyout" role="dialog" aria-modal="false" aria-label="Панель управления откликами">
             <!-- Top Header: Drag Handle & Collapse Button -->
             <header class="hha-island-header" data-el="island-header">
@@ -5906,27 +6123,8 @@ const MAX_COVER_LENGTH = 5000;
 
             <!-- Panels -->
             <div class="hha-panels">
-              <!-- Tab 1: Settings (Настройки) -->
+              <!-- Tab 1: Settings / Cover (Письмо) -->
               <div class="hha-panel ${this._activeTab === 'settings' ? 'active' : ''}" data-panel="settings"${this._activeTab === 'settings' ? '' : ' aria-hidden="true" inert'}>
-                <div class="hha-card">
-                  <div class="hha-row">
-                    <span class="hha-row-label">Лимит откликов</span>
-                    <div class="hha-stepper">
-                      <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="-5" aria-label="Уменьшить лимит">−</button>
-                      <input type="number" class="hha-stepper-input" data-el="setting-limit" min="1" max="${MAX_DAILY_LIMIT}" step="5" value="50">
-                      <button type="button" class="hha-stepper-btn" data-action="step-limit" data-step="5" aria-label="Увеличить лимит">+</button>
-                    </div>
-                  </div>
-                  <div class="hha-speed-row">
-                    <span class="hha-row-label">Скорость</span>
-                    <div class="hha-segmented-control" role="radiogroup" aria-label="Пресет скорости">
-                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="safe" role="radio" aria-checked="false">Безопасно</button>
-                      <button type="button" class="hha-segmented-btn is-active" data-action="set-preset" data-preset="balanced" role="radio" aria-checked="true">Баланс</button>
-                      <button type="button" class="hha-segmented-btn" data-action="set-preset" data-preset="fast" role="radio" aria-checked="false">Быстро</button>
-                    </div>
-                  </div>
-                </div>
-
                 <div class="hha-card hha-card-cover">
                   <div class="hha-switch-row">
                     <label class="hha-switch-label" for="hha-use-cover-input">
@@ -5970,15 +6168,14 @@ const MAX_COVER_LENGTH = 5000;
             <!-- Bottom Dock: Counter on the Left + Tabs in Center + Quick Action Button on the Right -->
             <footer class="hha-island-footer">
               <div class="hha-footer-status-group" data-action="toggle-expand" data-el="footer-status-group" tabindex="0" role="button" aria-expanded="true" aria-label="Свернуть панель" title="Отклики: текущие / лимит">
-                <div class="hha-footer-progress-fill" data-el="footer-progress-fill"></div>
                 <div class="hha-footer-status">
-                  <span class="hha-footer-progress" data-el="footer-progress"><span class="hha-current-count" data-el="footer-current-count">0</span> / <span class="hha-pill-limit-val" data-el="footer-limit-val">50</span></span>
+                  <span class="hha-footer-progress" data-el="footer-progress"><span class="hha-current-count" data-el="footer-current-count">0</span> / <span class="hha-pill-limit-val" data-el="footer-limit-val">${MAX_DAILY_LIMIT}</span></span>
                 </div>
               </div>
               <div class="hha-tabs" data-active="${this._activeTab}" role="tablist" aria-label="Разделы панели">
                 <div class="hha-tab-indicator" data-el="tab-indicator" style="left: ${this._activeTab === 'queue' ? 102 : 3}px; width: 97px;" aria-hidden="true"></div>
-                <button type="button" class="hha-tab-btn ${this._activeTab === 'settings' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'settings' ? 'true' : 'false'}" data-action="switch-tab" data-tab="settings">Настройки</button>
-                <button type="button" class="hha-tab-btn ${this._activeTab === 'queue' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'queue' ? 'true' : 'false'}" data-action="switch-tab" data-tab="queue"><span>Очередь</span> <span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
+                <button type="button" class="hha-tab-btn ${this._activeTab === 'settings' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'settings' ? 'true' : 'false'}" data-action="switch-tab" data-tab="settings"><span>Письмо</span></button>
+                <button type="button" class="hha-tab-btn ${this._activeTab === 'queue' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'queue' ? 'true' : 'false'}" data-action="switch-tab" data-tab="queue"><span>Очередь</span><span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
               </div>
               <div class="hha-footer-actions">
                 <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="footer-quick-btn">
@@ -6081,25 +6278,6 @@ const MAX_COVER_LENGTH = 5000;
         });
       }
 
-      // Settings Inputs
-      const limitInput = this._shadow.querySelector('[data-el="setting-limit"]');
-      if (limitInput) {
-        const normalizeLimit = () => {
-          limitInput.classList.remove('is-focused');
-          const val = Math.max(1, Math.min(MAX_DAILY_LIMIT, parseInt(limitInput.value, 10) || 50));
-          limitInput.value = val;
-          this.setTargetLimit(val);
-        };
-        limitInput.addEventListener('focus', () => limitInput.classList.add('is-focused'));
-        limitInput.addEventListener('blur', normalizeLimit);
-        limitInput.addEventListener('input', () => {
-          const raw = parseInt(limitInput.value, 10);
-          if (!isNaN(raw) && raw >= 1 && raw <= MAX_DAILY_LIMIT) {
-            this.setTargetLimit(raw);
-          }
-        });
-        limitInput.addEventListener('change', normalizeLimit);
-      }
 
       const useCoverCb = this._shadow.querySelector('[data-el="setting-use-cover"]');
       const coverTextarea = this._shadow.querySelector('[data-el="setting-cover-text"]');
@@ -6511,20 +6689,6 @@ const MAX_COVER_LENGTH = 5000;
             }
           }
         }
-      } else if (action === 'step-limit') {
-        e.stopPropagation();
-        const step = parseInt(actionTarget.dataset.step, 10) || 0;
-        const input = this._shadow.querySelector('[data-el="setting-limit"]');
-        const cur = parseInt(input ? input.value : this._config.limit, 10) || 50;
-        const next = Math.max(1, Math.min(MAX_DAILY_LIMIT, cur + step));
-        if (input) input.value = next;
-        this.setTargetLimit(next);
-      } else if (action === 'set-preset') {
-        e.stopPropagation();
-        const preset = actionTarget.dataset.preset;
-        if (['safe', 'balanced', 'fast'].includes(preset)) {
-          this._applyConfig({ preset });
-        }
       }
     }
 
@@ -6915,7 +7079,7 @@ const MAX_COVER_LENGTH = 5000;
         const pillWidth = this._getPillWidth();
         root.style.setProperty('--pill-width', `${pillWidth}px`);
         const maxFlyoutH = Math.max(120, winH - 36 - 8 - padding * 2);
-        const finalH = Math.min(420, maxFlyoutH);
+        const finalH = Math.min(320, maxFlyoutH);
         root.style.setProperty('--flyout-height', `${finalH}px`);
       }
 
@@ -7082,8 +7246,8 @@ const MAX_COVER_LENGTH = 5000;
 
     _syncProgress() {
       if (!this._shadow) return;
-      const { sent = 0, displayCurrent, limit = 50 } = this._progress || {};
-      const limitCount = Math.max(1, Math.min(MAX_DAILY_LIMIT, parseInt(limit, 10) || 50));
+      const { sent = 0, displayCurrent } = this._progress || {};
+      const limitCount = MAX_DAILY_LIMIT;
       const cur = displayCurrent !== undefined ? displayCurrent : Math.min(Math.max(0, sent), limitCount);
       const text = `${cur} / ${limitCount}`;
 
@@ -7256,23 +7420,10 @@ const MAX_COVER_LENGTH = 5000;
       const c = this._config || {};
 
       // Limit
-      const limitInput = this._shadow.querySelector('[data-el="setting-limit"]');
-      const lim = typeof c.limit === 'number' ? c.limit : c.dailyLimit;
-      if (limitInput && lim !== undefined && limitInput.value !== String(lim)) {
-        limitInput.value = lim;
-      }
       const limitEl = this._shadow.querySelector('.hha-pill-limit-val') || this._shadow.querySelector('[data-el="pill-limit-val"]');
-      if (limitEl && lim !== undefined) {
-        limitEl.textContent = String(lim);
+      if (limitEl) {
+        limitEl.textContent = String(MAX_DAILY_LIMIT);
       }
-
-      // Preset Segmented Buttons
-      const presetBtns = this._shadow.querySelectorAll('[data-action="set-preset"]');
-      presetBtns.forEach(btn => {
-        const isActive = btn.dataset.preset === c.preset;
-        btn.classList.toggle('is-active', isActive);
-        btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
-      });
 
       // Cover Letter
       const useCoverCb = this._shadow.querySelector('[data-el="setting-use-cover"]');
@@ -7318,7 +7469,7 @@ const MAX_COVER_LENGTH = 5000;
   }
 
   // Auto-mount in browser if document is ready
-  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  if (!globalThis.__HHA_TEST__ && typeof window !== 'undefined' && typeof document !== 'undefined') {
     if (document.body) {
       mountHud();
     } else {
