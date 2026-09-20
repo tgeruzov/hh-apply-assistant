@@ -50,7 +50,6 @@ function cleanVid(vid) {
 (function (root, factory) {
   const api = factory();
   if (typeof root !== 'undefined') root.HHApplyAssistant = api;
-  if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
@@ -143,11 +142,10 @@ function cleanVid(vid) {
   const WATCHDOG_STALL_TIMEOUT = 60000; // 60 seconds stall timeout
   const SKIP_ALERT_RATIO = 0.7; // 70% threshold for skip rate alert
   const MAX_LOG_ENTRIES = 600;
-  const MAX_LOG_SIZE_BYTES = 80000;
   const REJECT_REGEX = /(?:не\s*соответствует(?:\s*требованиям)?|не\s*подходит|(?:^|[\s.,!?:;«»'"()—–-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;«»'"()—–-]|$)|reject|warning)/i;
   const pageLoadedAt = Date.now();
 
-  const ACTION_TIMINGS = { delay: [2500, 5000], action: [250, 500] };
+  const ACTION_TIMINGS = { delay: [3500, 6500], action: [250, 500] };
 
   const DEFAULT_COVER_TEXT = 'Здравствуйте! Меня заинтересовала ваша вакансия. Ознакомьтесь, пожалуйста, с моим резюме.';
   const DEFAULTS = {
@@ -197,10 +195,7 @@ function cleanVid(vid) {
   }
   const events = new EventEmitter();
 
-  // --- 3. Storage Layer with Fallbacks (No Duplicate Memory Writes) ---
-  const memLocal = new Map();
-  const memSession = new Map();
-
+  // --- 3. Storage Layer ---
   function getNativeStore(type) {
     try {
       return globalThis[type === 'local' ? 'localStorage' : 'sessionStorage'] || null;
@@ -210,38 +205,34 @@ function cleanVid(vid) {
   }
 
   function storeGet(type, key) {
-    const s = getNativeStore(type);
-    if (s) {
-      try {
-        const v = s.getItem(key);
-        if (v !== null) return v;
-      } catch (_) {}
+    try {
+      const s = getNativeStore(type);
+      return s ? s.getItem(key) : null;
+    } catch (_) {
+      return null;
     }
-    return (type === 'local' ? memLocal : memSession).get(key) ?? null;
   }
 
   function storeSet(type, key, val) {
-    const str = String(val);
-    const s = getNativeStore(type);
-    if (s) {
-      try {
-        s.setItem(key, str);
-        return true;
-      } catch (e) {
-        console.warn(`[HH] Storage quota exceeded on ${type}Storage (key: ${key}):`, e);
-      }
+    try {
+      const s = getNativeStore(type);
+      if (!s) return false;
+      s.setItem(key, String(val));
+      return true;
+    } catch (e) {
+      console.warn(`[HH] Storage quota exceeded on ${type}Storage (key: ${key}):`, e);
+      return false;
     }
-    (type === 'local' ? memLocal : memSession).set(key, str);
-    return !s;
   }
 
   function storeRemove(type, key) {
-    const s = getNativeStore(type);
-    if (s) {
-      try { s.removeItem(key); } catch (_) {}
+    try {
+      const s = getNativeStore(type);
+      if (s) s.removeItem(key);
+      return true;
+    } catch (_) {
+      return false;
     }
-    (type === 'local' ? memLocal : memSession).delete(key);
-    return true;
   }
 
   function isLocalBlocked() {
@@ -322,14 +313,45 @@ function cleanVid(vid) {
     return parts.join(' ');
   }
 
+  let memLogBuffer = null;
+  let logFlushTimer = null;
+  let logBufferDirty = false;
+
   function readLogBuffer() {
+    if (memLogBuffer !== null) {
+      return memLogBuffer;
+    }
     try {
       const raw = storage.localGet(KEYS.logBuffer);
-      if (!raw) return [];
+      if (!raw) {
+        memLogBuffer = [];
+        return memLogBuffer;
+      }
       const arr = parseJson(raw, []);
-      return Array.isArray(arr) ? arr : [];
+      memLogBuffer = Array.isArray(arr) ? arr : [];
+      return memLogBuffer;
     } catch (_) {
-      return [];
+      memLogBuffer = [];
+      return memLogBuffer;
+    }
+  }
+
+  function flushLogBuffer() {
+    if (logFlushTimer) {
+      clearTimeout(logFlushTimer);
+      logFlushTimer = null;
+    }
+    if (!logBufferDirty || memLogBuffer === null) return;
+    writeLogBuffer(memLogBuffer);
+    logBufferDirty = false;
+  }
+
+  function scheduleLogFlush() {
+    if (!logFlushTimer && typeof setTimeout !== 'undefined') {
+      logFlushTimer = setTimeout(() => {
+        logFlushTimer = null;
+        flushLogBuffer();
+      }, 3000);
     }
   }
 
@@ -339,12 +361,9 @@ function cleanVid(vid) {
       if (list.length > MAX_LOG_ENTRIES) {
         list = list.slice(-MAX_LOG_ENTRIES);
       }
-      let json = JSON.stringify(list);
-      while (json.length > MAX_LOG_SIZE_BYTES && list.length > 5) {
-        const dropCount = Math.max(1, Math.floor(list.length * 0.1));
-        list = list.slice(dropCount);
-        json = JSON.stringify(list);
-      }
+      const json = JSON.stringify(list);
+      memLogBuffer = list;
+      logBufferDirty = false;
       storage.localSet(KEYS.logBuffer, json);
       return true;
     } catch (e) {
@@ -356,7 +375,8 @@ function cleanVid(vid) {
   function appendLogEntry(entry) {
     const list = readLogBuffer();
     list.push(entry);
-    writeLogBuffer(list);
+    logBufferDirty = true;
+    scheduleLogFlush();
   }
 
   function hhaDumpLog() {
@@ -365,6 +385,12 @@ function cleanVid(vid) {
   }
 
   function hhaClearLog() {
+    memLogBuffer = [];
+    logBufferDirty = false;
+    if (logFlushTimer) {
+      clearTimeout(logFlushTimer);
+      logFlushTimer = null;
+    }
     writeLogBuffer([]);
     console.info('[HHA] Log buffer cleared');
     return true;
@@ -546,10 +572,7 @@ function cleanVid(vid) {
     }
     hhaLog(logLevel, 'outcome', logData);
 
-    // 4. Output summary to console
-    console.info(`[HHA] summary applied=${counters.applied} queued=${counters.queued} skipped=${counters.skipped} error=${counters.error}`);
-
-    // 5. Anomaly check for session-processed items (excluding already_applied and hidden_employer)
+    // 4. Anomaly check for session-processed items (excluding already_applied and hidden_employer)
     checkSkipRateAnomaly(finalOutcome, finalReason);
 
     // 6. Emit event on event bus
@@ -585,7 +608,7 @@ function cleanVid(vid) {
 
   const timings = () => ACTION_TIMINGS;
   const actionPause = () => wait(randBetween(timings().action[0], timings().action[1]));
-  const vacancyPause = () => wait(Math.max(1500, randBetween(timings().delay[0], timings().delay[1])));
+  const vacancyPause = () => wait(Math.max(2000, randBetween(timings().delay[0], timings().delay[1])));
 
   const wait = (ms) => new Promise((resolve) => {
     const sig = activeAbortController?.signal;
@@ -755,24 +778,57 @@ function cleanVid(vid) {
     return true;
   }
 
+  let memProcessedIds = null;
+  let memProcessedIdsDirty = false;
+
   function getProcessedIDs() {
-    const arr = parseJson(storage.sessionGet(KEYS.history), []);
-    return new Set(Array.isArray(arr) ? arr : []);
+    if (!memProcessedIds) {
+      const arr = parseJson(storage.sessionGet(KEYS.history), []);
+      memProcessedIds = new Set(Array.isArray(arr) ? arr : []);
+    }
+    return memProcessedIds;
   }
+
+  function flushProcessedIDs() {
+    if (memProcessedIdsDirty && memProcessedIds) {
+      storage.sessionSet(KEYS.history, JSON.stringify(Array.from(memProcessedIds)));
+      memProcessedIdsDirty = false;
+    }
+  }
+
   function addProcessedID(id) {
     if (!id) return true;
     const ids = getProcessedIDs();
-    ids.add(id);
-    return storage.sessionSet(KEYS.history, JSON.stringify(Array.from(ids)));
+    if (!ids.has(id)) {
+      ids.add(id);
+      memProcessedIdsDirty = true;
+    }
+    return true;
   }
+
   function clearProcessedIDs() {
+    memProcessedIds = new Set();
+    memProcessedIdsDirty = false;
     return storage.sessionRemove(KEYS.history);
   }
 
   // --- Attempts & Blacklist Tracking (Circuit Breaker) ---
+  let memVacancyAttempts = null;
+  let memVacancyAttemptsDirty = false;
+
   function getVacancyAttemptsMap() {
-    const raw = storage.sessionGet(KEYS.attempts);
-    return parseJson(raw, {}) || {};
+    if (!memVacancyAttempts) {
+      const raw = storage.sessionGet(KEYS.attempts);
+      memVacancyAttempts = parseJson(raw, {}) || {};
+    }
+    return memVacancyAttempts;
+  }
+
+  function flushVacancyAttempts() {
+    if (memVacancyAttemptsDirty && memVacancyAttempts) {
+      storage.sessionSet(KEYS.attempts, JSON.stringify(memVacancyAttempts));
+      memVacancyAttemptsDirty = false;
+    }
   }
 
   function recordVacancyAttempt(vid) {
@@ -781,27 +837,40 @@ function cleanVid(vid) {
     const map = getVacancyAttemptsMap();
     const count = (Number(map[clean]) || 0) + 1;
     map[clean] = count;
-    storage.sessionSet(KEYS.attempts, JSON.stringify(map));
+    memVacancyAttemptsDirty = true;
     return count;
   }
 
+  let memBlacklist = null;
+  let memBlacklistDirty = false;
+
   function getBlacklistMap() {
-    const raw = storage.localGet(KEYS.blacklist);
-    const map = parseJson(raw, {}) || {};
-    const now = Date.now();
-    let changed = false;
-    for (const k of Object.keys(map)) {
-      const entry = map[k];
-      const ts = typeof entry === 'object' && entry !== null ? Number(entry.ts) : Number(entry);
-      if (!ts || (now - ts) > BLACKLIST_TTL) {
-        delete map[k];
-        changed = true;
+    if (!memBlacklist) {
+      const raw = storage.localGet(KEYS.blacklist);
+      const map = parseJson(raw, {}) || {};
+      const now = Date.now();
+      let changed = false;
+      for (const k of Object.keys(map)) {
+        const entry = map[k];
+        const ts = typeof entry === 'object' && entry !== null ? Number(entry.ts) : Number(entry);
+        if (!ts || (now - ts) > BLACKLIST_TTL) {
+          delete map[k];
+          changed = true;
+        }
+      }
+      memBlacklist = map;
+      if (changed) {
+        memBlacklistDirty = true;
       }
     }
-    if (changed) {
-      storage.localSet(KEYS.blacklist, JSON.stringify(map));
+    return memBlacklist;
+  }
+
+  function flushBlacklist() {
+    if (memBlacklistDirty && memBlacklist) {
+      storage.localSet(KEYS.blacklist, JSON.stringify(memBlacklist));
+      memBlacklistDirty = false;
     }
-    return map;
   }
 
   function isBlacklisted(vid) {
@@ -816,7 +885,26 @@ function cleanVid(vid) {
     const clean = cleanVid(vid);
     const map = getBlacklistMap();
     map[clean] = { ts: Date.now(), reason: String(reason || '') };
-    storage.localSet(KEYS.blacklist, JSON.stringify(map));
+    memBlacklistDirty = true;
+  }
+
+  function flushStorageCaches() {
+    flushProcessedIDs();
+    flushVacancyAttempts();
+    flushBlacklist();
+  }
+
+  const onPageHide = () => {
+    flushLogBuffer();
+    flushStorageCaches();
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pagehide', onPageHide, { capture: true });
+    window.addEventListener('visibilitychange', () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        onPageHide();
+      }
+    }, { capture: true });
   }
 
   function handleVacancyFailure(vid, reason = 'apply_failed', runId = currentRunId, meta = null) {
@@ -980,12 +1068,12 @@ function cleanVid(vid) {
           }
         ).catch(() => {
           hasActiveWebLock = false;
-          if (!webLockAcquired) lockResolver(null);
+          if (!webLockAcquired) lockResolver(false);
         });
 
         let timeoutId;
         const timeoutPromise = new Promise(resolve => {
-          timeoutId = setTimeout(() => resolve('TIMEOUT'), 400);
+          timeoutId = setTimeout(() => resolve('TIMEOUT'), 2000);
         });
         const acquired = await Promise.race([lockPromise, timeoutPromise]);
         clearTimeout(timeoutId);
@@ -993,7 +1081,7 @@ function cleanVid(vid) {
         if (acquired === 'TIMEOUT') {
           try { lockController.abort(); } catch (_) {}
         }
-        if (acquired === false || acquired === 'TIMEOUT') {
+        if (acquired !== true) {
           instanceLeaseVerified = false;
           return false;
         }
@@ -1084,6 +1172,8 @@ function cleanVid(vid) {
     setStatus(statusKey, code, details);
     hhaLog(isError ? 'error' : 'info', 'stop', { code, logMsg: logMsg || undefined, isError });
     if (logMsg && isError) reportError(logMsg, code, details);
+    flushLogBuffer();
+    flushStorageCaches();
   }
 
   function finalizeRun(runId, statusKey, msg = '') {
@@ -1434,10 +1524,13 @@ function cleanVid(vid) {
     } catch (_) {}
 
     return new Promise((resolve) => {
-      let timer = null, pollTimer = null, observer = null;
+      let timer = null, pollTimer = null, observer = null, throttleTimer = null;
+      let lastCheckTime = 0;
+
       const cleanup = (res) => {
         if (timer) clearTimeout(timer);
         if (pollTimer) clearInterval(pollTimer);
+        if (throttleTimer) clearTimeout(throttleTimer);
         if (observer) observer.disconnect();
         if (signal) signal.removeEventListener('abort', onAbort);
         
@@ -1456,17 +1549,35 @@ function cleanVid(vid) {
         } catch (_) {}
       };
 
+      const throttledCheck = () => {
+        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        const elapsed = now - lastCheckTime;
+        if (elapsed >= 150) {
+          lastCheckTime = now;
+          if (throttleTimer) {
+            clearTimeout(throttleTimer);
+            throttleTimer = null;
+          }
+          check();
+        } else if (!throttleTimer) {
+          throttleTimer = setTimeout(() => {
+            throttleTimer = null;
+            lastCheckTime = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+            check();
+          }, 150 - elapsed);
+        }
+      };
+
       const doc = globalThis.document;
       if (typeof MutationObserver !== 'undefined' && doc) {
         try {
-          observer = new MutationObserver(check);
-          observer.observe(doc.documentElement || doc, { childList: true, subtree: true });
+          observer = new MutationObserver(throttledCheck);
+          const targetNode = doc.body || doc.documentElement || doc;
+          observer.observe(targetNode, { childList: true, subtree: true });
         } catch (_) {}
       }
 
-      pollTimer = setInterval(check, 100);
-
-      
+      pollTimer = setInterval(check, 400);
 
       timer = setTimeout(() => cleanup(false), timeout);
     });
@@ -1594,23 +1705,27 @@ function cleanVid(vid) {
 
   const INACCESSIBLE_VACANCY_REGEX = /(?:вам\s+недоступна\s+эта\s+вакансия|войдите\s+как\s+пользователь[,\s]+у\s+которого\s+есть\s+доступ|вакансия\s+(?:закрыта|в\s+архиве|удалена|не\s+найдена)|эта\s+вакансия\s+была\s+удалена|похоже[,\s]+этой\s+вакансии\s+больше\s+нет)/i;
 
-  function detectInaccessibleVacancy(root = globalThis.document) {
+  function detectInaccessibleVacancy(root = globalThis.document, text = null) {
     if (!root || Page.isSearch()) return false;
+    if (text !== null) {
+      return INACCESSIBLE_VACANCY_REGEX.test(text.slice(0, 4000));
+    }
     const body = root.body || (root.nodeType === 9 ? root.body : root);
     if (!body) return false;
-    const text = (body.textContent || '').slice(0, 4000);
-    return INACCESSIBLE_VACANCY_REGEX.test(text);
+    const bodyText = (body.textContent || '').slice(0, 4000);
+    return INACCESSIBLE_VACANCY_REGEX.test(bodyText);
   }
 
-  function detectCaptcha() {
-    const doc = globalThis.document, loc = globalThis.location;
+  function detectCaptcha(root = globalThis.document, text = null) {
+    const doc = root?.nodeType === 9 ? root : (root?.ownerDocument || globalThis.document);
+    const loc = globalThis.location;
     if (!doc) return false;
-    if (detectInaccessibleVacancy(doc)) return false;
+    if (detectInaccessibleVacancy(doc, text)) return false;
     if (loc && /\/captcha|\/checkpoint|\/nocaptcha/i.test(loc.pathname)) return true;
-    if (q('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="captcha" i], iframe[src*="smartcaptcha" i], [data-qa*="captcha" i], .g-recaptcha, .h-captcha, .smart-captcha, [class*="captcha" i], [id*="captcha" i]')) {
+    if (q('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="captcha" i], iframe[src*="smartcaptcha" i], [data-qa*="captcha" i], .g-recaptcha, .h-captcha, .smart-captcha, [class*="captcha" i], [id*="captcha" i]', doc)) {
       return true;
     }
-    const bodyText = (doc.body?.textContent || doc.documentElement?.textContent || '').slice(0, 3000);
+    const bodyText = (text !== null ? text : (doc.body?.textContent || doc.documentElement?.textContent || '')).slice(0, 3000);
     return /(?:подтвердите,?\s*что\s*вы\s*не\s*робот|введите\s*символы\s*с\s*картинки|вы\s+не\s+робот|not\s+a\s+robot|необычн\w*\s+активн|unusual\s+(?:activity|traffic))/i.test(bodyText);
   }
 
@@ -1663,7 +1778,7 @@ function cleanVid(vid) {
       }
 
       // 3. Fallback check across root textContent
-      const fullText = (body.textContent || '');
+      const fullText = (body.textContent || '').slice(0, 3000);
       if (DAILY_LIMIT_REGEX.test(fullText)) {
         return true;
       }
@@ -1672,15 +1787,16 @@ function cleanVid(vid) {
     return false;
   }
 
-  function detectRateLimit() {
-    const doc = globalThis.document, loc = globalThis.location;
+  function detectRateLimit(root = globalThis.document, text = null) {
+    const doc = root?.nodeType === 9 ? root : (root?.ownerDocument || globalThis.document);
+    const loc = globalThis.location;
     if (!doc) return false;
     if (loc && /\/error|\/blocked|\/forbidden|\/denied|\/rate-limit/i.test(loc.pathname)) return true;
     if (doc.title && /(?:429|503|error\s+(?:429|503)|доступ\s+ограничен|too\s+many\s+requests|service\s+unavailable)/i.test(doc.title)) return true;
     if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]', doc)) {
       return true;
     }
-    const bodyText = (doc.body?.textContent || doc.documentElement?.textContent || '');
+    const bodyText = (text !== null ? text : (doc.body?.textContent || doc.documentElement?.textContent || '')).slice(0, 3000);
     return /(?:слишком\s*много\s*запросов|429\s*Too\s*Many\s*Requests|503\s*Service\s*Unavailable|доступ\s*(?:временно\s*)?ограничен|access\s*(?:temporarily\s*)?denied|error\s+429|error\s+503)/i.test(bodyText);
   }
 
@@ -1723,31 +1839,6 @@ function cleanVid(vid) {
     if (detectAlreadyApplied()) return true;
     const doc = globalThis.document;
     return Boolean((allowDocumentStrongText || Page.isVacancy()) && doc && /(?:отклик отправлен|вы уже откликались|вы откликнулись|резюме доставлено)/i.test((doc.body?.innerText || doc.body?.textContent || '').slice(0, 4000)));
-  }
-
-  function inspectOutcomeDomState() {
-    const url = globalThis.location?.href || '';
-    const modals = Array.from(globalThis.document?.querySelectorAll('[role="dialog"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [data-qa*="sheet" i]') || [])
-      .filter(el => isVisible(el) && !isReviewOrFeedbackElement(el));
-    const modalSummary = modals.map(m => {
-      const qa = m.getAttribute?.('data-qa') || '';
-      const cls = (m.className && typeof m.className === 'string') ? m.className.slice(0, 40) : '';
-      const txt = collapseSpaces(m.innerText || m.textContent || '').slice(0, 80);
-      return `<${(m.tagName || '').toLowerCase()}${qa ? ` data-qa="${qa}"` : ''}${cls ? ` class="${cls}"` : ''}> "${txt}"`;
-    });
-    const hasReloc = Boolean(detectRelocationWarning());
-    const hasCoverBtn = Boolean(query('attachCoverBtn'));
-    const hasChat = Boolean(query('responseChat'));
-    const hasAppliedText = detectAlreadyApplied();
-    return {
-      url,
-      visibleModalsCount: modals.length,
-      modals: modalSummary,
-      hasReloc,
-      hasCoverBtn,
-      hasChat,
-      hasAppliedText
-    };
   }
 
   function detectModalBlockReason(modalScope = null) {
@@ -2058,8 +2149,7 @@ function cleanVid(vid) {
         return isResponseConfirmed();
       },
       6000,
-      activeAbortController?.signal,
-      'подтверждение отклика после отправки модалки'
+      activeAbortController?.signal
     );
     if (confirmed === 'DAILY_LIMIT' || detectDailyLimit()) {
       haltForDailyLimit();
@@ -2188,7 +2278,7 @@ function cleanVid(vid) {
     // 2 to 4 micro-steps simulating natural pauses while reading
     const steps = Math.floor(Math.random() * 3) + 2;
     const t = timings();
-    const minDelay = Math.max(1200, Math.round(t.delay[0] * 0.7));
+    const minDelay = Math.max(2000, Math.round(t.delay[0] * 0.7));
     const maxDelay = Math.round(t.delay[1] * 0.85);
     const totalDuration = randBetween(minDelay, maxDelay);
     const stepDelay = Math.round(totalDuration / steps);
@@ -2244,10 +2334,6 @@ function cleanVid(vid) {
       await clickElement(applyBtn);
       await actionPause();
       if (!isRunCurrent(runId)) return 'STOPPED';
-      const inspectOutcome = () => {
-        const domDiag = inspectOutcomeDomState();
-        return { label: `исход отклика #${vid}`, vid, ...domDiag };
-      };
 
       let outcome = await waitForCondition(
         () => {
@@ -2256,8 +2342,7 @@ function cleanVid(vid) {
           return detectResponseOutcomeOnce();
         },
         3500,
-        activeAbortController?.signal,
-        inspectOutcome
+        activeAbortController?.signal
       );
 
       if (outcome === 'DAILY_LIMIT' || detectDailyLimit()) {
@@ -2289,14 +2374,12 @@ function cleanVid(vid) {
             return detectResponseOutcomeOnce();
           },
           4500,
-          activeAbortController?.signal,
-          inspectOutcome
+          activeAbortController?.signal
         );
       }
 
       if (!outcome) {
-        const finalDiag = inspectOutcomeDomState();
-        reportError(`Таймаут ожидания исхода отклика на вакансию #${vid}!`, 'OUTCOME_TIMEOUT', { vid, ...finalDiag });
+        reportError(`Таймаут ожидания исхода отклика на вакансию #${vid}!`, 'OUTCOME_TIMEOUT', { vid });
       }
 
       const res = await dispatchOutcome(outcome, vid, runId);
@@ -2343,8 +2426,7 @@ function cleanVid(vid) {
       const submitBtn = await waitForCondition(
         () => query('letterSubmit') || q('button[type="submit"]'),
         4000,
-        activeAbortController?.signal,
-        `поиск кнопки отправки отклика #${vid}`
+        activeAbortController?.signal
       );
       if (!isRunCurrent(runId)) return;
       if (!submitBtn) {
@@ -2368,8 +2450,7 @@ function cleanVid(vid) {
           return isResponseConfirmed({ allowDocumentStrongText: true });
         },
         6000,
-        activeAbortController?.signal,
-        `подтверждение отправки отклика #${vid}`
+        activeAbortController?.signal
       );
       if (confirmed === 'DAILY_LIMIT' || detectDailyLimit()) {
         haltForDailyLimit();
@@ -2638,14 +2719,18 @@ function cleanVid(vid) {
   function watchdogTick() {
     if (!isRunning()) return;
     if (detectDailyLimit()) return haltForDailyLimit();
-    if (detectInaccessibleVacancy()) {
+
+    const doc = globalThis.document;
+    const bodyText = (doc?.body?.textContent || '').slice(0, 4000);
+
+    if (detectInaccessibleVacancy(doc, bodyText)) {
       const vid = getLastAttemptID();
       if (vid) skipVacancy(vid, 'skip_inaccessible', currentRunId);
       returnToList(vid, { markProcessed: true, runId: currentRunId });
       return;
     }
-    if (detectCaptcha()) return haltForCaptcha();
-    if (detectRateLimit()) return haltForRateLimit();
+    if (detectCaptcha(doc, bodyText)) return haltForCaptcha();
+    if (detectRateLimit(doc, bodyText)) return haltForRateLimit();
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
 
     // 60-second stall watchdog
@@ -2735,7 +2820,6 @@ function cleanVid(vid) {
   }
 
   let watchdogIntervalId = null;
-  let domReadyObserver = null;
   const globalListeners = [];
 
   function addGlobalListener(target, type, handler, options) {
@@ -2750,10 +2834,6 @@ function cleanVid(vid) {
     if (watchdogIntervalId !== null) {
       clearInterval(watchdogIntervalId);
       watchdogIntervalId = null;
-    }
-    if (domReadyObserver) {
-      try { domReadyObserver.disconnect(); } catch (_) {}
-      domReadyObserver = null;
     }
     for (const l of globalListeners.splice(0)) {
       try { l.target.removeEventListener(l.type, l.handler, l.options); } catch (_) {}
@@ -2806,6 +2886,8 @@ function cleanVid(vid) {
       clearPendingVacancyMeta();
       resetSessionCounters();
       setStatus('idle', 'IDLE');
+      flushLogBuffer();
+      flushStorageCaches();
       return true;
     },
     setStatus(statusKey, code, details) {
@@ -2841,7 +2923,7 @@ function cleanVid(vid) {
     WATCHDOG_STALL_TIMEOUT,
     recordOutcome: (vid, outcome, reason, details) => recordOutcome(vid, outcome, reason, details),
     hhaLog: (level, event, data) => hhaLog(level, event, data),
-    getLogBuffer: () => readLogBuffer(),
+    getLogBuffer: () => readLogBuffer().slice(),
     clearLogBuffer: () => hhaClearLog(),
     hhaDumpLog: () => hhaDumpLog(),
     getDailyCounters: () => getDailyCounters(),
@@ -2912,23 +2994,9 @@ function cleanVid(vid) {
     if (win) {
       win.hhaDumpLog = hhaDumpLog;
       win.hhaClearLog = hhaClearLog;
-      if (typeof win.dispatchEvent === 'function') {
-        try { win.dispatchEvent(new CustomEvent('hha:ready', { detail: HHApplyAssistant })); } catch (_) {}
-      }
     }
     if (typeof globalThis.hhaDumpLog === 'undefined') globalThis.hhaDumpLog = hhaDumpLog;
     if (typeof globalThis.hhaClearLog === 'undefined') globalThis.hhaClearLog = hhaClearLog;
-
-    try {
-      if (typeof GM_registerMenuCommand === 'function') {
-        GM_registerMenuCommand('HH Apply Assistant: Показать лог (JSONL)', () => {
-          console.info(hhaDumpLog());
-        });
-        GM_registerMenuCommand('HH Apply Assistant: Очистить лог', () => {
-          hhaClearLog();
-        });
-      }
-    } catch (_) {}
   }
 
   const doc = globalThis.document;
@@ -2936,15 +3004,6 @@ function cleanVid(vid) {
     // In test environment, skip DOM bootstrap and observers
   } else if (doc?.body) {
     bootstrap();
-  } else if (doc && typeof MutationObserver !== 'undefined') {
-    domReadyObserver = new MutationObserver((_, o) => {
-      if (doc.body) {
-        o.disconnect();
-        domReadyObserver = null;
-        bootstrap();
-      }
-    });
-    domReadyObserver.observe(doc.documentElement || doc, { childList: true, subtree: true });
   }
 
   const win = globalThis.window;
@@ -3028,17 +3087,9 @@ function cleanVid(vid) {
   */
 
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) {
-    if (module.exports && module.exports.version) {
-      module.exports.HhaHud = factory();
-    } else {
-      module.exports = factory();
-    }
-  } else {
-    const api = factory();
-    if (typeof root !== 'undefined') {
-      root.HhaHud = api;
-    }
+  const api = factory();
+  if (typeof root !== 'undefined') {
+    root.HhaHud = api;
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
@@ -3053,15 +3104,6 @@ function cleanVid(vid) {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
-  }
-
-  function clampCoordinates(x, y, width, height, windowWidth, windowHeight, padding = 8) {
-    const maxX = Math.max(padding, windowWidth - width - padding);
-    const maxY = Math.max(padding, windowHeight - height - padding);
-    return {
-      x: Math.round(clamp(x, padding, maxX)),
-      y: Math.round(clamp(y, padding, maxY))
-    };
   }
 
   function formatTime(ts) {
@@ -3118,32 +3160,6 @@ function cleanVid(vid) {
       return `${title}: ${cleanMsg}`;
     }
     return title || cleanMsg || 'Произошла ошибка при выполнении';
-  }
-
-  function formatQueueReason(reason) {
-    const r = String(reason || '').toLowerCase();
-    if (r.includes('lead_gen') || r.includes('article') || r.includes('promo')) {
-      return 'Промо / Лид';
-    }
-    if (r.includes('test') || r.includes('questionnaire') || r.includes('questions')) {
-      return 'Анкета';
-    }
-    if (r.includes('redirect') || r.includes('no-apply') || r.includes('relocation')) {
-      return 'Редирект';
-    }
-    if (r.includes('reject') || r.includes('warning') || r.includes('experience')) {
-      return 'Опыт';
-    }
-    if (r.includes('resume_hidden') || r.includes('hidden')) {
-      return 'Скрыто';
-    }
-    if (r.includes('unconfirmed')) {
-      return 'Проверка';
-    }
-    if (r.includes('access_denied') || r.includes('inaccessible')) {
-      return 'Закрыта';
-    }
-    return 'Ручной';
   }
 
   function formatQueueReasonInfo(reason) {
@@ -3362,15 +3378,15 @@ function cleanVid(vid) {
       --md-sys-motion-duration-long2: 500ms;
 
       /* ── Centralized HUD Motion Specification Tokens ── */
-      --hha-motion-expand-duration: 320ms;
-      --hha-motion-expand-easing: cubic-bezier(0.16, 1, 0.3, 1);
+      --hha-motion-expand-duration: 500ms;
+      --hha-motion-expand-easing: cubic-bezier(0.34, 1.15, 0.64, 1);
       --hha-motion-spring-easing: cubic-bezier(0.34, 1.15, 0.64, 1);
-      --hha-motion-collapse-duration: 300ms;
-      --hha-motion-collapse-easing: cubic-bezier(0.2, 0, 0, 1);
-      --hha-motion-tab-duration: 150ms;
+      --hha-motion-collapse-duration: 500ms;
+      --hha-motion-collapse-easing: cubic-bezier(0.34, 1.15, 0.64, 1);
+      --hha-motion-tab-duration: 200ms;
       --hha-motion-tab-easing: cubic-bezier(0.2, 0, 0, 1);
       --hha-motion-tab-shift: 6px;
-      --hha-motion-indicator-duration: 200ms;
+      --hha-motion-indicator-duration: 250ms;
       --hha-motion-indicator-easing: cubic-bezier(0.2, 0, 0, 1);
 
       /* Centralized Layout Padding Token */
@@ -3392,7 +3408,7 @@ function cleanVid(vid) {
     /* ─── 2. ROOT POSITIONING ─────────────────────────────────────── */
     .hha-root {
       position: fixed;
-      left: var(--center-x, 0px);
+      left: 0;
       bottom: 24px;
       top: auto;
       display: grid;
@@ -3417,9 +3433,7 @@ function cleanVid(vid) {
     }
 
     .hha-root.is-snapping {
-      transition: left 240ms cubic-bezier(0.05, 0.7, 0.1, 1),
-                  top 240ms cubic-bezier(0.05, 0.7, 0.1, 1),
-                  bottom 240ms cubic-bezier(0.05, 0.7, 0.1, 1) !important;
+      transition: transform 240ms cubic-bezier(0.05, 0.7, 0.1, 1) !important;
     }
 
     .hha-root.dir-up {
@@ -3454,6 +3468,9 @@ function cleanVid(vid) {
       -webkit-backdrop-filter: blur(16px);
       cursor: grab;
       touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-user-drag: none;
       white-space: nowrap;
       position: relative;
       z-index: 2;
@@ -3463,9 +3480,9 @@ function cleanVid(vid) {
       transform-origin: center bottom;
       will-change: transform, opacity;
       transition: 
-        opacity 200ms ease-out 80ms,
-        transform 300ms cubic-bezier(0.34, 1.15, 0.64, 1) 80ms,
-        visibility 0s linear 80ms,
+        opacity 250ms ease-out 200ms,
+        transform var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        visibility var(--hha-motion-collapse-duration, 500ms) linear,
         box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), 
         border-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
         background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard);
@@ -3479,11 +3496,11 @@ function cleanVid(vid) {
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
-      transform: scale(0.9) translate3d(0, 0, 0);
+      transform: scale(0.92) translate3d(0, 12px, 0);
       transition:
-        opacity 80ms ease-out 0s,
-        transform 100ms ease-out 0s,
-        visibility 0s linear 80ms;
+        opacity 300ms ease-out 0s,
+        transform var(--hha-motion-expand-duration, 500ms) var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        visibility var(--hha-motion-expand-duration, 500ms) linear;
     }
 
     .hha-pill-status-group {
@@ -3834,17 +3851,20 @@ function cleanVid(vid) {
       margin: 0;
       opacity: 0;
       visibility: hidden;
-      z-index: 1;
+      z-index: 3;
       transform-origin: center bottom;
-      transform: scale(0.82) translate3d(0, 18px, 0);
+      transform: scale(0.92) translate3d(0, 12px, 0);
       will-change: transform, opacity, border-radius, box-shadow;
       backface-visibility: hidden;
       transition:
-        transform var(--hha-motion-collapse-duration, 300ms) cubic-bezier(0.25, 1, 0.5, 1),
-        opacity 220ms cubic-bezier(0.4, 0, 1, 1) 60ms,
-        border-radius var(--hha-motion-collapse-duration, 300ms) ease-out,
-        box-shadow var(--hha-motion-collapse-duration, 300ms) ease-out,
-        visibility 0s linear var(--hha-motion-collapse-duration, 300ms);
+        height 400ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        min-height 400ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        max-height 400ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        transform var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        opacity 250ms ease-in 200ms,
+        border-radius var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        box-shadow var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        visibility var(--hha-motion-collapse-duration, 500ms) linear;
     }
 
     .hha-root.dir-up .hha-flyout {
@@ -3886,14 +3906,14 @@ function cleanVid(vid) {
       z-index: 3;
       transform: scale(1) translate3d(0, 0, 0);
       transition:
-        height 280ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
-        min-height 280ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
-        max-height 280ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
-        transform var(--hha-motion-expand-duration, 360ms) var(--hha-motion-expand-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
-        opacity 180ms ease-out 0s,
-        border-radius var(--hha-motion-expand-duration, 360ms) var(--hha-motion-expand-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
-        box-shadow var(--hha-motion-expand-duration, 360ms) var(--hha-motion-expand-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
-        visibility 0s linear 0s;
+        height 400ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        min-height 400ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        max-height 400ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        transform var(--hha-motion-expand-duration, 500ms) var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        opacity 400ms cubic-bezier(0.2, 0, 0, 1) 0s,
+        border-radius var(--hha-motion-expand-duration, 500ms) var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        box-shadow var(--hha-motion-expand-duration, 500ms) var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        visibility var(--hha-motion-expand-duration, 500ms) linear 0s;
     }
 
     /* ─── Inner Elements Unified Synchronous Transitions ─── */
@@ -3901,37 +3921,43 @@ function cleanVid(vid) {
       flex-shrink: 0;
       opacity: 0;
       transform: translate3d(0, -8px, 0) scale(0.96);
-      transition: opacity 200ms ease-out, transform 240ms cubic-bezier(0.2, 0, 0, 1);
+      transition:
+        opacity 200ms ease-out 0s,
+        transform var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1));
     }
 
     .hha-root.is-expanded .hha-island-header {
       opacity: 1;
       transform: translate3d(0, 0, 0) scale(1);
-      transition: opacity 220ms ease-out 50ms, transform 300ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 50ms;
+      transition: opacity 350ms ease-out 80ms, transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 80ms;
     }
 
     .hha-flyout .hha-panels {
       opacity: 0;
       transform: translate3d(0, 10px, 0) scale(0.94);
-      transition: opacity 200ms ease-out, transform 240ms cubic-bezier(0.2, 0, 0, 1);
+      transition:
+        opacity 200ms ease-out 0s,
+        transform var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1));
     }
 
     .hha-root.is-expanded .hha-panels {
       opacity: 1;
       transform: translate3d(0, 0, 0) scale(1);
-      transition: opacity 220ms ease-out 60ms, transform 320ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 60ms;
+      transition: opacity 350ms ease-out 100ms, transform 480ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 100ms;
     }
 
     .hha-flyout .hha-island-footer {
       opacity: 0;
       transform: translate3d(0, 0, 0);
-      transition: opacity 200ms ease-out, transform 240ms cubic-bezier(0.2, 0, 0, 1);
+      transition:
+        opacity 200ms ease-out 0s,
+        transform var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1));
     }
 
     .hha-root.is-expanded .hha-island-footer {
       opacity: 1;
       transform: translate3d(0, 0, 0);
-      transition: opacity 180ms ease-out 40ms, transform 300ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 40ms;
+      transition: opacity 320ms ease-out 60ms, transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 60ms;
     }
 
     .hha-root.is-expanded .hha-panel.active .hha-card:nth-child(1),
@@ -3953,6 +3979,8 @@ function cleanVid(vid) {
       border-radius: var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0;
       gap: 8px;
       user-select: none;
+      -webkit-user-select: none;
+      -webkit-user-drag: none;
       cursor: grab;
       touch-action: none;
       box-sizing: border-box;
@@ -3960,7 +3988,8 @@ function cleanVid(vid) {
       position: relative;
     }
 
-    .hha-island-header:active {
+    .hha-island-header:active,
+    .hha-root.is-dragging .hha-island-header {
       cursor: grabbing;
     }
 
@@ -4066,8 +4095,8 @@ function cleanVid(vid) {
       transform: translate3d(var(--shared-counter-offset, 100px), 0, 0);
       will-change: transform, opacity;
       transition: 
-        transform 240ms cubic-bezier(0.25, 1, 0.5, 1),
-        opacity 180ms ease-out,
+        transform 350ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        opacity 200ms ease-out,
         background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard), 
         box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
     }
@@ -4076,8 +4105,8 @@ function cleanVid(vid) {
       opacity: 1;
       transform: translate3d(0, 0, 0);
       transition:
-        transform 300ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 50ms,
-        opacity 160ms ease-out 50ms,
+        transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 80ms,
+        opacity 320ms ease-out 80ms,
         background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard), 
         box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
     }
@@ -4133,16 +4162,16 @@ function cleanVid(vid) {
       transform: scale(0.85);
       will-change: transform, opacity;
       transition:
-        transform 240ms cubic-bezier(0.25, 1, 0.5, 1),
-        opacity 180ms ease-out;
+        transform 350ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        opacity 200ms ease-out;
     }
 
     .hha-root.is-expanded .hha-island-footer .hha-tabs {
       opacity: 1;
       transform: scale(1);
       transition:
-        transform 300ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 70ms,
-        opacity 200ms ease-out 70ms;
+        transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 100ms,
+        opacity 320ms ease-out 100ms;
     }
 
     .hha-tab-indicator {
@@ -4197,16 +4226,16 @@ function cleanVid(vid) {
       transform: translate3d(var(--shared-btn-offset, -104px), 0, 0);
       will-change: transform, opacity;
       transition:
-        transform 240ms cubic-bezier(0.25, 1, 0.5, 1),
-        opacity 180ms ease-out;
+        transform 350ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
+        opacity 200ms ease-out;
     }
 
     .hha-root.is-expanded .hha-footer-actions .hha-btn-quick {
       opacity: 1;
       transform: translate3d(0, 0, 0);
       transition:
-        transform 300ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 50ms,
-        opacity 160ms ease-out 50ms;
+        transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 80ms,
+        opacity 320ms ease-out 80ms;
     }
 
     /* Segmented Tab Badges */
@@ -4310,7 +4339,6 @@ function cleanVid(vid) {
 
     /* Focus Rings (M3 Dual Focus Indicators) */
     .hha-pill-status-group:focus-visible,
-    .hha-pill-queue-badge:focus-visible,
     .hha-tab-btn:focus-visible,
     .hha-btn-quick:focus-visible,
     .hha-queue-title-link:focus-visible {
@@ -5107,13 +5135,13 @@ function cleanVid(vid) {
       bottom: 0;
       background-color: var(--md-sys-color-surface-container-highest);
       border-radius: var(--md-sys-shape-corner-full);
-      border: 2px solid var(--md-sys-color-outline);
+      border: none;
       box-sizing: border-box;
-      transition: background-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), border-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
+      transition: background-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
     }
 
-    .hha-switch-slider:hover {
-      border-color: var(--md-sys-color-on-surface);
+    .hha-switch:hover .hha-switch-slider {
+      background-color: color-mix(in srgb, var(--md-sys-color-surface-container-highest) 88%, var(--md-sys-color-on-surface));
     }
 
     .hha-switch-slider::before {
@@ -5121,12 +5149,12 @@ function cleanVid(vid) {
       content: "";
       top: 50%;
       left: 4px;
-      height: 12px;
-      width: 12px;
+      height: 16px;
+      width: 16px;
       transform: translateY(-50%);
       background-color: var(--md-sys-color-outline);
       border-radius: var(--md-sys-shape-corner-full);
-      transition: transform var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-emphasized-decelerate), background-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), width var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), height var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
+      transition: transform var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-emphasized-decelerate), background-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
     }
 
     .hha-switch:hover .hha-switch-slider::before {
@@ -5136,12 +5164,11 @@ function cleanVid(vid) {
     /* M3 Checked Switch */
     .hha-switch-input:checked + .hha-switch-slider {
       background-color: var(--md-sys-color-primary);
-      border: 2px solid var(--md-sys-color-primary);
+      border: none;
     }
 
     .hha-switch-input:checked + .hha-switch-slider:hover {
       background-color: color-mix(in srgb, var(--md-sys-color-primary) 92%, var(--md-sys-color-on-primary));
-      border-color: color-mix(in srgb, var(--md-sys-color-primary) 92%, var(--md-sys-color-on-primary));
     }
 
     .hha-switch-input:checked + .hha-switch-slider::before {
@@ -5292,7 +5319,7 @@ function cleanVid(vid) {
       this._dragTarget = null;
       this._dragStartPointer = { x: 0, y: 0 };
       this._dragStartPillPos = { x: 0, y: 0 };
-      this._dragOpenDirection = null; // locked direction while dragging
+      this._dragRafId = null;
       this._justDragged = false;
       this._coverDebounceTimer = null;
       this._animTimer = null;
@@ -5300,11 +5327,39 @@ function cleanVid(vid) {
       this._onDocClick = null;
       this._onDocKeyDown = null;
       this._queueConfirmTimer = null;
+      this._windowListeners = [];
+      this._dragWindowRemovers = [];
+      this._resizeRemover = null;
+      this._snapTimer = null;
+      this._copyErrorTimer = null;
+      this._lastToggleTime = 0;
+      this._lastBtnLabel = null;
+      this._hasSyncedStatus = false;
 
       this._onResize = this._onResize.bind(this);
       this._onPointerDown = this._onPointerDown.bind(this);
       this._onPointerMove = this._onPointerMove.bind(this);
       this._onPointerUp = this._onPointerUp.bind(this);
+    }
+
+    _addWindowListener(type, handler, options) {
+      if (typeof window === 'undefined') return () => {};
+      window.addEventListener(type, handler, options);
+      const entry = { type, handler, options };
+      this._windowListeners.push(entry);
+      return () => {
+        const i = this._windowListeners.indexOf(entry);
+        if (i >= 0) this._windowListeners.splice(i, 1);
+        try { window.removeEventListener(type, handler, options); } catch (_) {}
+      };
+    }
+
+    _removeAllWindowListeners() {
+      if (typeof window === 'undefined' || !Array.isArray(this._windowListeners)) return;
+      for (const { type, handler, options } of this._windowListeners) {
+        try { window.removeEventListener(type, handler, options); } catch (_) {}
+      }
+      this._windowListeners = [];
     }
 
     connectedCallback() {
@@ -5350,7 +5405,10 @@ function cleanVid(vid) {
       this._syncAll();
 
       if (typeof window !== 'undefined') {
-        window.addEventListener('resize', this._onResize, { passive: true });
+        if (this._resizeRemover) {
+          try { this._resizeRemover(); } catch (_) {}
+        }
+        this._resizeRemover = this._addWindowListener('resize', this._onResize, { passive: true });
       }
 
       // Auto-bind to global assistant if present
@@ -5361,15 +5419,28 @@ function cleanVid(vid) {
     }
 
     disconnectedCallback() {
+      if (this._dragRafId) {
+        cancelAnimationFrame(this._dragRafId);
+        this._dragRafId = null;
+      }
+      if (this._snapTimer) {
+        clearTimeout(this._snapTimer);
+        this._snapTimer = null;
+      }
+      this._removeAllWindowListeners();
+      this._dragWindowRemovers = [];
+      this._resizeRemover = null;
+
+      if (this._isPointerDown) {
+        this._isPointerDown = false;
+        this._pointerId = null;
+        this._dragTarget = null;
+        this._dragMoved = false;
+        this._dragHandleType = null;
+      }
+
       this._domEventsBound = false;
       this.unbindAssistant();
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('resize', this._onResize);
-        if (this._onWindowUnload) {
-          window.removeEventListener('beforeunload', this._onWindowUnload);
-          window.removeEventListener('pagehide', this._onWindowUnload);
-        }
-      }
       if (this._onDocClick && typeof document !== 'undefined') {
         document.removeEventListener('click', this._onDocClick);
       }
@@ -5399,7 +5470,7 @@ function cleanVid(vid) {
             this._config.limit = stateLimit;
           }
           this.updateStatus(s.status, s.statusCode || s.code);
-          this.updateProgress(sent, lim);
+          this.updateProgress(sent);
         }
       }
 
@@ -5427,7 +5498,7 @@ function cleanVid(vid) {
             if (payload) this.updateStatus(payload.status, payload.code || payload.statusCode);
           }),
           assistant.on('progress', (payload) => {
-            if (payload) this.updateProgress(payload.sent, payload.limit);
+            if (payload) this.updateProgress(payload.sent);
           }),
           assistant.on('error', (payload) => this._showError(payload)),
           assistant.on('manualQueue', (payload) => {
@@ -5457,8 +5528,6 @@ function cleanVid(vid) {
         clearTimeout(this._copyErrorTimer);
         this._copyErrorTimer = null;
       }
-      this._copyBtnOrigHtml = null;
-      this._copyBtnOrigColor = null;
     }
 
     updateStatus(status, code) {
@@ -5568,7 +5637,7 @@ function cleanVid(vid) {
               }
             }
           }
-        }, this._isExpanded ? 330 : 310);
+        }, 520);
       } else {
         this._isAnimating = false;
       }
@@ -5736,11 +5805,11 @@ function cleanVid(vid) {
       const minX = padding + halfW;
       const maxX = Math.max(minX, winW - padding - halfW);
 
-      const flyoutH = 520;
+      const baseH = this._activeTab === 'queue' ? 520 : 320;
       const gap = 8;
       const pillH = 36;
       const maxFlyoutH = Math.max(120, winH - 100);
-      const finalH = Math.min(flyoutH, maxFlyoutH);
+      const finalH = Math.min(baseH, maxFlyoutH);
 
       const maxY = Math.max(padding, winH - pillH - padding);
       const minY = Math.min(maxY, finalH + gap + padding);
@@ -5876,13 +5945,11 @@ function cleanVid(vid) {
       if (!root || !pill) return;
 
       pill.addEventListener('pointerdown', (e) => this._onPointerDown(e, 'pill'));
-      pill.addEventListener('pointermove', this._onPointerMove);
       pill.addEventListener('pointerup', this._onPointerUp);
       pill.addEventListener('pointercancel', this._onPointerUp);
 
       if (header) {
         header.addEventListener('pointerdown', (e) => this._onPointerDown(e, 'header'));
-        header.addEventListener('pointermove', this._onPointerMove);
         header.addEventListener('pointerup', this._onPointerUp);
         header.addEventListener('pointercancel', this._onPointerUp);
       }
@@ -5936,19 +6003,6 @@ function cleanVid(vid) {
           }
         });
       }
-
-      const pillQueueBadge = this._shadow.querySelector('[data-el="pill-queue-badge"]');
-      if (pillQueueBadge) {
-        pillQueueBadge.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
-            e.preventDefault();
-            e.stopPropagation();
-            this.setActiveTab('queue');
-            this.open();
-          }
-        });
-      }
-
 
       const useCoverCb = this._shadow.querySelector('[data-el="setting-use-cover"]');
       const coverTextarea = this._shadow.querySelector('[data-el="setting-cover-text"]');
@@ -6060,6 +6114,7 @@ function cleanVid(vid) {
         // Pointer drag interaction on thumb
         let startY = 0;
         let startScrollTop = 0;
+        let scrollbarRemovers = [];
 
         const onPointerMove = (e) => {
           if (!isDragging) return;
@@ -6081,9 +6136,10 @@ function cleanVid(vid) {
           isDragging = false;
           thumb.classList.remove('is-dragging');
           try { thumb.releasePointerCapture(e.pointerId); } catch (_) {}
-          window.removeEventListener('pointermove', onPointerMove);
-          window.removeEventListener('pointerup', onPointerUp);
-          window.removeEventListener('pointercancel', onPointerUp);
+          for (const rm of scrollbarRemovers) {
+            try { rm(); } catch (_) {}
+          }
+          scrollbarRemovers = [];
           if (!isHovered) {
             scheduleHide(800);
           }
@@ -6098,9 +6154,11 @@ function cleanVid(vid) {
           thumb.classList.add('is-dragging');
           scrollbar.classList.add('is-visible');
           try { thumb.setPointerCapture(e.pointerId); } catch (_) {}
-          window.addEventListener('pointermove', onPointerMove);
-          window.addEventListener('pointerup', onPointerUp);
-          window.addEventListener('pointercancel', onPointerUp);
+          scrollbarRemovers = [
+            this._addWindowListener('pointermove', onPointerMove),
+            this._addWindowListener('pointerup', onPointerUp),
+            this._addWindowListener('pointercancel', onPointerUp)
+          ];
         });
 
         // Click on scrollbar track to jump
@@ -6266,17 +6324,10 @@ function cleanVid(vid) {
       if (action === 'quick-toggle') {
         e.stopPropagation();
         this._handleToggleAutomation();
-      } else if (action === 'open-queue-tab') {
-        e.stopPropagation();
-        this.setActiveTab('queue');
-        this.open();
-        requestAnimationFrame(() => {
-          this._updateTabIndicator();
-        });
       } else if (action === 'toggle-expand') {
         e.stopPropagation();
         this.toggleExpand();
-      } else if (action === 'close-flyout' || action === 'collapse-island') {
+      } else if (action === 'collapse-island') {
         e.stopPropagation();
         this.toggleExpand(false);
       } else if (action === 'switch-tab') {
@@ -6488,10 +6539,7 @@ function cleanVid(vid) {
         partial.coverText = partial.coverText.slice(0, MAX_COVER_LENGTH);
       }
       this._config = { ...this._config, ...partial };
-      const nextLimit = typeof this._config.limit === 'number' ? this._config.limit : this._config.dailyLimit;
-      if (nextLimit !== undefined) {
-        this.updateProgress(this._progress ? this._progress.sent : 0, nextLimit);
-      }
+      this.updateProgress(this._progress ? this._progress.sent : 0);
       if (this._assistant && typeof this._assistant.setConfig === 'function') {
         this._assistant.setConfig(partial);
       }
@@ -6545,12 +6593,23 @@ function cleanVid(vid) {
 
     _onPointerDown(e, handleType) {
       if (e.target && typeof e.target.closest === 'function') {
-        if (e.target.closest('button, input, textarea, a, select, .hha-pill-queue-badge, [data-action="collapse-island"]')) {
+        if (e.target.closest('button, input, textarea, a, select, [data-action="collapse-island"]')) {
           return; // Let interactive controls handle their own events
         }
       }
 
-      if (this._isPointerDown) return;
+      // If pointer was left in a down state from a prior interrupted gesture, cleanly reset it
+      if (this._isPointerDown) {
+        this._isPointerDown = false;
+        this._pointerId = null;
+        this._dragTarget = null;
+        this._dragMoved = false;
+        this._dragHandleType = null;
+        if (this._dragWindowRemovers && this._dragWindowRemovers.length > 0) {
+          for (const rm of this._dragWindowRemovers) { try { rm(); } catch (_) {} }
+          this._dragWindowRemovers = [];
+        }
+      }
 
       const root = this._shadow ? (this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root')) : null;
       if (root) {
@@ -6566,18 +6625,22 @@ function cleanVid(vid) {
       this._dragStartPointer = { x: e.clientX, y: e.clientY };
       this._dragStartPillPos = { ...this._pillPos };
 
-      if (typeof window !== 'undefined') {
-        window.addEventListener('pointermove', this._onPointerMove, { capture: true });
-        window.addEventListener('pointerup', this._onPointerUp, { capture: true });
-        window.addEventListener('pointercancel', this._onPointerUp, { capture: true });
-        window.addEventListener('blur', this._onPointerUp, { capture: true });
+      // Prevent native text selection and HTML5 drag-and-drop gestures from aborting the pointer capture
+      if (typeof e.preventDefault === 'function') {
+        e.preventDefault();
       }
-      if (target && typeof target.addEventListener === 'function') {
-        target.addEventListener('lostpointercapture', this._onPointerUp, { once: true });
+
+      if (typeof window !== 'undefined') {
+        this._dragWindowRemovers = [
+          this._addWindowListener('pointermove', this._onPointerMove, { capture: true }),
+          this._addWindowListener('pointerup', this._onPointerUp, { capture: true }),
+          this._addWindowListener('pointercancel', this._onPointerUp, { capture: true }),
+          this._addWindowListener('blur', this._onPointerUp, { capture: true })
+        ];
       }
 
       try {
-        if (typeof target.setPointerCapture === 'function') {
+        if (target && typeof target.setPointerCapture === 'function') {
           target.setPointerCapture(e.pointerId);
         }
       } catch (_) {}
@@ -6604,7 +6667,14 @@ function cleanVid(vid) {
         const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
 
         this._pillPos = this._clampPillCoordinates(rawCenterX, rawY, winW, winH);
-        this._updatePosition();
+        if (!this._dragRafId) {
+          this._dragRafId = requestAnimationFrame(() => {
+            this._dragRafId = null;
+            if (this._isPointerDown) {
+              this._updatePosition();
+            }
+          });
+        }
       }
     }
 
@@ -6612,14 +6682,15 @@ function cleanVid(vid) {
       if (!this._isPointerDown) return;
       if (e && e.pointerId !== undefined && this._pointerId !== null && e.pointerId !== this._pointerId) return;
       const target = this._dragTarget || (e ? e.currentTarget : null);
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('pointermove', this._onPointerMove, { capture: true });
-        window.removeEventListener('pointerup', this._onPointerUp, { capture: true });
-        window.removeEventListener('pointercancel', this._onPointerUp, { capture: true });
-        window.removeEventListener('blur', this._onPointerUp, { capture: true });
+      if (this._dragRafId) {
+        cancelAnimationFrame(this._dragRafId);
+        this._dragRafId = null;
       }
-      if (target && typeof target.removeEventListener === 'function') {
-        target.removeEventListener('lostpointercapture', this._onPointerUp);
+      if (this._dragWindowRemovers && this._dragWindowRemovers.length > 0) {
+        for (const rm of this._dragWindowRemovers) {
+          try { rm(); } catch (_) {}
+        }
+        this._dragWindowRemovers = [];
       }
       try {
         if (target && typeof target.releasePointerCapture === 'function' && e && e.pointerId !== undefined) {
@@ -6637,7 +6708,6 @@ function cleanVid(vid) {
       this._pointerId = null;
       this._dragHandleType = null;
       this._dragTarget = null;
-      this._dragOpenDirection = null;
 
       if (wasDragging) {
         const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
@@ -6747,11 +6817,18 @@ function cleanVid(vid) {
       const minX = padding + halfW;
       const maxX = Math.max(minX, winW - padding - halfW);
       const clampedCenterX = Math.round(clamp(this._pillPos.x, minX, maxX));
-      root.style.left = `${clampedCenterX}px`;
-      root.style.right = 'auto';
-      root.style.alignItems = 'end';
-      if (typeof root.style.setProperty === 'function') {
-        root.style.setProperty('--center-x', `${clampedCenterX}px`);
+      const bottomDist = Math.max(8, winH - (this._pillPos.y + 36));
+
+      if (root.style.left !== '0px') {
+        root.style.left = '0px';
+        root.style.bottom = '0px';
+        root.style.top = 'auto';
+        root.style.right = 'auto';
+        root.style.alignItems = 'end';
+      }
+      root.style.transform = `translate3d(${clampedCenterX}px, -${bottomDist}px, 0) translateX(-50%)`;
+
+      if (!this._isPointerDown && typeof root.style.setProperty === 'function') {
         const pillWidth = this._getPillWidth();
         root.style.setProperty('--pill-width', `${pillWidth}px`);
         const isQueue = this._activeTab === 'queue';
@@ -6760,11 +6837,6 @@ function cleanVid(vid) {
         const finalH = Math.min(baseH, maxFlyoutH);
         root.style.setProperty('--flyout-height', `${finalH}px`);
       }
-
-      // Vertical positioning: bottom anchor
-      const bottomDist = Math.max(8, winH - (this._pillPos.y + 36));
-      root.style.top = 'auto';
-      root.style.bottom = `${bottomDist}px`;
 
       const flyout = this._shadow.querySelector('.hha-flyout');
       if (flyout) {
@@ -7041,33 +7113,13 @@ function cleanVid(vid) {
     } else {
       document.addEventListener('DOMContentLoaded', () => mountHud(), { once: true });
     }
-
-    // Listen for late-arriving engine ready event
-    window.addEventListener('hha:ready', (e) => {
-      mountHud(e.detail);
-    }, { once: true });
-
-    // Safety polling for async script loading
-    let pollCount = 0;
-    const pollInterval = setInterval(() => {
-      pollCount++;
-      const target = globalThis.HHApplyAssistant || (globalThis.window && globalThis.window.HHApplyAssistant);
-      if (target) {
-        mountHud(target);
-        clearInterval(pollInterval);
-      } else if (pollCount > 25) {
-        clearInterval(pollInterval);
-      }
-    }, 200);
   }
 
   return {
     HhaHudElement,
     mountHud,
     clamp,
-    clampCoordinates,
     formatTime,
-    formatQueueReason,
     ICONS,
     STYLES
   };
