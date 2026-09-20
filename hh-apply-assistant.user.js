@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      0.0.9
 // @author       Timur Geruzov
-// @description  HH Apply Assistant - Автоматизация откликов на вакансии hh.ru с эргономичным плавающим HUD интерфейсом
+// @description  HH Apply Assistant - Автоматизация откликов на вакансии hh.ru с плавающим HUD интерфейсом
 // @license      GPL-3.0-only
 // @homepageURL  https://github.com/tgeruzov/hh-apply-assistant
 // @supportURL   https://github.com/tgeruzov/hh-apply-assistant/issues
@@ -11,6 +11,7 @@
 // @match        *://*.hh.ru/vacancy/*
 // @match        *://*.hh.ru/applicant/vacancy_response*
 // @match        *://*.hh.ru/article/*
+// @noframes
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
@@ -47,15 +48,14 @@ function cleanVid(vid) {
  * ============================================================================
  */
 
-(function (root, factory) {
-  const api = factory();
-  if (typeof root !== 'undefined') root.HHApplyAssistant = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+(function () {
   'use strict';
 
   // --- 1. Constants, Selectors & Defaults ---
   const VERSION = '0.1.0';
   const SELECTORS = {
+    modal: '[data-qa="modal-container"], [data-qa="response-popup-container"], .bloko-modal, .modal-content',
+    modalClose: '[data-qa="modal-close"], [data-qa="response-popup-close"], [data-qa="bloko-modal-close"], [data-qa="popup-close"], button[aria-label="Закрыть"], button.bloko-modal-close-button',
     applyBtn: '[data-qa="vacancy-serp__vacancy_response"]',
     vacancyApply: '[data-qa="vacancy-response-link-bottom"], [data-qa="vacancy-response-link-top"], a[data-qa*="vacancy-response-link"]',
     attachCoverBtn: '[data-qa="responded-success-attach-cover-letter"]',
@@ -72,42 +72,18 @@ function cleanVid(vid) {
   };
 
   const SELECTOR_METADATA = {
-    applyBtn: {
-      name: 'Кнопка «Откликнуться» в поисковой выдаче',
-      heuristic: 'button, [role="button"] /откликнуться|apply|respond/i'
-    },
-    vacancyApply: {
-      name: 'Кнопка «Откликнуться» на странице вакансии',
-      heuristic: 'button, a, [role="button"] /откликнуться|отклик без резюме|перейти к отклику/i'
-    },
-    attachCoverBtn: {
-      name: 'Кнопка «Прикрепить сопроводительное» после отклика',
-      heuristic: 'button, a /сопроводительное|письмо|cover/i'
-    },
-    attachCoverInModal: {
-      name: 'Переключатель письма в модальном окне',
-      heuristic: 'button, [role="button"] /добавить сопроводительное|написать письмо/i'
-    },
-    letterTextarea: {
-      name: 'Поле ввода текста письма',
-      heuristic: 'textarea[name="text"] или первый видимый <textarea>'
-    },
-    letterSubmit: {
-      name: 'Кнопка отправки формы отклика',
-      heuristic: 'button, input[type="submit"] /отправить|сохранить|откликнуться|send|submit/i'
-    },
-    relocationBtn: {
-      name: 'Подтверждение предупреждения о релокации',
-      heuristic: 'button[data-qa="relocation-warning-confirm"] или кнопка «Все равно откликнуться» в алерте'
-    },
-    vacancyCard: {
-      name: 'Карточка вакансии в выдаче',
-      heuristic: 'div, article с одиночной ссылкой на /vacancy/'
-    },
-    pagerNext: {
-      name: 'Кнопка «Дальше» (пагинация поиска)',
-      heuristic: 'a[data-qa="pager-next"], a /дальше|вперёд|следующая/i'
-    }
+    applyBtn: { name: 'Кнопка «Откликнуться» в поисковой выдаче' },
+    vacancyApply: { name: 'Кнопка «Откликнуться» на странице вакансии' },
+    attachCoverBtn: { name: 'Кнопка «Прикрепить сопроводительное» после отклика' },
+    attachCoverInModal: { name: 'Переключатель письма в модальном окне' },
+    letterTextarea: { name: 'Поле ввода текста письма' },
+    letterSubmit: { name: 'Кнопка отправки формы отклика' },
+    relocationBtn: { name: 'Подтверждение предупреждения о релокации' },
+    vacancyCard: { name: 'Карточка вакансии в выдаче' },
+    pagerNext: { name: 'Кнопка «Дальше» (пагинация поиска)' },
+    rejectWarning: { name: 'Предупреждение о возможном отказе' },
+    responseChat: { name: 'Ссылка на чат после отклика' },
+    vacancyLink: { name: 'Ссылка на вакансию в выдаче' }
   };
 
   const STORAGE_PREFIX = 'hh_apply_assistant_s1_';
@@ -121,9 +97,7 @@ function cleanVid(vid) {
     lastAttempt: STORAGE_PREFIX + 'last_attempt_id',
     manualList: STORAGE_PREFIX + 'manual_queue',
     tabId: STORAGE_PREFIX + 'tab_id',
-    sentCount: STORAGE_PREFIX + 'sent_count',
     stats: STORAGE_PREFIX + 'run_stats',
-    dailyLimitReached: STORAGE_PREFIX + 'daily_limit_reached',
     pendingVacancyMeta: STORAGE_PREFIX + 'pending_vacancy_meta',
     blacklist: STORAGE_PREFIX + 'blacklist_v1',
     attempts: STORAGE_PREFIX + 'attempts_v1',
@@ -442,7 +416,7 @@ function cleanVid(vid) {
 
   // --- Watchdog Progress Tracking ---
   let lastProgressTs = Date.now();
-  function markProgress(step = '') {
+  function markProgress() {
     lastProgressTs = Date.now();
   }
 
@@ -558,7 +532,7 @@ function cleanVid(vid) {
     // 2. Clear watchdog stall tracking for this vacancy upon outcome
     storage.sessionRemove(KEYS.watchdogStallCount);
     storage.sessionRemove(KEYS.watchdogStallVid);
-    markProgress('outcome:' + finalOutcome);
+    markProgress();
 
     // 3. Log event
     const logLevel = finalOutcome === 'error' ? 'error' : (finalOutcome === 'skipped' ? 'warn' : 'info');
@@ -575,7 +549,7 @@ function cleanVid(vid) {
     // 4. Anomaly check for session-processed items (excluding already_applied and hidden_employer)
     checkSkipRateAnomaly(finalOutcome, finalReason);
 
-    // 6. Emit event on event bus
+    // 5. Emit event on event bus
     events.emit('outcome', {
       vid: clean,
       outcome: finalOutcome,
@@ -606,14 +580,13 @@ function cleanVid(vid) {
     return success;
   }
 
-  const timings = () => ACTION_TIMINGS;
-  const actionPause = () => wait(randBetween(timings().action[0], timings().action[1]));
-  const vacancyPause = () => wait(Math.max(2000, randBetween(timings().delay[0], timings().delay[1])));
+  const actionPause = () => wait(randBetween(ACTION_TIMINGS.action[0], ACTION_TIMINGS.action[1]));
+  const vacancyPause = () => wait(Math.max(2000, randBetween(ACTION_TIMINGS.delay[0], ACTION_TIMINGS.delay[1])));
 
   const wait = (ms) => new Promise((resolve) => {
     const sig = activeAbortController?.signal;
     if (stopSignal || sig?.aborted || ms <= 0) return resolve();
-    
+
     let timer = null;
     const cleanup = () => {
       if (timer) clearTimeout(timer);
@@ -621,7 +594,7 @@ function cleanVid(vid) {
     };
     const onAbort = () => { cleanup(); resolve(); };
     if (sig) sig.addEventListener('abort', onAbort, { once: true });
-    timer = setTimeout(() => { cleanup(); markProgress('wait_done'); resolve(); }, ms);
+    timer = setTimeout(() => { cleanup(); markProgress(); resolve(); }, ms);
   });
 
   // --- 7. Statistics & History ---
@@ -743,10 +716,13 @@ function cleanVid(vid) {
 
     // Check if this window was navigated or refreshed in the SAME tab
     // In browsers, window.name persists across navigations in the same tab,
-    // but is empty or unlinked when a new tab is cloned via target="_blank" or window.open.
-    const isSameTab = Boolean(sessionTabId && winName && winName === sessionTabId && winName.startsWith('hha_'));
+    // but may be empty or unlinked if not explicitly set.
+    const isSameTab = Boolean(sessionTabId && sessionTabId.startsWith('hha_') && (!winName || winName === sessionTabId));
 
     if (isSameTab) {
+      try {
+        if (win && win.name !== sessionTabId) win.name = sessionTabId;
+      } catch (_) {}
       return sessionTabId;
     }
 
@@ -773,8 +749,7 @@ function cleanVid(vid) {
   const getSentCount = () => getDailyCounters().applied;
   function resetSentCount() {
     resetDailyCounters();
-    storage.sessionSet(KEYS.sentCount, '0');
-    events.emit('progress', { sent: 0, limit: config.limit, percentage: 0 });
+    events.emit('progress', { sent: 0, percentage: 0 });
     return true;
   }
 
@@ -1010,16 +985,16 @@ function cleanVid(vid) {
     if (webLockReleaseResolver) {
       try { webLockReleaseResolver(); } catch (_) {}
       webLockReleaseResolver = null;
-    }
-    if (webLockAbortController) {
+    } else if (webLockAbortController) {
       try { webLockAbortController.abort(); } catch (_) {}
-      webLockAbortController = null;
     }
+    webLockAbortController = null;
     hasActiveWebLock = false;
     if (webLockPendingPromise) {
-      try { await webLockPendingPromise; } catch (_) {}
+      try { await webLockPendingPromise; } catch (e) { hhaLog('debug', 'weblock_pending_error', { error: String(e && e.message || e) }); }
       webLockPendingPromise = null;
     }
+    await new Promise(r => setTimeout(r, 10));
   }
 
   function readInstanceLock() {
@@ -1033,15 +1008,8 @@ function cleanVid(vid) {
   async function acquireInstanceLock(tabId) {
     await releaseWebLock();
     const now = Date.now();
-    const existing = readInstanceLock();
 
-    // Conflict check in localStorage
-    if (existing && isLiveLock(existing, now) && existing.tabId !== tabId) {
-      instanceLeaseVerified = false;
-      return false;
-    }
-
-    // Web Locks non-blocking acquisition
+    // Web Locks acquisition (native browser mutual exclusion across tabs/workers)
     const nav = globalThis.navigator;
     if (nav?.locks?.request) {
       let webLockAcquired = false;
@@ -1052,7 +1020,7 @@ function cleanVid(vid) {
 
         webLockPendingPromise = nav.locks.request(
           KEYS.instanceLock,
-          { mode: 'exclusive', ifAvailable: true, signal: lockController.signal },
+          { mode: 'exclusive', signal: lockController.signal },
           (lock) => {
             if (!lock) {
               lockResolver(false);
@@ -1073,7 +1041,7 @@ function cleanVid(vid) {
 
         let timeoutId;
         const timeoutPromise = new Promise(resolve => {
-          timeoutId = setTimeout(() => resolve('TIMEOUT'), 2000);
+          timeoutId = setTimeout(() => resolve('TIMEOUT'), 1000);
         });
         const acquired = await Promise.race([lockPromise, timeoutPromise]);
         clearTimeout(timeoutId);
@@ -1087,6 +1055,15 @@ function cleanVid(vid) {
         }
       } catch (_) {
         hasActiveWebLock = false;
+        instanceLeaseVerified = false;
+        return false;
+      }
+    } else {
+      // Fallback for environments without Web Locks API
+      const existing = readInstanceLock();
+      if (existing && isLiveLock(existing, now) && existing.tabId !== tabId) {
+        instanceLeaseVerified = false;
+        return false;
       }
     }
 
@@ -1119,11 +1096,12 @@ function cleanVid(vid) {
   function touchInstanceLock(tabId) {
     const now = Date.now();
     const cur = readInstanceLock();
-    if (!cur || cur.tabId !== tabId || !isLiveLock(cur, now)) {
+    // Only consider lock lost if another tab holds an active (live) lock
+    if (cur && cur.tabId !== tabId && isLiveLock(cur, now)) {
       instanceLeaseVerified = false;
       return 'LOST';
     }
-    const leaseId = currentLeaseId || cur.leaseId;
+    const leaseId = currentLeaseId || (cur && cur.tabId === tabId ? cur.leaseId : null) || `${tabId}_${now.toString(36)}`;
     currentLeaseId = leaseId;
     if (!storage.localSet(KEYS.instanceLock, JSON.stringify({ tabId, leaseId, ts: now }))) {
       instanceLeaseVerified = false;
@@ -1145,7 +1123,6 @@ function cleanVid(vid) {
   const isRunCurrent = (runId) => !stopSignal && (runId === undefined || runId === null || runId === currentRunId) && isRunning();
 
   function guardOwnedCommit(runId = currentRunId) {
-    if (globalThis.__HHA_TEST__) return true;
     if (!isRunCurrent(runId)) return false;
     if (touchInstanceLock(TAB_ID) !== 'OWNED') {
       haltForLostInstanceLock();
@@ -1186,19 +1163,16 @@ function cleanVid(vid) {
   }
 
   const haltForCaptcha = () => {
-    const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href)) || null;
+    const vid = resolveCurrentVid();
     recordOutcome(vid, 'error', 'error_captcha');
     haltEngine('CAPTCHA_DETECTED', 'Captcha detected on page. Automation halted.');
   };
   const haltForRateLimit = () => {
-    const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href)) || null;
+    const vid = resolveCurrentVid();
     recordOutcome(vid, 'error', 'error_rate_limit');
     haltEngine('RATE_LIMITED', 'Rate limit detected. Automation halted.');
   };
   const haltForDailyLimit = (msg = `Достигнут суточный лимит HeadHunter: не более ${MAX_DAILY_LIMIT} откликов за 24 часа. Автоматизация остановлена.`) => {
-    try {
-      storage.localSet(KEYS.dailyLimitReached, Date.now());
-    } catch (_) {}
     hhaLog('warn', 'hh_limit_reached', { limit: MAX_DAILY_LIMIT, source: 'hh_ui' });
     terminateRun('DAILY_LIMIT_REACHED', msg, { limit: MAX_DAILY_LIMIT, period: '24h' }, false);
   };
@@ -1357,6 +1331,20 @@ function cleanVid(vid) {
     return qa(keyOrSelector, root);
   }
 
+  function getVisibleModals(root = globalThis.document) {
+    if (!root) return [];
+    return qa(SELECTORS.modal, root).filter(m => isVisible(m));
+  }
+
+  async function closeModal(modal = null) {
+    const targetModal = modal || getVisibleModals()[0] || null;
+    if (!targetModal) return false;
+    const closeBtn = q(SELECTORS.modalClose, targetModal) || q('[data-qa*="close" i], button[aria-label*="закрыть" i]', targetModal);
+    if (!closeBtn) return false;
+    await clickElement(closeBtn);
+    return true;
+  }
+
   function notifySelectorFailure(key, scope = null, extra = {}) {
     const meta = SELECTOR_METADATA[key] || {};
     const selectorName = meta.name || key;
@@ -1426,6 +1414,21 @@ function cleanVid(vid) {
       hash = Math.imul(hash, 16777619) >>> 0;
     }
     return hash.toString(36);
+  }
+
+  function resolveCurrentVid(preferCard = null) {
+    if (preferCard) {
+      const cardVid = getVacancyID(preferCard);
+      if (cardVid) return cardVid.startsWith('v_') ? cardVid : 'v_' + cardVid;
+    }
+    const last = getLastAttemptID();
+    if (last) return last.startsWith('v_') ? last : 'v_' + last;
+    const bodyVid = getVacancyID(globalThis.document?.body);
+    if (bodyVid) return bodyVid.startsWith('v_') ? bodyVid : 'v_' + bodyVid;
+    const locHref = globalThis.location?.href || '';
+    const hrefVid = getVacancyIDFromHref(locHref);
+    if (hrefVid) return 'v_' + cleanVid(hrefVid);
+    return null;
   }
 
   function getVacancyID(node) {
@@ -1521,11 +1524,14 @@ function cleanVid(vid) {
     try {
       const init = checkFn();
       if (init) return Promise.resolve(init);
-    } catch (_) {}
+    } catch (e) {
+      hhaLog('debug', 'wait_condition_init_error', { error: String(e && e.message || e) });
+    }
 
     return new Promise((resolve) => {
       let timer = null, pollTimer = null, observer = null, throttleTimer = null;
       let lastCheckTime = 0;
+      let hasLoggedError = false;
 
       const cleanup = (res) => {
         if (timer) clearTimeout(timer);
@@ -1533,7 +1539,7 @@ function cleanVid(vid) {
         if (throttleTimer) clearTimeout(throttleTimer);
         if (observer) observer.disconnect();
         if (signal) signal.removeEventListener('abort', onAbort);
-        
+
         resolve(res);
       };
       const onAbort = () => cleanup(false);
@@ -1591,7 +1597,6 @@ function cleanVid(vid) {
   const Page = {
     isVacancy: () => Boolean(globalThis.location?.pathname?.startsWith('/vacancy/')),
     isResponseForm: () => Boolean(globalThis.location?.pathname?.startsWith('/applicant/vacancy_response')),
-    isSearchList: () => Boolean(globalThis.location?.pathname?.startsWith('/search/vacancy')),
     isSearch: () => Boolean(globalThis.location && (globalThis.location.href?.includes('/search/vacancy') || globalThis.location.pathname?.startsWith('/search'))),
     isArticle: () => Boolean(globalThis.location?.pathname?.startsWith('/article/'))
   };
@@ -1814,7 +1819,7 @@ function cleanVid(vid) {
   const detectAlreadyApplied = () => {
     const doc = globalThis.document;
     if (!doc) return false;
-    if (query('responseChat')) return true;
+    if (queryExact('responseChat')) return true;
     const bodyText = ((doc.body || doc.documentElement)?.textContent || '').slice(0, 3000);
     return /(?:вы уже откликались|отклик уже отправлен|already applied)/i.test(bodyText);
   };
@@ -1829,7 +1834,7 @@ function cleanVid(vid) {
   const hasResponseTextConfirmation = (root) => /(?:отклик отправлен|вы откликнулись|резюме доставлено|резюме отправлено|response sent|applied successfully)/i.test(((root || getResponseDetectionScope())?.textContent || '').slice(0, 4000));
   const hasExactResponseConfirmation = (root) => {
     const scope = root || getResponseDetectionScope();
-    return Boolean(scope && (query('responseChat', scope) || (!config.useCover && query('attachCoverBtn', scope))));
+    return Boolean(scope && (queryExact('responseChat', scope) || (!config.useCover && queryExact('attachCoverBtn', scope))));
   };
 
   function isResponseConfirmed({ allowDocumentStrongText = false } = {}) {
@@ -1855,7 +1860,6 @@ function cleanVid(vid) {
     return null;
   }
 
-
   function detectResponseOutcomeInRoot(root, includeExactSelectors) {
     if (!root || isReviewOrFeedbackElement(root)) return null;
     if (detectDailyLimit(root) || detectDailyLimit()) return 'DAILY_LIMIT';
@@ -1871,10 +1875,10 @@ function cleanVid(vid) {
       /(?:выберите|выбор)\s+(?:подходящее\s+)?резюме|резюме\s+для\s+отклика/i.test(root.textContent || '')
     );
 
-    if (includeExactSelectors && query('attachCoverBtn', root)) {
+    if (includeExactSelectors && config.useCover && queryExact('attachCoverBtn', root)) {
       return 'ATTACH_COVER';
     }
-    if (includeExactSelectors && (query('responseChat', root) || hasResponseTextConfirmation(root))) {
+    if (includeExactSelectors && (queryExact('responseChat', root) || hasResponseTextConfirmation(root))) {
       return 'SUCCESS';
     }
     if (query('letterTextarea', root) || query('attachCoverInModal', root) || query('letterSubmit', root) || q('[data-qa="vacancy-response-popup-form"]', root) || isResumeModal) {
@@ -1891,7 +1895,7 @@ function cleanVid(vid) {
     if (detectRelocationWarning()) return 'RELOCATION_WARNING';
 
     // 2. Cover letter attachment on vacancy page banner
-    const attachBtn = query('attachCoverBtn');
+    const attachBtn = queryExact('attachCoverBtn');
     if (config.useCover && attachBtn && isVisible(attachBtn) && !isReviewOrFeedbackElement(attachBtn)) {
       return 'ATTACH_COVER';
     }
@@ -1923,11 +1927,9 @@ function cleanVid(vid) {
     bumpStat('success');
     recordOutcome(vid, 'applied', 'applied_success');
     const cur = getSentCount();
-    storage.sessionSet(KEYS.sentCount, String(cur));
     events.emit('progress', {
       sent: cur,
-      limit: config.limit,
-      percentage: Math.min(100, Math.round((cur / Math.max(1, config.limit)) * 100))
+      percentage: Math.min(100, Math.round((cur / MAX_DAILY_LIMIT) * 100))
     });
     return true;
   }
@@ -2024,7 +2026,7 @@ function cleanVid(vid) {
     const origin = globalThis.location?.origin || 'https://hh.ru';
     const returnUrl = (rawReturn && (rawReturn.includes('/search/vacancy') || rawReturn.startsWith('http') || rawReturn.startsWith('/'))) ? rawReturn : `${origin}/search/vacancy`;
     const loc = globalThis.location;
-    if (loc && !Page.isSearchList() && loc.href !== returnUrl) {
+    if (loc && !Page.isSearch() && loc.href !== returnUrl) {
       isNavigating = true;
       setTimeout(() => { isNavigating = false; }, 7000);
       try { loc.assign(returnUrl); } catch (_) { loc.href = returnUrl; }
@@ -2035,7 +2037,7 @@ function cleanVid(vid) {
   async function submitCoverLetterForm(scope = null, runId = currentRunId) {
     if (!isRunCurrent(runId)) return false;
     const ta = query('letterTextarea', scope);
-    if (ta && config.useCover) {fillTextarea(ta, config.coverText);
+    if (ta && config.useCover) { fillTextarea(ta, config.coverText);
       await actionPause();
       if (!isRunCurrent(runId)) return false;
     }
@@ -2105,6 +2107,21 @@ function cleanVid(vid) {
     return isRunCurrent(runId) ? 'OK' : 'STOPPED';
   }
 
+  async function checkAndHandleRejectWarning(modal) {
+    if (!modal) return null;
+    const blockReason = detectModalBlockReason(modal);
+    if (blockReason === 'REJECT_WARNING' || blockReason === 'REJECT_REGEX') {
+      await closeModal(modal);
+      return blockReason === 'REJECT_REGEX' ? 'SKIP_REJECT_REGEX' : 'SKIP_REJECT_WARNING';
+    }
+    if (hasReliableRejectWarning(modal)) {
+      const isWarningSelector = Boolean(q(SELECTORS.rejectWarning, modal));
+      await closeModal(modal);
+      return isWarningSelector ? 'SKIP_REJECT_WARNING' : 'SKIP_REJECT_REGEX';
+    }
+    return null;
+  }
+
   async function handleScenarioB(modal, runId = currentRunId) {
     if (detectDailyLimit(modal) || detectDailyLimit()) { haltForDailyLimit(); return 'BLOCKED'; }
     const blockReason = detectModalBlockReason(modal);
@@ -2158,6 +2175,62 @@ function cleanVid(vid) {
     return confirmed ? 'OK' : 'FAIL';
   }
 
+  async function handleModalOutcome(vid, runId) {
+    const modals = getVisibleModals();
+    const modal = modals.find(m => !isReviewOrFeedbackElement(m)) || modals[0] || null;
+    const res = await handleScenarioB(modal, runId);
+    if (res === 'OK' && vid) {
+      commitSuccess(vid, runId);
+    } else if ((res === 'SKIP' || res === 'SKIP_REJECT_WARNING' || res === 'SKIP_REJECT_REGEX') && vid) {
+      skipVacancy(vid, res === 'SKIP_REJECT_REGEX' ? 'skip_reject_regex' : 'skip_reject_warning', runId);
+    } else if (res === 'TEST_REQUIRED') {
+      if (vid) {
+        saveCurrentForManual(vid, 'test_required', runId);
+        markVacancyProcessed(vid, runId);
+      }
+      await closeModal(modal);
+    } else if (res === 'RESUME_HIDDEN') {
+      if (vid) skipVacancy(vid, 'resume_hidden', runId);
+      await closeModal(modal);
+    } else if (res === 'FAIL') {
+      if (vid) {
+        saveCurrentForManual(vid, 'modal_submit_failed', runId);
+        markVacancyProcessed(vid, runId);
+      }
+      await closeModal(modal);
+    }
+    return res;
+  }
+
+  async function handleRelocationOutcome(vid, runId, relocAttempts) {
+    if (relocAttempts >= 2) {
+      reportError('Превышен лимит попыток подтверждения релокации (loop guard)', 'RELOCATION_LOOP_GUARD', { vid, relocAttempts });
+      if (vid) {
+        saveCurrentForManual(vid, 'relocation_loop', runId);
+        markVacancyProcessed(vid, runId);
+      }
+      return 'FAIL';
+    }
+    const relocBtn = detectRelocationWarning() || query('relocationBtn');
+    if (relocBtn) {
+      await clickElement(relocBtn);
+      await actionPause();
+      if (!isRunCurrent(runId)) return 'STOPPED';
+
+      await waitForCondition(() => !detectRelocationWarning(), 4000, activeAbortController?.signal);
+      const nextOutcome = await waitForCondition(() => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()), 8000, activeAbortController?.signal);
+      if (nextOutcome) {
+        return await dispatchOutcome(nextOutcome, vid, runId, relocAttempts + 1);
+      }
+    }
+    reportError('Не удалось подтвердить предупреждение о релокации', 'RELOCATION_BTN_NOT_FOUND', { vid });
+    if (vid) {
+      saveCurrentForManual(vid, 'relocation_unconfirmed', runId);
+      markVacancyProcessed(vid, runId);
+    }
+    return 'FAIL';
+  }
+
   async function dispatchOutcome(outcome, vid, runId, relocAttempts = 0) {
     if (!outcome) return 'FAIL';
     if (outcome === 'DAILY_LIMIT') { haltForDailyLimit(); return 'BLOCKED'; }
@@ -2167,97 +2240,31 @@ function cleanVid(vid) {
 
     if (outcome === 'ATTACH_COVER') {
       const res = await handleScenarioA(query('attachCoverBtn'), runId);
-      if (res === 'OK' && vid) commitSuccess(vid, runId);
+      if (res === 'OK' && vid && !Page.isResponseForm() && !pageLooksLikeTest()) commitSuccess(vid, runId);
       return res;
     }
 
     if (outcome === 'MODAL_OPEN') {
-      const modals = qa('[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]');
-      const modal = modals.find(m => isVisible(m) && !isReviewOrFeedbackElement(m)) || modals[0] || null;
-      const res = await handleScenarioB(modal, runId);
-      if (res === 'OK' && vid) {
-        commitSuccess(vid, runId);
-      } else if ((res === 'SKIP' || res === 'SKIP_REJECT_WARNING' || res === 'SKIP_REJECT_REGEX') && vid) {
-        skipVacancy(vid, res === 'SKIP_REJECT_REGEX' ? 'skip_reject_regex' : 'skip_reject_warning', runId);
-      } else if (res === 'TEST_REQUIRED') {
-        if (vid) {
-          saveCurrentForManual(vid, 'test_required', runId);
-          markVacancyProcessed(vid, runId);
-        }
-        const closeBtn = q('[data-qa="vacancy-response-popup-close"], [data-qa*="close" i]', modal);
-        if (closeBtn) clickElement(closeBtn);
-      } else if (res === 'RESUME_HIDDEN') {
-        if (vid) skipVacancy(vid, 'resume_hidden', runId);
-        const closeBtn = q('[data-qa="vacancy-response-popup-close"], [data-qa*="close" i]', modal);
-        if (closeBtn) clickElement(closeBtn);
-      } else if (res === 'FAIL') {
-        if (vid) {
-          saveCurrentForManual(vid, 'modal_submit_failed', runId);
-          markVacancyProcessed(vid, runId);
-        }
-        const closeBtn = q('[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]', modal);
-        if (closeBtn) clickElement(closeBtn);
-      }
-      return res;
+      return await handleModalOutcome(vid, runId);
     }
 
     if (outcome === 'SUCCESS') {
-      if (vid) commitSuccess(vid, runId);
+      if (vid && !Page.isResponseForm() && !pageLooksLikeTest()) commitSuccess(vid, runId);
       return 'OK';
     }
 
     if (outcome === 'REJECT_WARNING' || outcome === 'REJECT_REGEX') {
-      const modal = q('[data-qa*="modal" i], [class*="modal" i], [role="dialog"]');
-      if (modal) {
-        const closeBtn = q('[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]', modal);
-        if (closeBtn) clickElement(closeBtn);
-      }
+      await closeModal();
       if (vid) skipVacancy(vid, outcome === 'REJECT_REGEX' ? 'skip_reject_regex' : 'skip_reject_warning', runId);
       return 'SKIP';
     }
 
     if (outcome === 'RELOCATION_WARNING') {
-      if (relocAttempts >= 2) {
-        reportError('Превышен лимит попыток подтверждения релокации (loop guard)', 'RELOCATION_LOOP_GUARD', { vid, relocAttempts });
-        if (vid) {
-          saveCurrentForManual(vid, 'relocation_loop', runId);
-          markVacancyProcessed(vid, runId);
-        }
-        return 'FAIL';
-      }
-      const relocBtn = detectRelocationWarning() || query('relocationBtn');
-      if (relocBtn) {
-        await clickElement(relocBtn);
-        await actionPause();
-        if (!isRunCurrent(runId)) return 'STOPPED';
-
-        await waitForCondition(() => !detectRelocationWarning(), 4000, activeAbortController?.signal);
-        const nextOutcome = await waitForCondition(() => (Page.isResponseForm() ? 'RESPONSE_FORM' : detectResponseOutcomeOnce()), 8000, activeAbortController?.signal);
-        if (nextOutcome) {
-          return await dispatchOutcome(nextOutcome, vid, runId, relocAttempts + 1);
-        }
-        if (isResponseConfirmed()) {
-          if (vid) commitSuccess(vid, runId);
-          return 'OK';
-        }
-        reportError('После закрытия предупреждения о релокации исход не подтвержден', 'RELOCATION_TIMEOUT', { vid });
-        if (vid) {
-          saveCurrentForManual(vid, 'relocation_timeout', runId);
-          markVacancyProcessed(vid, runId);
-        }
-        return 'FAIL';
-      }
-      if (vid) {
-        reportError('Не удалось найти кнопку подтверждения релокации', 'RELOCATION_BTN_NOT_FOUND', { vid });
-        saveCurrentForManual(vid, 'relocation_unconfirmed', runId);
-        markVacancyProcessed(vid, runId);
-      }
-      return 'FAIL';
+      return await handleRelocationOutcome(vid, runId, relocAttempts);
     }
 
     return 'FAIL';
   }
-
   async function simulateHumanReading(vid, runId = currentRunId) {
     if (!isRunCurrent(runId)) return;
     const doc = globalThis.document;
@@ -2277,7 +2284,7 @@ function cleanVid(vid) {
 
     // 2 to 4 micro-steps simulating natural pauses while reading
     const steps = Math.floor(Math.random() * 3) + 2;
-    const t = timings();
+    const t = ACTION_TIMINGS;
     const minDelay = Math.max(2000, Math.round(t.delay[0] * 0.7));
     const maxDelay = Math.round(t.delay[1] * 0.85);
     const totalDuration = randBetween(minDelay, maxDelay);
@@ -2297,28 +2304,66 @@ function cleanVid(vid) {
     }
   }
 
+  async function waitForVacancyApplyOutcome(applyBtn, vid, runId) {
+    let outcome = await waitForCondition(
+      () => {
+        if (detectDailyLimit()) return 'DAILY_LIMIT';
+        if (Page.isResponseForm()) return 'RESPONSE_FORM';
+        return detectResponseOutcomeOnce();
+      },
+      3500,
+      activeAbortController?.signal
+    );
+
+    if (outcome === 'DAILY_LIMIT' || detectDailyLimit()) {
+      haltForDailyLimit();
+      return 'BLOCKED';
+    }
+
+    if (!outcome && !Page.isResponseForm()) {
+      const directHref = applyBtn.getAttribute?.('href') || applyBtn.href;
+      if (directHref && (directHref.includes('/applicant/vacancy_response') || directHref.includes('vacancy_response'))) {
+        const fullTarget = directHref.startsWith('http') ? directHref : (new URL(directHref, globalThis.location?.origin || 'https://hh.ru').href);
+        setTrapLock(45000, runId);
+        setLastAttemptID(vid);
+        try { globalThis.location.assign(fullTarget); } catch (_) { globalThis.location.href = fullTarget; }
+        return 'RESPONSE_PAGE';
+      }
+    }
+
+    if (!outcome) {
+      outcome = await waitForCondition(
+        () => {
+          if (detectDailyLimit()) return 'DAILY_LIMIT';
+          if (Page.isResponseForm()) return 'RESPONSE_FORM';
+          return detectResponseOutcomeOnce();
+        },
+        4500,
+        activeAbortController?.signal
+      );
+    }
+
+    if (!outcome) {
+      reportError(`Таймаут ожидания исхода отклика на вакансию #${vid}!`, 'OUTCOME_TIMEOUT', { vid });
+    }
+    return outcome;
+  }
+
   async function handleVacancyPage(vid, runId = currentRunId) {
     try {
       const pageUrl = globalThis.location?.href || '';
-
       if (detectInaccessibleVacancy()) {
         if (vid) skipVacancy(vid, 'access_denied', runId);
         returnToList(vid, { markProcessed: true, runId });
         return 'SKIP';
       }
-
-      if (detectDailyLimit()) {
-        haltForDailyLimit();
-        return 'BLOCKED';
-      }
-
+      if (detectDailyLimit()) { haltForDailyLimit(); return 'BLOCKED'; }
       if (detectAlreadyApplied()) {
         if (vid) skipVacancy(vid, 'already_applied', runId);
         returnToList(vid, { markProcessed: true, runId });
         return 'OK';
       }
 
-      // Simulate human-like reading (45-75% scroll with random stops)
       await simulateHumanReading(vid, runId);
       if (!isRunCurrent(runId)) return 'STOPPED';
       const applyBtn = await waitForCondition(() => query('vacancyApply'), 4000, activeAbortController?.signal);
@@ -2335,52 +2380,8 @@ function cleanVid(vid) {
       await actionPause();
       if (!isRunCurrent(runId)) return 'STOPPED';
 
-      let outcome = await waitForCondition(
-        () => {
-          if (detectDailyLimit()) return 'DAILY_LIMIT';
-          if (Page.isResponseForm()) return 'RESPONSE_FORM';
-          return detectResponseOutcomeOnce();
-        },
-        3500,
-        activeAbortController?.signal
-      );
-
-      if (outcome === 'DAILY_LIMIT' || detectDailyLimit()) {
-        haltForDailyLimit();
-        return 'BLOCKED';
-      }
-
-      // Direct Link Navigation Fallback: if no modal opened within 3.5s and button links to response page
-      if (!outcome && !Page.isResponseForm()) {
-        const directHref = applyBtn.getAttribute?.('href') || applyBtn.href;
-        if (directHref && (directHref.includes('/applicant/vacancy_response') || directHref.includes('vacancy_response'))) {
-          const fullTarget = directHref.startsWith('http') ? directHref : (new URL(directHref, globalThis.location?.origin || 'https://hh.ru').href);
-          setTrapLock(45000, runId);
-          setLastAttemptID(vid);
-          try {
-            globalThis.location.assign(fullTarget);
-          } catch (_) {
-            globalThis.location.href = fullTarget;
-          }
-          return 'RESPONSE_PAGE';
-        }
-      }
-
-      if (!outcome) {
-        outcome = await waitForCondition(
-          () => {
-            if (detectDailyLimit()) return 'DAILY_LIMIT';
-            if (Page.isResponseForm()) return 'RESPONSE_FORM';
-            return detectResponseOutcomeOnce();
-          },
-          4500,
-          activeAbortController?.signal
-        );
-      }
-
-      if (!outcome) {
-        reportError(`Таймаут ожидания исхода отклика на вакансию #${vid}!`, 'OUTCOME_TIMEOUT', { vid });
-      }
+      const outcome = await waitForVacancyApplyOutcome(applyBtn, vid, runId);
+      if (outcome === 'BLOCKED' || outcome === 'RESPONSE_PAGE') return outcome;
 
       const res = await dispatchOutcome(outcome, vid, runId);
       if (['OK', 'SKIP', 'TEST_REQUIRED', 'RESUME_HIDDEN'].includes(res)) {
@@ -2399,7 +2400,6 @@ function cleanVid(vid) {
       return handleVacancyFailure(vid, 'vacancy-page-error', runId);
     }
   }
-
   async function submitResponsePage(vid, runId = currentRunId) {
     if (!isRunCurrent(runId)) return;
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
@@ -2478,7 +2478,7 @@ function cleanVid(vid) {
       const direct = getVacancyIDFromHref(loc.href);
       if (direct) return 'v_' + direct;
     }
-    return getLastAttemptID() || getVacancyID(globalThis.document?.body);
+    return resolveCurrentVid();
   }
 
   async function navigateToNextSearchPage(nextBtn, runId) {
@@ -2495,227 +2495,296 @@ function cleanVid(vid) {
   }
 
   // --- 15. Main Execution Loop ---
-  async function startLoop() {
-    if (isLoopActive || isNavigating) return;
-    if (Page.isResponseForm() && handlingResponsePage) return;
-    const wasRunning = isRunning();
+  async function initLoopSession() {
+    if (isLoopActive) return null;
     isLoopActive = true;
-    const runId = ++currentRunId;
-    if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
-    if (activeAbortController) { try { activeAbortController.abort(); } catch (_) {} }
-    activeAbortController = new AbortController();
     stopSignal = false;
-
+    currentRunId++;
+    const runId = currentRunId;
+    activeAbortController = new AbortController();
     setRunning(true);
-    setStatus('running', 'LOOP_STARTING');
-    markProgress('start_loop');
-    hhaLog('info', 'start', { runId, limit: config.limit });
+    markProgress();
+    hhaLog('info', 'start', { runId, limit: MAX_DAILY_LIMIT });
+    setStatus('running', 'STARTING');
 
-    const acquired = await acquireInstanceLock(TAB_ID);
-    if (runId !== currentRunId || stopSignal || !isRunning()) {
-      if (acquired) await releaseInstanceLock(TAB_ID);
-      return;
+    const hasLock = await acquireInstanceLock(TAB_ID);
+    if (!hasLock) {
+      isLoopActive = false;
+      return null;
     }
-    if (!acquired) {
-      if (runId === currentRunId) {
-        const isBlocked = storage.isLocalBlocked();
-        currentRunId++;
-        stopSignal = true;
-        isLoopActive = false;
-        setRunning(false);
-        setStatus('idle', isBlocked ? 'STORAGE_BLOCKED' : 'TAB_BUSY', {
-          message: isBlocked ? 'Доступ к хранилищу заблокирован.' : 'Другая вкладка уже активна. Остановите её перед запуском здесь.'
-        });
-        reportError(isBlocked ? 'Доступ к хранилищу заблокирован.' : 'Другая вкладка уже выполняет отклики. Запуск в текущей вкладке отменен.', isBlocked ? 'STORAGE_BLOCKED' : 'TAB_BUSY');
-      }
-      return;
-    }
+    return runId;
+  }
 
-    if (!wasRunning) {
-      resetStats();
-    }
-
+  async function handleResponsePageRoute(runId) {
+    handlingResponsePage = true;
+    setTrapLock(45000, runId);
+    const vid = resolveCurrentVid();
     try {
-      if (detectDailyLimit()) return haltForDailyLimit();
-      if (detectInaccessibleVacancy()) {
-        const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href) && ('v_' + getVacancyIDFromHref(globalThis.location.href)));
-        if (vid) skipVacancy(vid, 'skip_inaccessible', runId);
-        returnToList(vid, { markProcessed: true, runId });
-        return;
-      }
-      if (detectCaptcha()) return haltForCaptcha();
-      if (detectRateLimit()) return haltForRateLimit();
+      await submitResponsePage(vid, runId);
+    } finally {
+      isLoopActive = false;
+    }
+  }
 
-      if (Page.isResponseForm()) {
-        if (handlingResponsePage) {
-          isLoopActive = false;
-          return;
-        }
-        const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href) && ('v_' + getVacancyIDFromHref(globalThis.location.href)));
+  async function handleVacancyPageRoute(runId) {
+    const vid = getStableVacancyId();
+    setLastAttemptID(vid);
+    const title = parseVacancyTitle(vid);
+    const employer = parseVacancyEmployer();
+    const salary = parseVacancySalary();
+    if (title && !isGenericVacancyTitle(title)) {
+      setPendingVacancyMeta({ vid, title, employer, salary });
+    }
+    const res = await handleVacancyPage(vid, runId);
+    if (runId !== currentRunId) return;
+    if (res === 'STOPPED' || stopSignal) return finalizeRun(runId, 'stopped', 'Processing stopped on vacancy page');
+    if (res === 'BLOCKED') return;
+    if (res === 'CAPTCHA') { haltForCaptcha(); return; }
+    if (res === 'RESPONSE_PAGE' || Page.isResponseForm()) {
+      setStatus('running', 'RESPONSE_PAGE');
+      const targetVid = resolveCurrentVid();
+      if (Page.isResponseForm() && !handlingResponsePage) {
+        handlingResponsePage = true;
+        setTrapLock(45000, runId);
         try {
-          await submitResponsePage(vid, runId);
+          await submitResponsePage(targetVid, runId);
         } finally {
           isLoopActive = false;
         }
-        return;
-      }
-
-      if (Page.isVacancy()) {
-        const vid = getStableVacancyId();
-        setLastAttemptID(vid);
-        const title = parseVacancyTitle(vid);
-        const employer = parseVacancyEmployer();
-        const salary = parseVacancySalary();
-        if (title && !isGenericVacancyTitle(title)) {
-          setPendingVacancyMeta({ vid, title, employer, salary });
-        }
-        const res = await handleVacancyPage(vid, runId);
-        if (runId !== currentRunId) return;
-        if (res === 'STOPPED' || stopSignal) return finalizeRun(runId, 'stopped', 'Processing stopped on vacancy page');
-        if (res === 'BLOCKED') return;
-        if (res === 'CAPTCHA') { haltForCaptcha(); return; }
-        if (res === 'RESPONSE_PAGE' || Page.isResponseForm()) {
-          setStatus('running', 'RESPONSE_PAGE');
-          const vid = getLastAttemptID();
-          if (Page.isResponseForm() && !handlingResponsePage) {
-            handlingResponsePage = true;
-            setTrapLock(45000, runId);
-            try {
-              await submitResponsePage(vid, runId);
-            } finally {
-              isLoopActive = false;
-            }
-          } else {
-            isLoopActive = false;
-          }
-          return;
-        }
+      } else {
         isLoopActive = false;
-        setStatus('running', res === 'OK' ? 'RETURNING_TO_LIST' : 'WAITING_TO_RETURN');
-        if (res !== 'OK' && res !== 'RESPONSE_PAGE' && !Page.isResponseForm()) {
-          resumeTimer = setTimeout(() => {
-            const targetVid = getLastAttemptID();
-            if (isRunning()) returnToList(targetVid, { markProcessed: true, runId });
-          }, 2500);
-        }
-        return;
       }
+      return;
+    }
+    isLoopActive = false;
+    setStatus('running', res === 'OK' ? 'RETURNING_TO_LIST' : 'WAITING_TO_RETURN');
+    if (res !== 'OK' && res !== 'RESPONSE_PAGE' && !Page.isResponseForm()) {
+      resumeTimer = setTimeout(() => {
+        const targetVid = resolveCurrentVid();
+        if (isRunning()) returnToList(targetVid, { markProcessed: true, runId });
+      }, 2500);
+    }
+  }
 
-      if (Page.isArticle() || isLeadGenRedirect()) {
-        const vid = getLeadGenRedirectVacancyId();
-        const currentUrl = globalThis.location?.href || '';
-        if (vid) {
-          saveCurrentForManual(vid, 'queued_promo', runId, '', '', '', currentUrl);
-          markVacancyProcessed(vid, runId);
-        }
-        setStatus('running', 'WAITING_TO_RETURN');
-        resumeTimer = setTimeout(() => {
-          resumeTimer = null;
-          if (isRunning()) returnToList(vid, { markProcessed: true, runId });
-        }, 1500);
-        return;
-      }
+  function handleArticleOrPromoPage(runId) {
+    const vid = getLeadGenRedirectVacancyId();
+    const currentUrl = globalThis.location?.href || '';
+    if (vid) {
+      saveCurrentForManual(vid, 'queued_promo', runId, '', '', '', currentUrl);
+      markVacancyProcessed(vid, runId);
+    }
+    setStatus('running', 'WAITING_TO_RETURN');
+    resumeTimer = setTimeout(() => {
+      resumeTimer = null;
+      if (isRunning()) returnToList(vid, { markProcessed: true, runId });
+    }, 1500);
+  }
 
-      if (!Page.isSearch()) {
-        const vid = getLastAttemptID();
-        if (vid) skipVacancy(vid, 'skip_unknown_page', runId);
-        returnToList(vid, { markProcessed: true, runId });
-        return;
-      }
+  async function navigateToVacancyFromSearch(btn, runId) {
+    const card = getVacancyCard(btn);
+    const link = card ? query('vacancyLink', card) : null;
+    const vid = getStableVacancyId(btn);
+    const title = card ? readSerpCardTitle(link) : '';
+    const employer = card ? parseVacancyEmployer(card) : '';
+    const salary = card ? parseVacancySalary(card) : '';
+    setPendingVacancyMeta({ vid, title, employer, salary });
+    const origin = globalThis.location?.origin || 'https://hh.ru';
+    const rawTargetUrl = link?.href ? (new URL(link.href, origin)).href : (cleanVid(vid) ? `${origin}/vacancy/${cleanVid(vid)}` : null);
+    const safeTargetUrl = toSafeHhUrl(rawTargetUrl);
 
-      if (Page.isSearch() && globalThis.location) setReturnUrl(globalThis.location.href);
+    if (!rawTargetUrl) {
+      reportError(`Не удалось определить URL для вакансии #${vid}`, 'VACANCY_URL_NOT_FOUND', { vid });
+      recordOutcome(vid, 'error', 'error_selector_missing');
+      handleVacancyFailure(vid, 'no_url', runId, { title, employer, salary });
+      return;
+    }
 
-      let allBtns = queryAll('applyBtn');
-      if (!allBtns.length && Page.isSearch()) {
-        await waitForCondition(() => stopSignal || runId !== currentRunId || queryAll('applyBtn').length > 0 || q('[data-qa*="empty" i], [class*="empty" i]'), 2000, activeAbortController?.signal);
-        if (!stopSignal && runId === currentRunId) allBtns = queryAll('applyBtn');
-      }
-      if (stopSignal || runId !== currentRunId) return;
+    if (!safeTargetUrl) {
+      reportError(`Вакансия #${vid} ведет на сторонний внешний сайт (${rawTargetUrl}). Сохранена в ручную очередь.`, 'EXTERNAL_VACANCY_URL', { vid, targetUrl: rawTargetUrl });
+      saveCurrentForManual(vid, 'queued_external_site', runId, title, employer, salary, rawTargetUrl);
+      addToBlacklist(vid, 'external_site');
+      markVacancyProcessed(vid, runId);
+      return;
+    }
 
-      if (Page.isSearch() && !allBtns.length) {
-        const cards = qa(SELECTORS.vacancyCard);
-        if (cards.length > 0) {
-          const anyAlreadyApplied = cards.some(c => /(?:вы откликнулись|резюме доставлено|отклик отправлен)/i.test(c.textContent || ''));
-          const nextBtn = query('pagerNext');
-          if (anyAlreadyApplied && nextBtn) {
-            await navigateToNextSearchPage(nextBtn, runId);
-            return;
-          }
-          notifySelectorFailure('applyBtn', cards[0], { cardsCount: cards.length });
-          recordOutcome(null, 'error', 'error_selector_missing');
-          return finalizeRun(runId, 'error', 'Селектор applyBtn не найден на странице поиска');
-        }
-      }
+    setLastAttemptID(vid);
+    if (globalThis.location) setReturnUrl(globalThis.location.href);
+    hhaLog('info', 'navigate_vacancy', { vid, url: safeTargetUrl });
+    await vacancyPause();
+    if (stopSignal || runId !== currentRunId) return;
+    try {
+      globalThis.location.assign(safeTargetUrl);
+    } catch (_) {
+      globalThis.location.href = safeTargetUrl;
+    }
+  }
 
-      const processed = getProcessedIDs();
-      const targets = [];
+  async function handleSearchPage(runId) {
+    if (globalThis.location) setReturnUrl(globalThis.location.href);
 
-      for (const b of allBtns) {
-        const vid = getVacancyID(b);
-        if (config.skipHidden && !isVisible(b)) {
-          markVacancyProcessed(vid, runId);
-          recordOutcome(vid, 'skipped', 'skip_hidden_employer');
-          continue;
-        }
-        if (processed.has(vid) || isBlacklisted(vid)) {
-          continue;
-        }
-        targets.push(b);
-      }
+    let allBtns = queryAll('applyBtn');
+    if (!allBtns.length) {
+      await waitForCondition(() => stopSignal || runId !== currentRunId || queryAll('applyBtn').length > 0 || q('[data-qa*="empty" i], [class*="empty" i]'), 2000, activeAbortController?.signal);
+      if (!stopSignal && runId === currentRunId) allBtns = queryAll('applyBtn');
+    }
+    if (stopSignal || runId !== currentRunId) return;
 
-      if (!targets.length) {
+    if (!allBtns.length) {
+      const cards = qa(SELECTORS.vacancyCard);
+      if (cards.length > 0) {
+        const anyAlreadyApplied = cards.some(c => /(?:вы откликнулись|резюме доставлено|отклик отправлен)/i.test(c.textContent || ''));
         const nextBtn = query('pagerNext');
-        if (nextBtn) {
+        if (anyAlreadyApplied && nextBtn) {
           await navigateToNextSearchPage(nextBtn, runId);
           return;
         }
-        const finalSent = getSentCount();
-        return finalizeRun(runId, 'done', `Все вакансии в выдаче обработаны. Всего отправлено: ${finalSent}`);
+        notifySelectorFailure('applyBtn', cards[0], { cardsCount: cards.length });
+        recordOutcome(null, 'error', 'error_selector_missing');
+        return finalizeRun(runId, 'error', 'Селектор applyBtn не найден на странице поиска');
       }
+    }
 
-      const btn = targets[0];
-      const card = getVacancyCard(btn);
-      const link = card ? query('vacancyLink', card) : null;
-      const vid = getStableVacancyId(btn);
-      const title = card ? readSerpCardTitle(link) : '';
-      const employer = card ? parseVacancyEmployer(card) : '';
-      const salary = card ? parseVacancySalary(card) : '';
-      setPendingVacancyMeta({ vid, title, employer, salary });
-      const origin = globalThis.location?.origin || 'https://hh.ru';
-      const rawTargetUrl = link?.href ? (new URL(link.href, origin)).href : (cleanVid(vid) ? `${origin}/vacancy/${cleanVid(vid)}` : null);
-      const safeTargetUrl = toSafeHhUrl(rawTargetUrl);
-
-      if (!rawTargetUrl) {
-        reportError(`Не удалось определить URL для вакансии #${vid}`, 'VACANCY_URL_NOT_FOUND', { vid });
-        recordOutcome(vid, 'error', 'error_selector_missing');
-        handleVacancyFailure(vid, 'no_url', runId, { title, employer, salary });
-        return;
-      }
-
-      if (!safeTargetUrl) {
-        reportError(`Вакансия #${vid} ведет на сторонний внешний сайт (${rawTargetUrl}). Сохранена в ручную очередь.`, 'EXTERNAL_VACANCY_URL', { vid, targetUrl: rawTargetUrl });
-        saveCurrentForManual(vid, 'queued_external_site', runId, title, employer, salary, rawTargetUrl);
-        addToBlacklist(vid, 'external_site');
+    const processed = getProcessedIDs();
+    const targets = [];
+    for (const b of allBtns) {
+      const vid = getVacancyID(b);
+      if (config.skipHidden && !isVisible(b)) {
         markVacancyProcessed(vid, runId);
+        recordOutcome(vid, 'skipped', 'skip_hidden_employer');
+        continue;
+      }
+      if (processed.has(vid) || isBlacklisted(vid)) continue;
+      targets.push(b);
+    }
+
+    if (!targets.length) {
+      const nextBtn = query('pagerNext');
+      if (nextBtn) {
+        await navigateToNextSearchPage(nextBtn, runId);
         return;
       }
+      const finalSent = getSentCount();
+      return finalizeRun(runId, 'done', `Все вакансии в выдаче обработаны. Всего отправлено: ${finalSent}`);
+    }
 
-      setLastAttemptID(vid);
-      if (globalThis.location) setReturnUrl(globalThis.location.href);
-      hhaLog('info', 'navigate_vacancy', { vid, url: safeTargetUrl });
-      await vacancyPause();
-      if (stopSignal || runId !== currentRunId) return;
-      try {
-        globalThis.location.assign(safeTargetUrl);
-      } catch (_) {
-        globalThis.location.href = safeTargetUrl;
-      }
+    await navigateToVacancyFromSearch(targets[0], runId);
+  }
+
+  async function processCurrentPage(runId) {
+    if (Page.isResponseForm()) {
+      await handleResponsePageRoute(runId);
+      return;
+    }
+    if (Page.isVacancy()) {
+      await handleVacancyPageRoute(runId);
+      return;
+    }
+    if (Page.isArticle() || isLeadGenRedirect()) {
+      handleArticleOrPromoPage(runId);
+      return;
+    }
+    if (!Page.isSearch()) {
+      const vid = resolveCurrentVid();
+      if (vid) skipVacancy(vid, 'skip_unknown_page', runId);
+      returnToList(vid, { markProcessed: true, runId });
+      return;
+    }
+    await handleSearchPage(runId);
+  }
+
+  async function startLoop() {
+    const runId = await initLoopSession();
+    if (!runId) return;
+
+    try {
+      if (detectDailyLimit()) return haltForDailyLimit();
+      if (detectRateLimit()) return haltForRateLimit();
+      if (detectCaptcha()) return haltForCaptcha();
+
+      await processCurrentPage(runId);
     } catch (e) {
       finalizeRun(runId, 'error', `Main loop error: ${(e && e.message) || e}`);
     }
   }
-
   // --- 16. Watchdog & Recovery ---
+  function checkRateLimitAnomaly(doc, bodyText) {
+    if (detectInaccessibleVacancy(doc, bodyText)) {
+      const vid = resolveCurrentVid();
+      if (vid) skipVacancy(vid, 'skip_inaccessible', currentRunId);
+      returnToList(vid, { markProcessed: true, runId: currentRunId });
+      return true;
+    }
+    if (detectCaptcha(doc, bodyText)) { haltForCaptcha(); return true; }
+    if (detectRateLimit(doc, bodyText)) { haltForRateLimit(); return true; }
+    return false;
+  }
+
+  function checkHang(now) {
+    if ((now - lastProgressTs) > WATCHDOG_STALL_TIMEOUT) {
+      const currentVid = cleanVid(resolveCurrentVid() || '');
+      const storedVid = cleanVid(storage.sessionGet(KEYS.watchdogStallVid) || '');
+      let stallCount = (storedVid === currentVid && currentVid) ? toNum(storage.sessionGet(KEYS.watchdogStallCount), 0) : 0;
+      const elapsedMs = now - lastProgressTs;
+
+      if (stallCount < 2) {
+        stallCount++;
+        storage.sessionSet(KEYS.watchdogStallVid, currentVid);
+        storage.sessionSet(KEYS.watchdogStallCount, String(stallCount));
+        lastProgressTs = now;
+        hhaLog('warn', 'watchdog_stall', { vid: currentVid || undefined, stallCount, elapsedMs });
+        try { globalThis.location?.reload(); } catch (e) {
+          hhaLog('warn', 'watchdog_reload_failed', { error: String(e && e.message || e) });
+        }
+        return true;
+      } else {
+        storage.sessionRemove(KEYS.watchdogStallVid);
+        storage.sessionRemove(KEYS.watchdogStallCount);
+        hhaLog('error', 'watchdog_giveup', { vid: currentVid || undefined, stallCount, elapsedMs });
+        recordOutcome(currentVid, 'error', 'error_timeout');
+        terminateRun('WATCHDOG_GIVEUP', 'Зависание при обработке вакансии после 2 перезагрузок.', { vid: currentVid }, true);
+        reportError('Зависание при обработке вакансии. Автоматизация остановлена после 2 перезагрузок.', 'WATCHDOG_GIVEUP', { vid: currentVid });
+        return true;
+      }
+    }
+
+    if (!Page.isSearch() && !isNavigating && (now - pageLoadedAt) > PAGE_WATCHDOG_TIMEOUT) {
+      const vid = resolveCurrentVid();
+      reportError(`Страница не ответила за ${PAGE_WATCHDOG_TIMEOUT / 1000} секунд. Принудительный возврат к поиску.`, 'PAGE_HANG_TIMEOUT', { vid, url: globalThis.location?.href });
+      handleVacancyFailure(vid, 'error_timeout', currentRunId);
+      return true;
+    }
+    return false;
+  }
+
+  function handleWatchdogResponseForm() {
+    if (isNavigating || handlingResponsePage) return;
+    if (isLoopActive || getActiveTrapLock()) return;
+    if (currentRunId === 0) currentRunId = 1;
+    setTrapLock(45000, currentRunId);
+    const vid = resolveCurrentVid();
+    if (!pageLooksLikeTest()) {
+      handlingResponsePage = true;
+      submitResponsePage(vid, currentRunId);
+      return;
+    }
+    handlingResponsePage = true;
+    if (resumeTimer) {
+      clearTimeout(resumeTimer);
+      resumeTimer = null;
+    }
+    if (vid) {
+      const counters = getDailyCounters();
+      if (counters.applied > 0 && isProcessed(vid)) {
+        counters.applied--;
+        storage.localSet(KEYS.dailyCounters, JSON.stringify(counters));
+      }
+    }
+    if (saveCurrentForManual(vid, 'queued_questionnaire', currentRunId)) {
+      markVacancyProcessed(vid, currentRunId);
+      returnToList(vid, { markProcessed: true, runId: currentRunId });
+    }
+  }
+
   function watchdogTick() {
     if (!isRunning()) return;
     if (detectDailyLimit()) return haltForDailyLimit();
@@ -2723,102 +2792,32 @@ function cleanVid(vid) {
     const doc = globalThis.document;
     const bodyText = (doc?.body?.textContent || '').slice(0, 4000);
 
-    if (detectInaccessibleVacancy(doc, bodyText)) {
-      const vid = getLastAttemptID();
-      if (vid) skipVacancy(vid, 'skip_inaccessible', currentRunId);
-      returnToList(vid, { markProcessed: true, runId: currentRunId });
-      return;
-    }
-    if (detectCaptcha(doc, bodyText)) return haltForCaptcha();
-    if (detectRateLimit(doc, bodyText)) return haltForRateLimit();
+    if (checkRateLimitAnomaly(doc, bodyText)) return;
+    if (!isLoopActive || isNavigating || resumeTimer) return;
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
 
-    // 60-second stall watchdog
-    const now = Date.now();
-    if ((now - lastProgressTs) > WATCHDOG_STALL_TIMEOUT) {
-      const currentVid = cleanVid(getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href)) || '');
-      const storedVid = cleanVid(storage.sessionGet(KEYS.watchdogStallVid) || '');
-      let stallCount = (storedVid === currentVid && currentVid) ? toNum(storage.sessionGet(KEYS.watchdogStallCount), 0) : 0;
-
-      const elapsedMs = now - lastProgressTs;
-      if (stallCount < 2) {
-        stallCount++;
-        storage.sessionSet(KEYS.watchdogStallVid, currentVid);
-        storage.sessionSet(KEYS.watchdogStallCount, String(stallCount));
-        lastProgressTs = now;
-        hhaLog('warn', 'watchdog_stall', {
-          vid: currentVid || undefined,
-          stallCount,
-          elapsedMs
-        });
-        try {
-          globalThis.location?.reload();
-        } catch (_) {}
-        return;
-      } else {
-        storage.sessionRemove(KEYS.watchdogStallVid);
-        storage.sessionRemove(KEYS.watchdogStallCount);
-        hhaLog('error', 'watchdog_giveup', {
-          vid: currentVid || undefined,
-          stallCount,
-          elapsedMs
-        });
-        recordOutcome(currentVid, 'error', 'error_timeout');
-        terminateRun('WATCHDOG_GIVEUP', 'Зависание при обработке вакансии после 2 перезагрузок.', { vid: currentVid }, true);
-        reportError('Зависание при обработке вакансии. Автоматизация остановлена после 2 перезагрузок.', 'WATCHDOG_GIVEUP', { vid: currentVid });
-        return;
-      }
-    }
+    if (checkHang(Date.now())) return;
 
     if (Page.isArticle() || isLeadGenRedirect()) {
-      if (isNavigating) return;
-      const vid = getLeadGenRedirectVacancyId();
-      const currentUrl = globalThis.location?.href || '';
-      if (vid) {
-        saveCurrentForManual(vid, 'queued_promo', currentRunId, '', '', '', currentUrl);
-        markVacancyProcessed(vid, currentRunId);
+      if (!isNavigating) {
+        const vid = getLeadGenRedirectVacancyId();
+        const currentUrl = globalThis.location?.href || '';
+        if (vid) {
+          saveCurrentForManual(vid, 'queued_promo', currentRunId, '', '', '', currentUrl);
+          markVacancyProcessed(vid, currentRunId);
+        }
+        returnToList(vid, { markProcessed: true, runId: currentRunId });
       }
-      returnToList(vid, { markProcessed: true, runId: currentRunId });
       return;
     }
 
     if (Page.isResponseForm()) {
-      if (isNavigating || handlingResponsePage) return;
-      if (isLoopActive) return;
-      if (getActiveTrapLock()) return;
-      if (currentRunId === 0) currentRunId = 1;
-      setTrapLock(45000, currentRunId);
-      const loc = globalThis.location;
-      const vid = getLastAttemptID() || (loc && getVacancyIDFromHref(loc.href) && ('v_' + getVacancyIDFromHref(loc.href))) || null;
-      if (!pageLooksLikeTest()) {
-        if (handlingResponsePage) return;
-        handlingResponsePage = true;
-        submitResponsePage(vid, currentRunId);
-        return;
-      }
-      handlingResponsePage = true;
-      if (resumeTimer) {
-        clearTimeout(resumeTimer);
-        resumeTimer = null;
-      }
-      if (saveCurrentForManual(vid, 'queued_questionnaire', currentRunId)) {
-        markVacancyProcessed(vid, currentRunId);
-        returnToList(vid, { markProcessed: true, runId: currentRunId });
-      }
+      handleWatchdogResponseForm();
     } else {
       clearTrapLock();
       handlingResponsePage = false;
     }
-
-    // 15-second hang watchdog for any non-search page
-    if (!Page.isSearch() && !isNavigating && (Date.now() - pageLoadedAt) > PAGE_WATCHDOG_TIMEOUT) {
-      const vid = getLastAttemptID() || (globalThis.location && getVacancyIDFromHref(globalThis.location.href) && ('v_' + getVacancyIDFromHref(globalThis.location.href))) || null;
-      reportError(`Страница не ответила за ${PAGE_WATCHDOG_TIMEOUT / 1000} секунд. Принудительный возврат к поиску.`, 'PAGE_HANG_TIMEOUT', { vid, url: globalThis.location?.href });
-      handleVacancyFailure(vid, 'error_timeout', currentRunId);
-      return;
-    }
   }
-
   let watchdogIntervalId = null;
   const globalListeners = [];
 
@@ -2827,7 +2826,9 @@ function cleanVid(vid) {
     try {
       target.addEventListener(type, handler, options);
       globalListeners.push({ target, type, handler, options });
-    } catch (_) {}
+    } catch (e) {
+      hhaLog('warn', 'add_global_listener_failed', { type, error: String(e && e.message || e) });
+    }
   }
 
   function teardownRuntime() {
@@ -2850,11 +2851,8 @@ function cleanVid(vid) {
 
   // --- 17. Public API ---
   const HHApplyAssistant = {
-    version: VERSION,
     start: () => startLoop(),
     stop: (code = 'STOPPED_BY_USER', reason = '') => terminateRun(code, reason || (code === 'STOPPED_BY_USER' ? 'Automation stopped by user' : code), {}, false),
-    getConfig: () => ({ ...config }),
-    setConfig: (p) => persistSettings(p),
     getState: () => ({
       version: VERSION,
       tabId: TAB_ID,
@@ -2864,12 +2862,13 @@ function cleanVid(vid) {
       statusCode: currentStatus.code,
       statusDetails: currentStatus.details,
       sentCount: getSentCount(),
-      limit: config.limit,
       hasInstanceLock: instanceLeaseVerified,
       hasTrapLock: Boolean(getActiveTrapLock()),
       lastAttemptId: getLastAttemptID(),
       returnUrl: getReturnUrl()
     }),
+    getConfig: () => ({ ...config }),
+    setConfig: (p) => persistSettings(p),
     async resetState() {
       if (isLoopActive) terminateRun('STOPPED_BY_USER', 'Stopped for reset', {}, false);
       stopSignal = true;
@@ -2894,53 +2893,19 @@ function cleanVid(vid) {
       setStatus(statusKey, code, details);
       return true;
     },
-    getStats: () => getStats(),
-    resetStats: () => resetStats(),
-    resetHistory() {
-      clearProcessedIDs();
-      resetSentCount();
-      resetDailyCounters();
-      resetSessionCounters();
-      resetStats();
-      return true;
-    },
     getManualQueue: () => ManualQueue.get(),
-    addManualItem: (entry) => Boolean(ManualQueue.add(entry).success),
+    markManualItemViewed: (vid, viewed) => ManualQueue.markViewed(vid, viewed),
     removeManualItem: (vid) => ManualQueue.remove(vid),
     clearManualQueue: () => ManualQueue.clear(),
-    markManualItemViewed: (vid, viewed) => ManualQueue.markViewed(vid, viewed),
-    isManualItem: (vid) => ManualQueue.has(vid),
-    detectDailyLimit: () => detectDailyLimit(),
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
-    once: (evt, fn) => events.once(evt, fn),
     destroy: () => teardownRuntime(),
-
-    // Reliability & Diagnostic exports
-    REJECT_REGEX,
-    SKIP_ALERT_RATIO,
-    MAX_VACANCY_ATTEMPTS,
-    WATCHDOG_STALL_TIMEOUT,
-    recordOutcome: (vid, outcome, reason, details) => recordOutcome(vid, outcome, reason, details),
-    hhaLog: (level, event, data) => hhaLog(level, event, data),
-    getLogBuffer: () => readLogBuffer().slice(),
-    clearLogBuffer: () => hhaClearLog(),
     hhaDumpLog: () => hhaDumpLog(),
-    getDailyCounters: () => getDailyCounters(),
-    resetDailyCounters: () => resetDailyCounters(),
-    resetSessionCounters: () => resetSessionCounters(),
-    markProgress: (step) => markProgress(step),
-    parseVacancyTitle: (card) => parseVacancyTitle(card),
-    cleanVid: (vid) => cleanVid(vid),
-    normalizeReasonCode: (reason, prefix) => normalizeReasonCode(reason, prefix),
-    handleVacancyFailure: (vid, reason, runId, meta) => handleVacancyFailure(vid, reason, runId, meta),
-    watchdogTick: () => watchdogTick(),
-    haltForDailyLimit: () => haltForDailyLimit()
+    hhaClearLog: () => hhaClearLog()
   };
 
   // --- 18. Bootstrap & Global Binding ---
   function bootstrap() {
-    if (globalThis.__HHA_TEST__) return;
     if (watchdogIntervalId === null) {
       watchdogIntervalId = setInterval(() => {
         try { watchdogTick(); } catch (e) { console.warn('[HH] Watchdog tick error:', e); }
@@ -2957,25 +2922,28 @@ function cleanVid(vid) {
       skipped: daily.skipped,
       error: daily.error
     });
-    markProgress('bootstrap');
+    markProgress();
 
     if (isRunning()) {
       if (detectDailyLimit()) {
         haltForDailyLimit();
         return;
       }
-      const lock = readInstanceLock();
-      const now = Date.now();
-      if (lock && isLiveLock(lock, now) && lock.tabId !== TAB_ID) {
-        setRunning(false);
-        setStatus('idle', 'TAB_BUSY', { message: 'Другая вкладка уже активна' });
-      } else {
-        setStatus('running', 'AUTO_STARTING');
-        resumeTimer = setTimeout(() => {
-          resumeTimer = null;
-          if (isRunning()) startLoop();
-        }, 1500);
+      const nav = globalThis.navigator;
+      if (!nav?.locks?.request) {
+        const lock = readInstanceLock();
+        const now = Date.now();
+        if (lock && isLiveLock(lock, now) && lock.tabId !== TAB_ID) {
+          setRunning(false);
+          setStatus('idle', 'TAB_BUSY', { message: 'Другая вкладка уже активна' });
+          return;
+        }
       }
+      setStatus('running', 'AUTO_STARTING');
+      resumeTimer = setTimeout(() => {
+        resumeTimer = null;
+        if (isRunning()) startLoop();
+      }, 1500);
     }
     if (!Page.isResponseForm()) clearTrapLock();
 
@@ -3000,9 +2968,7 @@ function cleanVid(vid) {
   }
 
   const doc = globalThis.document;
-  if (globalThis.__HHA_TEST__) {
-    // In test environment, skip DOM bootstrap and observers
-  } else if (doc?.body) {
+  if (doc?.body) {
     bootstrap();
   }
 
@@ -3064,15 +3030,17 @@ function cleanVid(vid) {
       }
     });
     addGlobalListener(win, 'popstate', () => {
-      try { watchdogTick(); } catch (_) {}
+      try { watchdogTick(); } catch (e) {
+        hhaLog('debug', 'popstate_watchdog_error', { error: String(e && e.message || e) });
+      }
     });
     addGlobalListener(win, 'beforeunload', () => {
       if (!isRunning()) releaseInstanceLock(TAB_ID);
     });
   }
 
-  return HHApplyAssistant;
-});
+  globalThis.HHApplyAssistant = HHApplyAssistant;
+})();
 
 /**
  * ============================================================================
@@ -3086,12 +3054,7 @@ function cleanVid(vid) {
  * Implementation: Native Web Component with Closed Shadow DOM
   */
 
-(function (root, factory) {
-  const api = factory();
-  if (typeof root !== 'undefined') {
-    root.HhaHud = api;
-  }
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+(function () {
   'use strict';
 
   // --- 1. Utilities & Pure Functions ---
@@ -3117,7 +3080,6 @@ function cleanVid(vid) {
     GLOBAL_UNHANDLED_REJECTION: 'Сбой асинхронной операции',
     DOM_SELECTOR_NOT_FOUND: 'Элемент страницы не найден',
     SUBMIT_BTN_NOT_FOUND: 'Кнопка отправки не найдена',
-    SUBMIT_BTN_STILL_DISABLED: 'Кнопка отправки заблокирована',
     ATTACH_BTN_NOT_FOUND: 'Кнопка прикрепления письма не найдена',
     LETTER_FORM_TIMEOUT: 'Форма письма не открылась вовремя',
     RELOCATION_LOOP_GUARD: 'Зацикливание предупреждения о релокации',
@@ -3125,23 +3087,23 @@ function cleanVid(vid) {
     RELOCATION_BTN_NOT_FOUND: 'Кнопка релокации не найдена',
     NO_APPLY_BUTTON: 'Кнопка отклика недоступна',
     OUTCOME_TIMEOUT: 'Превышено время ожидания отклика',
-    VACANCY_FAILED: 'Не удалось отправить отклик',
-    VACANCY_UNEXPECTED_RESULT: 'Неожиданный ответ страницы',
     VACANCY_PAGE_ERROR: 'Ошибка на странице вакансии',
     SUBMIT_FAILED: 'Сбой при отправке отклика',
     SUBMIT_UNCONFIRMED: 'Отправка отклика не подтвердилась',
     RESPONSE_PAGE_ERROR: 'Сбой на странице отклика',
     STORAGE_BLOCKED: 'Доступ к хранилищу заблокирован',
     TAB_BUSY: 'Скрипт уже запущен в другой вкладке',
+    TAB_LOCK_LOST: 'Потеряна блокировка вкладки',
     VACANCY_URL_NOT_FOUND: 'Не удалось определить ссылку вакансии',
     DAILY_LIMIT_REACHED: 'Достигнут лимит откликов на сегодня',
     MAX_ATTEMPTS_EXCEEDED: 'Превышен лимит попыток отклика',
     VACANCY_ATTEMPT_FAILED: 'Сбой отклика (повторим позже)',
     PAGE_HANG_TIMEOUT: 'Страница вакансии зависла',
     EXTERNAL_VACANCY_URL: 'Вакансия ведет на внешний сайт',
-    CAPTCHA_DETECTED: 'Обнаружена капча — решите ее вручную',
+    CAPTCHA_DETECTED: 'Обнаружена капча: решите её вручную',
     RATE_LIMITED: 'Слишком частые запросы (Rate Limit)',
-    LEASE_EXPIRED: 'Потеряна блокировка вкладки',
+    SKIP_RATE_ALERT: 'Аномально много пропусков вакансий',
+    WATCHDOG_GIVEUP: 'Зависание при обработке вакансии',
     STOPPED_BY_USER: 'Остановлено пользователем'
   };
 
@@ -3156,7 +3118,7 @@ function cleanVid(vid) {
     cleanMsg = collapseSpaces(cleanMsg);
 
     if (title && cleanMsg) {
-      if (cleanMsg.length > 70 || /^[a-z_]+$/i.test(cleanMsg)) return title;
+      if (cleanMsg.length > 70 || /^[a-z_]+$/i.test(cleanMsg) || /^[a-z0-9_\s.]+$/i.test(cleanMsg)) return title;
       return `${title}: ${cleanMsg}`;
     }
     return title || cleanMsg || 'Произошла ошибка при выполнении';
@@ -3211,16 +3173,7 @@ function cleanVid(vid) {
   // --- 3. Shadow DOM Stylesheet ---
 
   const STYLES = `
-    /* ═══════════════════════════════════════════════════════════════
-       1. HOST & MATERIAL DESIGN 3 DESIGN TOKENS
-       Specification: https://m3.material.io/
-       Token Names: https://m3.material.io/foundations/design-tokens
-       Color Roles: https://m3.material.io/styles/color/system/overview
-       Tonal Palette Seed: #006A60 (M3 Teal Baseline) via Theme Builder
-       Typography: https://m3.material.io/styles/typography/type-scale-tokens
-       Shape Scale: https://m3.material.io/styles/shape/shape-scale-tokens
-       Elevation: https://m3.material.io/styles/elevation/tokens
-       ═══════════════════════════════════════════════════════════════ */
+    /* Design Tokens */
     :host {
       all: initial;
       position: fixed;
@@ -3236,7 +3189,7 @@ function cleanVid(vid) {
       pointer-events: auto;
       interpolate-size: allow-keywords;
 
-      /* ── M3 Color System: Light Scheme (Seed: #006A60 Teal) ── */
+      /* Color System */
       --md-sys-color-primary: #006A60;
       --md-sys-color-on-primary: #FFFFFF;
       --md-sys-color-primary-container: #BCECE3;
@@ -3244,7 +3197,6 @@ function cleanVid(vid) {
       --md-sys-color-inverse-primary: #52DBC7;
 
       --md-sys-color-secondary: #4A635F;
-      --md-sys-color-on-secondary: #FFFFFF;
       --md-sys-color-secondary-container: #CCE8E2;
       --md-sys-color-on-secondary-container: #05201C;
 
@@ -3281,105 +3233,60 @@ function cleanVid(vid) {
       --md-sys-color-inverse-on-surface: #EFF1EF;
 
       /* M3 Extended Semantic Roles: Warning (Harmonized with palette) */
-      --md-custom-color-warning: #505F5C;
       --md-custom-color-on-warning: #FFFFFF;
-      --md-custom-color-warning-container: #DAE5E1;
-      --md-custom-color-on-warning-container: #191C1B;
 
-      /* ── M3 Shape Scale ── */
-      --md-sys-shape-corner-none: 0px;
+      /* Shape Scale */
       --md-sys-shape-corner-extra-small: 4px;
       --md-sys-shape-corner-small: 8px;
       --md-sys-shape-corner-medium: 12px;
-      --md-sys-shape-corner-large: 16px;
       --md-sys-shape-corner-extra-large: 22px;
       --md-sys-shape-corner-full: 9999px;
 
-      /* ── M3 Elevation (Soft Ambient Drop Shadows - No Dirty Halo) ── */
-      --md-sys-elevation-level0: none;
+      /* Elevation */
       --md-sys-elevation-level1: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.04);
       --md-sys-elevation-level2: 0 4px 14px -1px rgba(0, 0, 0, 0.07), 0 2px 5px -1px rgba(0, 0, 0, 0.04);
       --md-sys-elevation-level3: 0 12px 28px -4px rgba(0, 0, 0, 0.08), 0 4px 10px -2px rgba(0, 0, 0, 0.03);
-      --md-sys-elevation-level4: 0 16px 36px -4px rgba(0, 0, 0, 0.10), 0 6px 14px -2px rgba(0, 0, 0, 0.04);
-      --md-sys-elevation-level5: 0 24px 48px -4px rgba(0, 0, 0, 0.12), 0 8px 20px -2px rgba(0, 0, 0, 0.05);
 
-      /* ── M3 State Layer Opacities ── */
-      --md-sys-state-hover-state-layer-opacity: 0.08;
-      --md-sys-state-focus-state-layer-opacity: 0.12;
-      --md-sys-state-pressed-state-layer-opacity: 0.12;
-      --md-sys-state-dragged-state-layer-opacity: 0.16;
+      /* State Layer Opacities */
+      --md-sys-state-hover: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
 
-      /* ── Modern Apple HIG / iOS Typography Scale ── */
+      /* Typography Scale */
       --md-sys-typescale-font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      --md-sys-typescale-font-family-mono: 'SF Mono', 'SFMono-Regular', ui-monospace, Menlo, Monaco, Consolas, monospace;
-
-      --md-sys-typescale-title-small-size: 14px;
-      --md-sys-typescale-title-small-line-height: 20px;
-      --md-sys-typescale-title-small-weight: 600;
-      --md-sys-typescale-title-small-tracking: -0.15px;
-
-      --md-sys-typescale-title-medium-size: 16px;
-      --md-sys-typescale-title-medium-line-height: 22px;
-      --md-sys-typescale-title-medium-weight: 600;
-      --md-sys-typescale-title-medium-tracking: -0.2px;
-
-      --md-sys-typescale-body-large-size: 15px;
-      --md-sys-typescale-body-large-line-height: 22px;
-      --md-sys-typescale-body-large-weight: 400;
-      --md-sys-typescale-body-large-tracking: -0.1px;
 
       --md-sys-typescale-body-medium-size: 13px;
       --md-sys-typescale-body-medium-line-height: 18px;
-      --md-sys-typescale-body-medium-weight: 400;
       --md-sys-typescale-body-medium-tracking: -0.05px;
 
       --md-sys-typescale-body-small-size: 12px;
       --md-sys-typescale-body-small-line-height: 16px;
-      --md-sys-typescale-body-small-weight: 400;
-      --md-sys-typescale-body-small-tracking: 0;
 
       --md-sys-typescale-label-large-size: 14px;
-      --md-sys-typescale-label-large-line-height: 18px;
       --md-sys-typescale-label-large-weight: 600;
-      --md-sys-typescale-label-large-tracking: -0.15px;
 
       --md-sys-typescale-label-medium-size: 12px;
-      --md-sys-typescale-label-medium-line-height: 16px;
       --md-sys-typescale-label-medium-weight: 600;
       --md-sys-typescale-label-medium-tracking: -0.05px;
 
       --md-sys-typescale-label-small-size: 11px;
-      --md-sys-typescale-label-small-line-height: 14px;
-      --md-sys-typescale-label-small-weight: 600;
-      --md-sys-typescale-label-small-tracking: 0;
 
       /* Control Height (M3 Compact Standard) */
       --md-comp-control-height: 32px;
 
-      /* ── M3 Motion Tokens: Easing ── */
-      --md-sys-motion-easing-linear: cubic-bezier(0, 0, 1, 1);
+      /* Motion: Easing */
       --md-sys-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
-      --md-sys-motion-easing-standard-accelerate: cubic-bezier(0.3, 0, 1, 1);
-      --md-sys-motion-easing-standard-decelerate: cubic-bezier(0, 0, 0.2, 1);
       --md-sys-motion-easing-emphasized: cubic-bezier(0.2, 0, 0, 1);
-      --md-sys-motion-easing-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
       --md-sys-motion-easing-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
 
-      /* ── M3 Motion Tokens: Duration ── */
-      --md-sys-motion-duration-short1: 50ms;
+      /* Motion: Duration */
       --md-sys-motion-duration-short2: 100ms;
       --md-sys-motion-duration-short3: 150ms;
       --md-sys-motion-duration-short4: 200ms;
       --md-sys-motion-duration-medium1: 250ms;
       --md-sys-motion-duration-medium2: 300ms;
-      --md-sys-motion-duration-medium3: 350ms;
       --md-sys-motion-duration-medium4: 400ms;
-      --md-sys-motion-duration-long1: 450ms;
-      --md-sys-motion-duration-long2: 500ms;
 
-      /* ── Centralized HUD Motion Specification Tokens ── */
+      /* HUD Motion Specification */
       --hha-motion-expand-duration: 500ms;
-      --hha-motion-expand-easing: cubic-bezier(0.34, 1.15, 0.64, 1);
       --hha-motion-spring-easing: cubic-bezier(0.34, 1.15, 0.64, 1);
       --hha-motion-collapse-duration: 500ms;
       --hha-motion-collapse-easing: cubic-bezier(0.34, 1.15, 0.64, 1);
@@ -3405,7 +3312,7 @@ function cleanVid(vid) {
       padding: 0;
     }
 
-    /* ─── 2. ROOT POSITIONING ─────────────────────────────────────── */
+    /* 2. Root Positioning */
     .hha-root {
       position: fixed;
       left: 0;
@@ -3444,7 +3351,7 @@ function cleanVid(vid) {
       place-items: start center;
     }
 
-    /* ─── 3. PILL (DYNAMIC ISLAND) ────────────────────────────────── */
+    /* 3. Pill */
     .hha-pill {
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-body-small-size);
@@ -3479,11 +3386,11 @@ function cleanVid(vid) {
       transform: scale(1) translate3d(0, 0, 0);
       transform-origin: center bottom;
       will-change: transform, opacity;
-      transition: 
+      transition:
         opacity 250ms ease-out 200ms,
         transform var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
         visibility var(--hha-motion-collapse-duration, 500ms) linear,
-        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), 
+        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
         border-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
         background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard);
     }
@@ -3522,8 +3429,8 @@ function cleanVid(vid) {
       line-height: 1;
       vertical-align: middle;
       outline: none;
-      transition: 
-        background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard), 
+      transition:
+        background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard),
         box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
         transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
@@ -3538,7 +3445,6 @@ function cleanVid(vid) {
       background: var(--md-sys-color-surface-container-highest);
       cursor: grabbing;
     }
-
 
     .hha-pill-status {
       position: relative;
@@ -3609,12 +3515,7 @@ function cleanVid(vid) {
     .hha-pill-status-group.has-error .hha-current-count {
       color: var(--md-sys-color-error);
     }
-
-    .hha-pill-error-dot {
-      display: none !important;
-    }
-
-    /* ─── 4. QUICK ACTION BUTTON ──────────────────────────────────── */
+/* 4. Quick Action Button */
     .hha-btn-start,
     .hha-btn-stop,
     .hha-btn-done,
@@ -3644,10 +3545,10 @@ function cleanVid(vid) {
       vertical-align: middle;
       position: relative;
       overflow: hidden;
-      transition: 
-        background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard), 
-        color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard), 
-        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), 
+      transition:
+        background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard),
+        color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard),
+        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
         transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
@@ -3657,7 +3558,7 @@ function cleanVid(vid) {
       justify-content: center;
       margin-top: -1.5px;
       white-space: nowrap;
-      transition: 
+      transition:
         transform var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-decelerate),
         opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
     }
@@ -3671,9 +3572,9 @@ function cleanVid(vid) {
       opacity: 1;
       transition:
         opacity 140ms ease-out 60ms,
-        background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard), 
-        color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard), 
-        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), 
+        background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard),
+        color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard),
+        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
         transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
@@ -3816,16 +3717,8 @@ function cleanVid(vid) {
       box-shadow: none;
     }
 
-    /* ─── 5. FLYOUT PANEL (DYNAMIC ISLAND EXPANDED SURFACE) ───────── */
-    .hha-root[data-active-tab="settings"] {
-      --flyout-height: min(320px, calc(100vh - 100px));
-    }
-
-    .hha-root[data-active-tab="queue"] {
-      --flyout-height: min(520px, calc(100vh - 100px));
-    }
-
-    .hha-flyout {
+    /* 5. Flyout Panel */
+.hha-flyout {
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-body-small-size);
       line-height: var(--md-sys-typescale-body-small-line-height);
@@ -3966,7 +3859,7 @@ function cleanVid(vid) {
       animation: none !important;
     }
 
-    /* ─── 5.1 ISLAND HEADER (M3 COMPACT BAR) ───────────────────────── */
+    /* 5.1 Island Header */
     .hha-island-header {
       display: flex;
       align-items: center;
@@ -4050,7 +3943,7 @@ function cleanVid(vid) {
       background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
     }
 
-    /* ─── 6. BOTTOM NAVIGATION & ACTION DOCK (M3 FOOTER) ───────────── */
+    /* 6. Bottom Navigation & Action Dock */
     .hha-island-footer {
       display: flex;
       align-items: center;
@@ -4094,10 +3987,10 @@ function cleanVid(vid) {
       opacity: 0;
       transform: translate3d(var(--shared-counter-offset, 100px), 0, 0);
       will-change: transform, opacity;
-      transition: 
+      transition:
         transform 350ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
         opacity 200ms ease-out,
-        background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard), 
+        background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard),
         box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
     }
 
@@ -4107,7 +4000,7 @@ function cleanVid(vid) {
       transition:
         transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 80ms,
         opacity 320ms ease-out 80ms,
-        background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard), 
+        background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard),
         box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
     }
 
@@ -4263,7 +4156,6 @@ function cleanVid(vid) {
       color: var(--md-sys-color-on-surface-variant);
     }
 
-
     .hha-tab-btn:hover .hha-tab-badge.is-queue {
       background: var(--md-sys-color-outline-variant);
       color: var(--md-sys-color-on-surface);
@@ -4320,12 +4212,6 @@ function cleanVid(vid) {
       font-weight: 600;
     }
 
-    .hha-tab-btn.active .hha-tab-badge,
-    .hha-tab-btn.active .hha-tab-badge.is-queue {
-      background: var(--md-sys-color-primary-container);
-      color: var(--md-sys-color-on-primary-container);
-    }
-
     .hha-tab-btn.active:active {
       transform: scale(0.98);
     }
@@ -4354,7 +4240,7 @@ function cleanVid(vid) {
       box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-error);
     }
 
-    /* ─── 7. TAB PANELS ───────────────────────────────────────────── */
+    /* 7. Tab Panels */
     .hha-panels {
       flex: 1;
       display: grid;
@@ -4431,7 +4317,7 @@ function cleanVid(vid) {
       transform: translate3d(var(--hha-motion-tab-shift, 6px), 0, 0);
     }
 
-    /* ─── 8. QUEUE & LOG CONTAINERS ───────────────────────────────── */
+    /* 8. Queue & Log Containers */
     /* Tab 2: Queue Container (M3 Unified List Surface) */
     [data-panel="queue"] {
       overflow: hidden !important;
@@ -4593,7 +4479,7 @@ function cleanVid(vid) {
       box-sizing: border-box;
       cursor: pointer;
       user-select: none;
-      transition: 
+      transition:
         opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
         background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
     }
@@ -4609,7 +4495,7 @@ function cleanVid(vid) {
       border-color: transparent !important;
       overflow: hidden !important;
       pointer-events: none !important;
-      transition: 
+      transition:
         opacity 180ms cubic-bezier(0.3, 0, 0.8, 0.15),
         transform 180ms cubic-bezier(0.3, 0, 0.8, 0.15),
         max-height 220ms cubic-bezier(0.05, 0.7, 0.1, 1),
@@ -4829,17 +4715,17 @@ function cleanVid(vid) {
       transform: scale(0.92);
     }
 
-    /* ─── 9. FULL-SIZE ERROR CARD (IN PLACE OF COVER FORM) ───────── */
+    /* 9. Error Card */
     .hha-card-error {
       flex: 1;
       height: 100%;
       min-height: 0;
       display: flex;
       flex-direction: column;
-      justify-content: flex-start;
+      justify-content: space-between;
       gap: 12px;
       box-sizing: border-box;
-      padding: 16px;
+      padding: 14px 16px;
       margin-bottom: 0 !important;
       background: var(--md-sys-color-error-container);
       border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent);
@@ -4857,8 +4743,9 @@ function cleanVid(vid) {
     .hha-card-error-body {
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      min-height: 0;
+      align-items: flex-start;
+      gap: 8px;
+      min-height: 50px;
       flex: 1;
       overflow-y: auto;
       scrollbar-width: thin;
@@ -4867,20 +4754,22 @@ function cleanVid(vid) {
     .hha-card-error-title {
       font-size: var(--md-sys-typescale-body-medium-size);
       font-weight: 600;
-      line-height: 1.4;
+      line-height: 1.35;
       color: var(--md-sys-color-on-error-container);
       word-break: break-word;
       user-select: text;
     }
 
     .hha-card-error-code {
+      display: inline-block;
+      align-self: flex-start;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       font-size: var(--md-sys-typescale-label-small-size);
       font-weight: 500;
       line-height: 1.4;
       color: color-mix(in srgb, var(--md-sys-color-on-error-container) 85%, transparent);
       background: color-mix(in srgb, var(--md-sys-color-error) 12%, transparent);
-      padding: 8px 10px;
+      padding: 5px 9px;
       border-radius: var(--md-sys-shape-corner-small);
       word-break: break-all;
       user-select: text;
@@ -4902,20 +4791,25 @@ function cleanVid(vid) {
       height: 32px;
       padding: 0 14px;
       border-radius: var(--md-sys-shape-corner-full);
-      background: color-mix(in srgb, var(--md-sys-color-error) 12%, transparent);
-      color: var(--md-sys-color-on-error-container);
-      border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent);
+      background: transparent;
+      color: var(--md-sys-color-on-surface-variant);
+      border: 1px solid var(--md-sys-color-outline-variant);
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-label-medium-size);
-      font-weight: 600;
+      font-weight: 500;
       line-height: 1;
       cursor: pointer;
       box-sizing: border-box;
-      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+                  border-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+                  color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+                  transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
     .hha-card-error-actions .hha-btn-copy-error:hover {
-      background: color-mix(in srgb, var(--md-sys-color-error) 20%, transparent);
+      background: var(--md-sys-color-surface-container-high);
+      border-color: var(--md-sys-color-outline);
+      color: var(--md-sys-color-on-surface);
     }
 
     .hha-card-error-actions .hha-btn-copy-error:active {
@@ -4933,22 +4827,23 @@ function cleanVid(vid) {
       align-items: center;
       justify-content: center;
       height: 32px;
-      padding: 0 16px;
+      padding: 0 18px;
       border-radius: var(--md-sys-shape-corner-full);
-      background: var(--md-sys-color-error-container);
-      color: var(--md-sys-color-error);
-      border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent);
+      background: var(--md-sys-color-on-surface);
+      color: var(--md-sys-color-surface);
+      border: none;
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-label-medium-size);
       font-weight: 600;
       line-height: 1;
       cursor: pointer;
       box-sizing: border-box;
-      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+                  transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
     .hha-card-error-actions .hha-btn-dismiss-error:hover {
-      background: color-mix(in srgb, var(--md-sys-color-error-container) 85%, var(--md-sys-color-error));
+      background: color-mix(in srgb, var(--md-sys-color-on-surface) 88%, transparent);
     }
 
     .hha-card-error-actions .hha-btn-dismiss-error:active {
@@ -5015,7 +4910,7 @@ function cleanVid(vid) {
       line-height: 1;
     }
 
-    /* ─── 10. TOOLTIP (M3 PLAIN TOOLTIP) ──────────────────────────── */
+    /* 10. Tooltip */
     .hha-tooltip {
       position: absolute;
       background: var(--md-sys-color-inverse-surface);
@@ -5043,7 +4938,7 @@ function cleanVid(vid) {
       visibility: visible;
     }
 
-    /* ─── 11. SETTINGS CONTROLS ───────────────────────────────────── */
+    /* 11. Settings Controls */
     .hha-card {
       background: var(--md-sys-color-surface-container-lowest);
       border: 1px solid var(--md-sys-color-outline-variant);
@@ -5065,7 +4960,7 @@ function cleanVid(vid) {
       letter-spacing: var(--md-sys-typescale-body-medium-tracking);
     }
 
-    /* ─── 12. SWITCH & COVER LETTER ───────────────────────────────── */
+    /* 12. Switch & Cover Letter */
     .hha-card-cover {
       flex: 1;
       min-height: 0;
@@ -5108,7 +5003,7 @@ function cleanVid(vid) {
       color: var(--md-sys-color-on-surface);
     }
 
-    /* M3 Switch Specification (m3.material.io/components/switch/specs) */
+    /* Switch */
     .hha-switch {
       position: relative;
       display: inline-block;
@@ -5283,9 +5178,7 @@ function cleanVid(vid) {
 
   // --- 4. Web Component Implementation (Closed Shadow DOM) ---
 
-  const BaseElement = (typeof HTMLElement !== 'undefined') ? HTMLElement : class {};
-
-  class HhaHudElement extends BaseElement {
+  class HhaHudElement extends HTMLElement {
     constructor() {
       super();
       this._shadow = (typeof this.attachShadow === 'function')
@@ -5304,18 +5197,16 @@ function cleanVid(vid) {
       this._queue = [];
       this._lastErrorPayload = null;
       this._config = {
-        limit: MAX_DAILY_LIMIT,
-        useCover: false,
+            useCover: false,
         coverText: '',
         skipHidden: true
       };
       this._status = { status: 'idle', code: 'IDLE' };
-      this._progress = { sent: 0, limit: MAX_DAILY_LIMIT, percentage: 0 };
+      this._progress = { sent: 0, percentage: 0 };
 
       this._isPointerDown = false;
       this._dragMoved = false;
       this._pointerId = null;
-      this._dragHandleType = null; // 'pill'
       this._dragTarget = null;
       this._dragStartPointer = { x: 0, y: 0 };
       this._dragStartPillPos = { x: 0, y: 0 };
@@ -5436,7 +5327,6 @@ function cleanVid(vid) {
         this._pointerId = null;
         this._dragTarget = null;
         this._dragMoved = false;
-        this._dragHandleType = null;
       }
 
       this._domEventsBound = false;
@@ -5459,16 +5349,10 @@ function cleanVid(vid) {
       this.unbindAssistant();
       this._assistant = assistant;
 
-      let stateLimit;
       if (typeof assistant.getState === 'function') {
         const s = assistant.getState();
         if (s) {
           const sent = s.sentCount !== undefined ? s.sentCount : s.sentToday;
-          const lim = s.limit !== undefined ? s.limit : s.dailyLimit;
-          if (lim !== undefined) {
-            stateLimit = Math.max(1, Math.min(MAX_DAILY_LIMIT, parseInt(lim, 10) || 50));
-            this._config.limit = stateLimit;
-          }
           this.updateStatus(s.status, s.statusCode || s.code);
           this.updateProgress(sent);
         }
@@ -5477,13 +5361,7 @@ function cleanVid(vid) {
       if (typeof assistant.getConfig === 'function') {
         const c = assistant.getConfig();
         if (c) {
-          if (c.dailyLimit !== undefined && c.limit === undefined) {
-            c.limit = c.dailyLimit;
-          }
           this._config = { ...this._config, ...c };
-          if (stateLimit !== undefined) {
-            this._config.limit = stateLimit;
-          }
         }
       }
 
@@ -5512,8 +5390,6 @@ function cleanVid(vid) {
         );
       }
 
-      
-
       this._syncAll();
     }
 
@@ -5523,7 +5399,7 @@ function cleanVid(vid) {
       }
       this._unsubscribers = [];
       this._assistant = null;
-      
+
       if (this._copyErrorTimer) {
         clearTimeout(this._copyErrorTimer);
         this._copyErrorTimer = null;
@@ -5547,8 +5423,6 @@ function cleanVid(vid) {
       this._syncProgress();
     }
 
-    
-
     updateQueue(queue) {
       if (queue && Array.isArray(queue.queue)) queue = queue.queue;
       this._queue = Array.isArray(queue) ? queue : [];
@@ -5557,7 +5431,6 @@ function cleanVid(vid) {
 
     updateConfig(config) {
       if (!config) return;
-      config.limit = MAX_DAILY_LIMIT;
       if (typeof config.coverText === 'string' && config.coverText.length > MAX_COVER_LENGTH) {
         config.coverText = config.coverText.slice(0, MAX_COVER_LENGTH);
       }
@@ -5593,7 +5466,7 @@ function cleanVid(vid) {
           this._collapsedPillWidth = pill.offsetWidth;
         }
         if (root && typeof root.style.setProperty === 'function') {
-          root.style.setProperty('--pill-width', `${this._collapsedPillWidth || 196}px`);
+          root.style.setProperty('--pill-width', `${this._collapsedPillWidth || 166}px`);
         }
         if (root) {
           root.classList.toggle('is-expanded', this._isExpanded);
@@ -5654,10 +5527,6 @@ function cleanVid(vid) {
 
     close() {
       return this.toggleExpand(false);
-    }
-
-    _switchTab(tabName) {
-      return this.setActiveTab(tabName);
     }
 
     setActiveTab(tabName) {
@@ -5786,7 +5655,6 @@ function cleanVid(vid) {
       }
     }
 
-
     _getPillWidth() {
       if (!this._isExpanded && !this._isAnimating && this._shadow) {
         const pill = this._shadow.querySelector('[data-el="pill"]');
@@ -5830,14 +5698,13 @@ function cleanVid(vid) {
 
       this._shadow.innerHTML = `
         <style>${STYLES}</style>
-        <div class="hha-root" data-el="root" data-active-tab="${this._activeTab}">
+        <div class="hha-root${hasError ? ' has-error' : ''}" data-el="root" data-active-tab="${this._activeTab}">
           <div class="hha-pill" data-el="pill">
             <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и очередь" title="Отклики: отправлено / в очереди">
               <div class="hha-pill-progress-fill" data-el="pill-progress-fill"></div>
               <div class="hha-pill-status">
                 <span class="hha-pill-progress" data-el="pill-progress"><span class="hha-current-count" data-el="pill-current-count">0</span><span class="hha-pill-divider" aria-hidden="true">/</span><span class="hha-queue-count" data-el="pill-queue-count">0</span></span>
               </div>
-              <span class="hha-pill-error-dot" data-el="pill-error-dot" style="${hasError ? 'display: inline-block;' : 'display: none;'}"></span>
             </div>
             <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="pill-quick-btn">
               <span class="hha-btn-label" data-el="pill-quick-label">Старт</span>
@@ -5914,7 +5781,6 @@ function cleanVid(vid) {
             <!-- Bottom Dock: Counter on the Left + Tabs in Center + Quick Action Button on the Right -->
             <footer class="hha-island-footer">
               <div class="hha-footer-status-group" data-action="toggle-expand" data-el="footer-status-group" tabindex="0" role="button" aria-expanded="true" aria-label="Свернуть панель" title="Отклики: отправлено / в очереди">
-                <div class="hha-footer-progress-fill" data-el="footer-progress-fill"></div>
                 <div class="hha-footer-status">
                   <span class="hha-footer-progress" data-el="footer-progress"><span class="hha-current-count" data-el="footer-current-count">0</span><span class="hha-pill-divider" aria-hidden="true">/</span><span class="hha-queue-count" data-el="footer-queue-count">0</span></span>
                 </div>
@@ -5935,75 +5801,7 @@ function cleanVid(vid) {
       `;
     }
 
-    _bindDomEvents() {
-      if (!this._shadow || this._domEventsBound) return;
-      this._domEventsBound = true;
-
-      const root = this._shadow.querySelector('[data-el="root"]');
-      const pill = this._shadow.querySelector('[data-el="pill"]');
-      const header = this._shadow.querySelector('[data-el="island-header"]');
-      if (!root || !pill) return;
-
-      pill.addEventListener('pointerdown', (e) => this._onPointerDown(e, 'pill'));
-      pill.addEventListener('pointerup', this._onPointerUp);
-      pill.addEventListener('pointercancel', this._onPointerUp);
-
-      if (header) {
-        header.addEventListener('pointerdown', (e) => this._onPointerDown(e, 'header'));
-        header.addEventListener('pointerup', this._onPointerUp);
-        header.addEventListener('pointercancel', this._onPointerUp);
-      }
-
-      root.addEventListener('click', (e) => this._handleRootClick(e));
-
-      root.addEventListener('pointerover', (e) => {
-        const target = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-tooltip]') : null;
-        if (target && target.getAttribute('data-tooltip')) {
-          this._showTooltip(target);
-        }
-      });
-
-      root.addEventListener('pointerout', (e) => {
-        const fromTarget = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-tooltip]') : null;
-        const toTarget = e.relatedTarget && typeof e.relatedTarget.closest === 'function' ? e.relatedTarget.closest('[data-tooltip]') : null;
-        if (fromTarget && fromTarget !== toTarget) {
-          this._hideTooltip();
-        }
-      });
-
-      root.addEventListener('scroll', () => {
-        this._hideTooltip();
-      }, { capture: true, passive: true });
-
-      root.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
-          const target = e.target && typeof e.target.closest === 'function' 
-            ? e.target.closest('[data-action], [role="button"]') 
-            : null;
-          if (target) {
-            const tag = target.tagName.toLowerCase();
-            if (tag !== 'button' && tag !== 'a' && tag !== 'input' && tag !== 'textarea') {
-              if (e.key === ' ' || e.key === 'Spacebar') {
-                e.preventDefault();
-              }
-              target.click();
-            }
-          }
-        }
-      });
-
-      const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
-      if (statusGroup) {
-        statusGroup.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
-            e.preventDefault();
-            e.stopPropagation();
-            if (!this._isExpanded) this.setActiveTab('settings');
-            this.toggleExpand();
-          }
-        });
-      }
-
+    _bindFormEvents() {
       const useCoverCb = this._shadow.querySelector('[data-el="setting-use-cover"]');
       const coverTextarea = this._shadow.querySelector('[data-el="setting-cover-text"]');
 
@@ -6033,8 +5831,9 @@ function cleanVid(vid) {
         coverTextarea.addEventListener('blur', flushCoverText);
         coverTextarea.addEventListener('change', flushCoverText);
       }
+    }
 
-      // Document click listener to close overlay when clicking outside
+    _bindDocumentEvents() {
       this._onDocClick = (e) => {
         if (this._isExpanded && e) {
           const path = (typeof e.composedPath === 'function') ? e.composedPath() : [];
@@ -6047,7 +5846,6 @@ function cleanVid(vid) {
         document.addEventListener('click', this._onDocClick);
       }
 
-      // Document Escape key listener to close overlay
       this._onDocKeyDown = (e) => {
         if (e && e.key === 'Escape' && this._isExpanded) {
           e.preventDefault();
@@ -6057,133 +5855,179 @@ function cleanVid(vid) {
       if (typeof document !== 'undefined') {
         document.addEventListener('keydown', this._onDocKeyDown);
       }
+    }
 
-      this._initOverlayScrollbar();
+    _bindDomEvents() {
+      if (!this._shadow || this._domEventsBound) return;
+      this._domEventsBound = true;
+
+      const root = this._shadow.querySelector('[data-el="root"]');
+      const pill = this._shadow.querySelector('[data-el="pill"]');
+      const header = this._shadow.querySelector('[data-el="island-header"]');
+      if (!root || !pill) return;
+
+      pill.addEventListener('pointerdown', (e) => this._onPointerDown(e, 'pill'));
+      pill.addEventListener('pointerup', this._onPointerUp);
+      pill.addEventListener('pointercancel', this._onPointerUp);
+
+      if (header) {
+        header.addEventListener('pointerdown', (e) => this._onPointerDown(e, 'header'));
+        header.addEventListener('pointerup', this._onPointerUp);
+        header.addEventListener('pointercancel', this._onPointerUp);
+      }
+
+      root.addEventListener('click', (e) => this._handleRootClick(e));
+      root.addEventListener('pointerover', (e) => {
+        const target = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-tooltip]') : null;
+        if (target && target.getAttribute('data-tooltip')) this._showTooltip(target);
+      });
+      root.addEventListener('pointerout', (e) => {
+        const fromTarget = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-tooltip]') : null;
+        const toTarget = e.relatedTarget && typeof e.relatedTarget.closest === 'function' ? e.relatedTarget.closest('[data-tooltip]') : null;
+        if (fromTarget && fromTarget !== toTarget) this._hideTooltip();
+      });
+      root.addEventListener('scroll', () => this._hideTooltip(), { capture: true, passive: true });
+
+      root.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+          const target = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-action], [role="button"]') : null;
+          if (target) {
+            const tag = target.tagName.toLowerCase();
+            if (tag !== 'button' && tag !== 'a' && tag !== 'input' && tag !== 'textarea') {
+              if (e.key === ' ' || e.key === 'Spacebar') e.preventDefault();
+              target.click();
+            }
+          }
+        }
+      });
+
+      const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
+      if (statusGroup) {
+        statusGroup.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!this._isExpanded) this.setActiveTab('settings');
+            this.toggleExpand();
+          }
+        });
+      }
+
+      this._bindFormEvents();
+      this._bindDocumentEvents();
+    }
+    _setupThumbDrag(thumb, stream, scrollbar, onDragEnd) {
+      let isDragging = false;
+      let startY = 0;
+      let startScrollTop = 0;
+      let scrollbarRemovers = [];
+
+      const onPointerMove = (e) => {
+        if (!isDragging) return;
+        const deltaY = e.clientY - startY;
+        const maxThumbTop = scrollbar.clientHeight - (thumb.offsetHeight || 24);
+        const maxScrollTop = stream.scrollHeight - stream.clientHeight;
+        if (maxThumbTop > 0 && maxScrollTop > 0) {
+          stream.scrollTop = startScrollTop + (deltaY / maxThumbTop) * maxScrollTop;
+        }
+      };
+
+      const onPointerUp = (e) => {
+        if (!isDragging) return;
+        isDragging = false;
+        thumb.classList.remove('is-dragging');
+        try { thumb.releasePointerCapture(e.pointerId); } catch (_) {}
+        for (const rm of scrollbarRemovers) { try { rm(); } catch (_) {} }
+        scrollbarRemovers = [];
+        if (typeof onDragEnd === 'function') onDragEnd();
+      };
+
+      thumb.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        isDragging = true;
+        startY = e.clientY;
+        startScrollTop = stream.scrollTop;
+        thumb.classList.add('is-dragging');
+        scrollbar.classList.add('is-visible');
+        try { thumb.setPointerCapture(e.pointerId); } catch (_) {}
+        scrollbarRemovers = [
+          this._addWindowListener('pointermove', onPointerMove),
+          this._addWindowListener('pointerup', onPointerUp),
+          this._addWindowListener('pointercancel', onPointerUp)
+        ];
+      });
+    }
+
+    _setupTrackClick(scrollbar, stream, thumb) {
+      scrollbar.addEventListener('pointerdown', (e) => {
+        if (e.target === thumb) return;
+        e.preventDefault();
+        const rect = scrollbar.getBoundingClientRect();
+        const clickY = e.clientY - rect.top;
+        const thumbH = thumb.offsetHeight || 24;
+        const maxThumbTop = scrollbar.clientHeight - thumbH;
+        const maxScrollTop = stream.scrollHeight - stream.clientHeight;
+        if (maxThumbTop > 0) {
+          const targetThumbTop = Math.max(0, Math.min(maxThumbTop, clickY - thumbH / 2));
+          stream.scrollTop = (targetThumbTop / maxThumbTop) * maxScrollTop;
+        }
+      });
+    }
+
+    _attachOverlayScrollbar(streamSel, scrollbarSel, thumbSel) {
+      const stream = this._shadow.querySelector(streamSel);
+      const scrollbar = this._shadow.querySelector(scrollbarSel);
+      const thumb = this._shadow.querySelector(thumbSel);
+      const logCard = stream ? stream.closest('.hha-log-card') : null;
+      if (!stream || !logCard || !scrollbar || !thumb) return;
+
+      let isHovered = false;
+      let hideTimer = null;
+
+      const scheduleHide = (delay = 800) => {
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => {
+          if (!isHovered) scrollbar.classList.remove('is-visible');
+        }, delay);
+      };
+
+      const showScrollbar = () => {
+        if (this._isAnimating || !this._isExpanded) return;
+        if (stream.scrollHeight > stream.clientHeight + 1) {
+          this._updateOverlayScrollbar();
+          scrollbar.classList.add('is-visible');
+        }
+      };
+
+      stream.addEventListener('scroll', () => {
+        this._updateOverlayScrollbar();
+        showScrollbar();
+        if (!isHovered) scheduleHide(800);
+      }, { passive: true });
+
+      logCard.addEventListener('mouseenter', () => {
+        isHovered = true;
+        if (hideTimer) clearTimeout(hideTimer);
+        showScrollbar();
+      });
+
+      logCard.addEventListener('mouseleave', () => {
+        isHovered = false;
+        scheduleHide(300);
+      });
+
+      this._setupThumbDrag(thumb, stream, scrollbar, () => {
+        if (!isHovered) scheduleHide(800);
+      });
+
+      this._setupTrackClick(scrollbar, stream, thumb);
     }
 
     _initOverlayScrollbar() {
-      const attach = (streamSel, scrollbarSel, thumbSel) => {
-        const stream = this._shadow.querySelector(streamSel);
-        const scrollbar = this._shadow.querySelector(scrollbarSel);
-        const thumb = this._shadow.querySelector(thumbSel);
-        const logCard = stream ? stream.closest('.hha-log-card') : null;
-        if (!stream || !logCard || !scrollbar || !thumb) return;
-
-        let isHovered = false;
-        let isDragging = false;
-        let hideTimer = null;
-
-        const scheduleHide = (delay = 800) => {
-          if (hideTimer) clearTimeout(hideTimer);
-          hideTimer = setTimeout(() => {
-            if (!isHovered && !isDragging) {
-              scrollbar.classList.remove('is-visible');
-            }
-          }, delay);
-        };
-
-        const showScrollbar = () => {
-          if (this._isAnimating || !this._isExpanded) return;
-          if (stream.scrollHeight > stream.clientHeight + 1) {
-            this._updateOverlayScrollbar();
-            scrollbar.classList.add('is-visible');
-          }
-        };
-
-        stream.addEventListener('scroll', () => {
-          this._updateOverlayScrollbar();
-          showScrollbar();
-          if (!isHovered && !isDragging) {
-            scheduleHide(800);
-          }
-        }, { passive: true });
-
-        logCard.addEventListener('mouseenter', () => {
-          isHovered = true;
-          if (hideTimer) clearTimeout(hideTimer);
-          showScrollbar();
-        });
-
-        logCard.addEventListener('mouseleave', () => {
-          isHovered = false;
-          if (!isDragging) {
-            scheduleHide(300);
-          }
-        });
-
-        // Pointer drag interaction on thumb
-        let startY = 0;
-        let startScrollTop = 0;
-        let scrollbarRemovers = [];
-
-        const onPointerMove = (e) => {
-          if (!isDragging) return;
-          const deltaY = e.clientY - startY;
-          const trackH = scrollbar.clientHeight;
-          const scrollH = stream.scrollHeight;
-          const clientH = stream.clientHeight;
-          const thumbH = thumb.offsetHeight || 24;
-          const maxThumbTop = trackH - thumbH;
-          const maxScrollTop = scrollH - clientH;
-          if (maxThumbTop > 0 && maxScrollTop > 0) {
-            const scrollDelta = (deltaY / maxThumbTop) * maxScrollTop;
-            stream.scrollTop = startScrollTop + scrollDelta;
-          }
-        };
-
-        const onPointerUp = (e) => {
-          if (!isDragging) return;
-          isDragging = false;
-          thumb.classList.remove('is-dragging');
-          try { thumb.releasePointerCapture(e.pointerId); } catch (_) {}
-          for (const rm of scrollbarRemovers) {
-            try { rm(); } catch (_) {}
-          }
-          scrollbarRemovers = [];
-          if (!isHovered) {
-            scheduleHide(800);
-          }
-        };
-
-        thumb.addEventListener('pointerdown', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          isDragging = true;
-          startY = e.clientY;
-          startScrollTop = stream.scrollTop;
-          thumb.classList.add('is-dragging');
-          scrollbar.classList.add('is-visible');
-          try { thumb.setPointerCapture(e.pointerId); } catch (_) {}
-          scrollbarRemovers = [
-            this._addWindowListener('pointermove', onPointerMove),
-            this._addWindowListener('pointerup', onPointerUp),
-            this._addWindowListener('pointercancel', onPointerUp)
-          ];
-        });
-
-        // Click on scrollbar track to jump
-        scrollbar.addEventListener('pointerdown', (e) => {
-          if (e.target === thumb) return;
-          e.preventDefault();
-          const rect = scrollbar.getBoundingClientRect();
-          const clickY = e.clientY - rect.top;
-          const trackH = scrollbar.clientHeight;
-          const scrollH = stream.scrollHeight;
-          const clientH = stream.clientHeight;
-          const thumbH = thumb.offsetHeight || 24;
-          const targetThumbTop = Math.max(0, Math.min(trackH - thumbH, clickY - thumbH / 2));
-          const maxThumbTop = trackH - thumbH;
-          const maxScrollTop = scrollH - clientH;
-          if (maxThumbTop > 0) {
-            stream.scrollTop = (targetThumbTop / maxThumbTop) * maxScrollTop;
-          }
-        });
-      };
-
-      attach('[data-el="queue-stream"]', '[data-el="queue-scrollbar"]', '[data-el="queue-scroll-thumb"]');
+      this._attachOverlayScrollbar('[data-el="queue-stream"]', '[data-el="queue-scrollbar"]', '[data-el="queue-scroll-thumb"]');
       this._updateTabIndicator();
     }
-
     _updateOverlayScrollbar() {
       if (!this._shadow) return;
       const update = (streamSel, scrollbarSel, thumbSel) => {
@@ -6231,7 +6075,7 @@ function cleanVid(vid) {
       };
 
       // 1. Switch active tab to settings so user sees error immediately (even before shadow is attached)
-      this._switchTab('settings');
+      this.setActiveTab('settings');
 
       if (!this._shadow) return;
 
@@ -6242,6 +6086,8 @@ function cleanVid(vid) {
       }
 
       // 2. Update and show Error Card inside Settings tab, hide Cover Card
+      const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
+      if (root) root.classList.add('has-error');
       const coverCard = this._shadow.querySelector('[data-el="cover-card"]');
       const errorCard = this._shadow.querySelector('[data-el="error-card"]');
       const errorTitle = this._shadow.querySelector('[data-el="error-card-title"]');
@@ -6251,9 +6097,9 @@ function cleanVid(vid) {
       if (errorCard) errorCard.style.display = 'flex';
       if (errorTitle) errorTitle.textContent = humanMsg;
       if (errorCode) errorCode.textContent = codeMsg;
+      this._updatePosition();
 
-
-      // 4. Show refined error indicator on collapsed pill
+      // 3. Show refined error indicator on collapsed pill
       const errorDot = this._shadow.querySelector('[data-el="pill-error-dot"]');
       if (errorDot) {
         errorDot.style.display = 'inline-block';
@@ -6274,10 +6120,13 @@ function cleanVid(vid) {
       if (!this._shadow) return;
 
       // Hide error card, reveal cover card
+      const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
+      if (root) root.classList.remove('has-error');
       const coverCard = this._shadow.querySelector('[data-el="cover-card"]');
       const errorCard = this._shadow.querySelector('[data-el="error-card"]');
       if (errorCard) errorCard.style.display = 'none';
       if (coverCard) coverCard.style.display = 'flex';
+      this._updatePosition();
 
       // Reset copy button state
       const copyBtn = this._shadow.querySelector('[data-el="error-copy-btn"]');
@@ -6290,12 +6139,77 @@ function cleanVid(vid) {
           copyBtn.textContent = 'Скопировать';
         }
       }
-
-
-      const errorDot = this._shadow.querySelector('[data-el="pill-error-dot"]');
-      if (errorDot) errorDot.style.display = 'none';
       const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
       if (statusGroup) statusGroup.classList.remove('has-error');
+    }
+
+    _handleClearQueueAction(target) {
+      if (target.disabled || (typeof target.hasAttribute === 'function' && target.hasAttribute('disabled')) || this._queue.length === 0) {
+        return;
+      }
+      if (this._queueConfirmTimer) {
+        clearTimeout(this._queueConfirmTimer);
+        this._queueConfirmTimer = null;
+        this._resetClearQueueBtn();
+        if (this._assistant && typeof this._assistant.clearManualQueue === 'function') {
+          this._assistant.clearManualQueue();
+        } else {
+          this._queue = [];
+          this._syncQueue();
+        }
+      } else {
+        target.classList.add('is-confirming');
+        target.innerHTML = '<span class="hha-btn-confirm-text">Точно очистить?</span>';
+        this._queueConfirmTimer = setTimeout(() => {
+          this._queueConfirmTimer = null;
+          this._resetClearQueueBtn();
+        }, 3000);
+      }
+    }
+
+    _handleOpenVacancyAction(target, e) {
+      const vid = target.dataset.vid || target.dataset.cleanVid;
+      const cVid = cleanVid(target.dataset.cleanVid || vid);
+      const targetCard = target.closest('.hha-queue-card') || target;
+      const url = targetCard.dataset.url || target.getAttribute('href') || targetCard.getAttribute('href');
+      if (url && url !== '#' && !e.target.closest('a')) {
+        try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (_) {}
+      }
+      if (cVid) {
+        if (this._assistant && typeof this._assistant.markManualItemViewed === 'function') {
+          this._assistant.markManualItemViewed(cVid, true);
+        } else {
+          const item = (this._queue || []).find(it => cleanVid(it.vid) === cVid);
+          if (item) {
+            item.viewed = true;
+            item.viewedAt = Date.now();
+            this._syncQueue();
+          }
+        }
+      }
+    }
+
+    _handleDeleteQueueItemAction(target) {
+      const vid = target.dataset.vid || target.dataset.cleanVid;
+      const cVid = cleanVid(target.dataset.cleanVid || vid);
+      if (!vid) return;
+      const card = target.closest('.hha-queue-card');
+      const executeRemove = () => {
+        if (this._assistant && typeof this._assistant.removeManualItem === 'function') {
+          this._assistant.removeManualItem(vid);
+        } else {
+          this._queue = this._queue.filter(it => cleanVid(it.vid) !== cVid);
+          this._syncQueue();
+        }
+      };
+      if (card && !card.classList.contains('is-removing')) {
+        card.style.maxHeight = `${card.offsetHeight}px`;
+        void card.offsetHeight;
+        card.classList.add('is-removing');
+        setTimeout(executeRemove, 200);
+      } else {
+        executeRemove();
+      }
     }
 
     _handleRootClick(e) {
@@ -6311,7 +6225,6 @@ function cleanVid(vid) {
       const isInteractive = e.target.closest('button, input, textarea, a, select') || (e.target.closest('[data-action]') && e.target.closest('[data-action]').dataset.action !== 'toggle-expand');
       const actionTarget = e.target.closest('[data-action]');
 
-      // Click on pill free surface via event delegation
       if (pillTarget && !isInteractive && !actionTarget && !this._dragMoved) {
         this.toggleExpand();
         return;
@@ -6320,102 +6233,21 @@ function cleanVid(vid) {
       if (!actionTarget) return;
 
       const action = actionTarget.dataset.action;
+      const actionMap = {
+        'quick-toggle': (tgt, ev) => { ev.stopPropagation(); this._handleToggleAutomation(); },
+        'toggle-expand': (tgt, ev) => { ev.stopPropagation(); this.toggleExpand(); },
+        'collapse-island': (tgt, ev) => { ev.stopPropagation(); this.toggleExpand(false); },
+        'switch-tab': (tgt, ev) => { ev.stopPropagation(); this.setActiveTab(tgt.dataset.tab); },
+        'copy-last-error': (tgt, ev) => { ev.stopPropagation(); this._copyLastErrorToClipboard(tgt); },
+        'dismiss-error': (tgt, ev) => { ev.stopPropagation(); this._dismissError(); },
+        'clear-queue': (tgt, ev) => { ev.stopPropagation(); this._handleClearQueueAction(tgt); },
+        'open-vacancy': (tgt, ev) => { this._handleOpenVacancyAction(tgt, ev); },
+        'delete-queue-item': (tgt, ev) => { ev.stopPropagation(); this._handleDeleteQueueItemAction(tgt); }
+      };
 
-      if (action === 'quick-toggle') {
-        e.stopPropagation();
-        this._handleToggleAutomation();
-      } else if (action === 'toggle-expand') {
-        e.stopPropagation();
-        this.toggleExpand();
-      } else if (action === 'collapse-island') {
-        e.stopPropagation();
-        this.toggleExpand(false);
-      } else if (action === 'switch-tab') {
-        e.stopPropagation();
-        this.setActiveTab(actionTarget.dataset.tab);
-      } else if (action === 'copy-last-error') {
-        e.stopPropagation();
-        this._copyLastErrorToClipboard(actionTarget);
-      } else if (action === 'dismiss-error') {
-        e.stopPropagation();
-        this._dismissError();
-      } else if (action === 'clear-queue') {
-        e.stopPropagation();
-        if (actionTarget.disabled || (typeof actionTarget.hasAttribute === 'function' && actionTarget.hasAttribute('disabled')) || this._queue.length === 0) {
-          return;
-        }
-        if (this._queueConfirmTimer) {
-          // Second click within confirmation window -> execute clear!
-          clearTimeout(this._queueConfirmTimer);
-          this._queueConfirmTimer = null;
-          this._resetClearQueueBtn();
-          if (this._assistant && typeof this._assistant.clearManualQueue === 'function') {
-            this._assistant.clearManualQueue();
-          } else {
-            this._queue = [];
-            this._syncQueue();
-          }
-        } else {
-          // First click -> show inline confirmation "Точно очистить?"
-          actionTarget.classList.add('is-confirming');
-          actionTarget.innerHTML = '<span class="hha-btn-confirm-text">Точно очистить?</span>';
-          this._queueConfirmTimer = setTimeout(() => {
-            this._queueConfirmTimer = null;
-            this._resetClearQueueBtn();
-          }, 3000);
-        }
-      } else if (action === 'open-vacancy') {
-        const vid = actionTarget.dataset.vid || actionTarget.dataset.cleanVid;
-        const cVid = cleanVid(actionTarget.dataset.cleanVid || vid);
-        const targetCard = actionTarget.closest('.hha-queue-card') || actionTarget;
-        const url = targetCard.dataset.url || actionTarget.getAttribute('href') || targetCard.getAttribute('href');
-        if (url && url !== '#' && !e.target.closest('a')) {
-          try {
-            window.open(url, '_blank', 'noopener,noreferrer');
-          } catch (_) {}
-        }
-        if (cVid) {
-          if (this._assistant && typeof this._assistant.markManualItemViewed === 'function') {
-            this._assistant.markManualItemViewed(cVid, true);
-          } else {
-            const item = (this._queue || []).find(it => cleanVid(it.vid) === cVid);
-            if (item) {
-              item.viewed = true;
-              item.viewedAt = Date.now();
-              this._syncQueue();
-            }
-          }
-        }
-      } else if (action === 'delete-queue-item') {
-        e.stopPropagation();
-        const vid = actionTarget.dataset.vid || actionTarget.dataset.cleanVid;
-        const cVid = cleanVid(actionTarget.dataset.cleanVid || vid);
-        if (vid) {
-          const card = actionTarget.closest('.hha-queue-card');
-          if (card && !card.classList.contains('is-removing')) {
-            card.style.maxHeight = `${card.offsetHeight}px`;
-            void card.offsetHeight;
-            card.classList.add('is-removing');
-            setTimeout(() => {
-              if (this._assistant && typeof this._assistant.removeManualItem === 'function') {
-                this._assistant.removeManualItem(vid);
-              } else {
-                this._queue = this._queue.filter(it => cleanVid(it.vid) !== cVid);
-                this._syncQueue();
-              }
-            }, 200);
-          } else if (!card) {
-            if (this._assistant && typeof this._assistant.removeManualItem === 'function') {
-              this._assistant.removeManualItem(vid);
-            } else {
-              this._queue = this._queue.filter(it => cleanVid(it.vid) !== cVid);
-              this._syncQueue();
-            }
-          }
-        }
-      }
+      const handler = actionMap[action];
+      if (handler) handler(actionTarget, e);
     }
-
     _fallbackCopyText(text) {
       if (typeof document === 'undefined') return false;
       try {
@@ -6446,8 +6278,6 @@ function cleanVid(vid) {
       } catch (_) {}
       return Promise.resolve(this._fallbackCopyText(text));
     }
-
-    
 
     _copyLastErrorToClipboard(btnEl) {
       if (!this._lastErrorPayload) return;
@@ -6480,7 +6310,7 @@ function cleanVid(vid) {
           btnEl.dataset.origText = btnEl.textContent || 'Скопировать';
         }
         btnEl.classList.add('is-copied');
-        btnEl.textContent = 'Скопировано!';
+        btnEl.textContent = 'Скопировано';
         this._copyErrorTimer = setTimeout(() => {
           btnEl.classList.remove('is-copied');
           btnEl.textContent = (btnEl.dataset && btnEl.dataset.origText) || 'Скопировать';
@@ -6489,8 +6319,6 @@ function cleanVid(vid) {
         }, 1800);
       }
     }
-
-    
 
     _handleToggleAutomation() {
       if (!this._assistant) return;
@@ -6504,7 +6332,7 @@ function cleanVid(vid) {
         if (this._status.code === 'DAILY_LIMIT_REACHED') {
           return;
         }
-        const lim = this._progress ? this._progress.limit : ((this._config && this._config.limit) || 50);
+        const lim = MAX_DAILY_LIMIT;
         const sent = this._progress ? this._progress.sent : 0;
         if (sent < lim) {
           this.updateStatus('idle', 'IDLE');
@@ -6521,7 +6349,7 @@ function cleanVid(vid) {
         }
         this.updateStatus('idle', 'IDLE');
       } else {
-        const lim = this._progress ? this._progress.limit : (this._config.limit || 50);
+        const lim = MAX_DAILY_LIMIT;
         const sent = this._progress ? this._progress.sent : 0;
         if (sent >= lim && lim > 0) {
           this.updateStatus('done', 'COMPLETED');
@@ -6532,9 +6360,6 @@ function cleanVid(vid) {
     }
 
     _applyConfig(partial) {
-      if (partial && partial.limit !== undefined) {
-        partial.limit = Math.max(1, Math.min(MAX_DAILY_LIMIT, parseInt(partial.limit, 10) || 50));
-      }
       if (partial && typeof partial.coverText === 'string' && partial.coverText.length > MAX_COVER_LENGTH) {
         partial.coverText = partial.coverText.slice(0, MAX_COVER_LENGTH);
       }
@@ -6604,8 +6429,7 @@ function cleanVid(vid) {
         this._pointerId = null;
         this._dragTarget = null;
         this._dragMoved = false;
-        this._dragHandleType = null;
-        if (this._dragWindowRemovers && this._dragWindowRemovers.length > 0) {
+          if (this._dragWindowRemovers && this._dragWindowRemovers.length > 0) {
           for (const rm of this._dragWindowRemovers) { try { rm(); } catch (_) {} }
           this._dragWindowRemovers = [];
         }
@@ -6620,7 +6444,6 @@ function cleanVid(vid) {
       this._isPointerDown = true;
       this._dragMoved = false;
       this._pointerId = e.pointerId;
-      this._dragHandleType = handleType;
       this._dragTarget = target;
       this._dragStartPointer = { x: e.clientX, y: e.clientY };
       this._dragStartPillPos = { ...this._pillPos };
@@ -6678,6 +6501,51 @@ function cleanVid(vid) {
       }
     }
 
+    _calculateSnapping(winW, winH, root) {
+      const flyoutMaxW = 390;
+      const halfW = flyoutMaxW / 2;
+      const padding = 16;
+      const flyoutH = 520;
+      const gap = 8;
+      const pillH = 36;
+      const maxFlyoutH = Math.max(120, winH - 100);
+      const finalH = Math.min(flyoutH, maxFlyoutH);
+      const maxY = Math.max(padding, winH - pillH - padding);
+      const minY = Math.min(maxY, finalH + gap + padding);
+
+      let snappedX = this._pillPos.x;
+      let snappedY = this._pillPos.y;
+      let didSnap = false;
+
+      if ((this._pillPos.x - halfW) < 36) {
+        snappedX = 16 + halfW;
+        didSnap = true;
+      } else if ((winW - (this._pillPos.x + halfW)) < 36) {
+        snappedX = winW - 16 - halfW;
+        didSnap = true;
+      }
+
+      if ((this._pillPos.y - minY) < 36) {
+        snappedY = minY;
+        didSnap = true;
+      } else if ((maxY - this._pillPos.y) < 36) {
+        snappedY = maxY;
+        didSnap = true;
+      }
+
+      if (didSnap) {
+        this._pillPos = this._clampPillCoordinates(snappedX, snappedY, winW, winH);
+        if (root) {
+          root.classList.add('is-snapping');
+          if (this._snapTimer) clearTimeout(this._snapTimer);
+          this._snapTimer = setTimeout(() => {
+            if (root) root.classList.remove('is-snapping');
+            this._snapTimer = null;
+          }, 260);
+        }
+      }
+    }
+
     _onPointerUp(e) {
       if (!this._isPointerDown) return;
       if (e && e.pointerId !== undefined && this._pointerId !== null && e.pointerId !== this._pointerId) return;
@@ -6687,9 +6555,7 @@ function cleanVid(vid) {
         this._dragRafId = null;
       }
       if (this._dragWindowRemovers && this._dragWindowRemovers.length > 0) {
-        for (const rm of this._dragWindowRemovers) {
-          try { rm(); } catch (_) {}
-        }
+        for (const rm of this._dragWindowRemovers) { try { rm(); } catch (_) {} }
         this._dragWindowRemovers = [];
       }
       try {
@@ -6699,73 +6565,22 @@ function cleanVid(vid) {
       } catch (_) {}
 
       const root = this._shadow ? (this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root')) : null;
-      if (root) {
-        root.classList.remove('is-dragging');
-      }
+      if (root) root.classList.remove('is-dragging');
 
       const wasDragging = this._dragMoved;
       this._isPointerDown = false;
       this._pointerId = null;
-      this._dragHandleType = null;
       this._dragTarget = null;
 
       if (wasDragging) {
         const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
         const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
-        const flyoutMaxW = 390;
-        const halfW = flyoutMaxW / 2;
-        const padding = 16;
-        const flyoutH = 520;
-        const gap = 8;
-        const pillH = 36;
-        const maxFlyoutH = Math.max(120, winH - 100);
-        const finalH = Math.min(flyoutH, maxFlyoutH);
-        const maxY = Math.max(padding, winH - pillH - padding);
-        const minY = Math.min(maxY, finalH + gap + padding);
-
-        let snappedX = this._pillPos.x;
-        let snappedY = this._pillPos.y;
-        let didSnap = false;
-
-        const leftDist = this._pillPos.x - halfW;
-        const rightDist = winW - (this._pillPos.x + halfW);
-        const topDist = this._pillPos.y - minY;
-        const bottomDist = maxY - this._pillPos.y;
-
-        if (leftDist < 36) {
-          snappedX = 16 + halfW;
-          didSnap = true;
-        } else if (rightDist < 36) {
-          snappedX = winW - 16 - halfW;
-          didSnap = true;
-        }
-
-        if (topDist < 36) {
-          snappedY = minY;
-          didSnap = true;
-        } else if (bottomDist < 36) {
-          snappedY = maxY;
-          didSnap = true;
-        }
-
-        if (didSnap) {
-          this._pillPos = this._clampPillCoordinates(snappedX, snappedY, winW, winH);
-          if (root) {
-            root.classList.add('is-snapping');
-            if (this._snapTimer) clearTimeout(this._snapTimer);
-            this._snapTimer = setTimeout(() => {
-              if (root) root.classList.remove('is-snapping');
-              this._snapTimer = null;
-            }, 260);
-          }
-        }
-
+        this._calculateSnapping(winW, winH, root);
         this._persistPosition();
         this._suppressNextClick();
       }
       this._updatePosition();
     }
-
     _suppressNextClick() {
       this._justDragged = true;
       const suppress = (ev) => {
@@ -6832,7 +6647,8 @@ function cleanVid(vid) {
         const pillWidth = this._getPillWidth();
         root.style.setProperty('--pill-width', `${pillWidth}px`);
         const isQueue = this._activeTab === 'queue';
-        const baseH = isQueue ? 520 : 320;
+        const hasErr = Boolean(this._lastErrorPayload);
+        const baseH = isQueue ? 520 : (hasErr ? 180 : 320);
         const maxFlyoutH = Math.max(120, winH - 100);
         const finalH = Math.min(baseH, maxFlyoutH);
         root.style.setProperty('--flyout-height', `${finalH}px`);
@@ -6969,11 +6785,80 @@ function cleanVid(vid) {
       const currentEls = this._shadow.querySelectorAll('.hha-current-count');
       currentEls.forEach(el => { el.textContent = String(cur); });
 
-      const pillFills = this._shadow.querySelectorAll('[data-el="pill-progress-fill"], [data-el="footer-progress-fill"]');
+      const pillFills = this._shadow.querySelectorAll('[data-el="pill-progress-fill"]');
       if (pillFills.length) {
         const percent = MAX_DAILY_LIMIT > 0 ? Math.min(100, Math.max(0, Math.round((cur / MAX_DAILY_LIMIT) * 100))) : 0;
         pillFills.forEach(fill => { fill.style.width = `${percent}%`; });
       }
+    }
+
+    _renderQueueCard(item) {
+      const rawVid = item.vid ? String(item.vid) : '';
+      const cVid = cleanVid(rawVid);
+      const targetUrl = toVacancyUrl(cVid, item.url);
+      let displayTitle = collapseSpaces(item.title || '');
+      displayTitle = displayTitle.replace(/\s*#\d+\b/g, '').trim();
+      if (!displayTitle || /^(?:отклик на вакансию|отклик без резюме)$/i.test(displayTitle)) {
+        displayTitle = 'Вакансия';
+      }
+      const displayEmployer = collapseSpaces(item.employer || '');
+      const reasonInfo = formatQueueReasonInfo(item.reason);
+      const cleanSalary = formatCleanSalary(item.salary || '');
+      const isViewed = Boolean(item.viewed);
+
+      return `
+        <div class="hha-queue-card ${isViewed ? 'is-viewed' : ''}" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-url="${escapeHtml(targetUrl || '#')}" role="link" tabindex="0" title="Открыть вакансию в новой вкладке">
+          <div class="hha-queue-card-top">
+            <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="${escapeHtml(displayTitle)}">
+              <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
+            </a>
+            <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">✕</button>
+          </div>
+          ${displayEmployer ? `
+          <div class="hha-queue-card-mid">
+            <span class="hha-queue-employer" title="${escapeHtml(displayEmployer)}">${escapeHtml(displayEmployer)}</span>
+          </div>` : ''}
+          <div class="hha-queue-card-bottom">
+            ${isViewed ? `<span class="hha-queue-badge badge-viewed">Просмотрено</span>` : ''}
+            <span class="hha-queue-badge badge-${escapeHtml(reasonInfo.type)}">${escapeHtml(reasonInfo.text)}</span>
+            ${cleanSalary ? `<span class="hha-queue-salary" title="${escapeHtml(item.salary || cleanSalary)}">${escapeHtml(cleanSalary)}</span>` : ''}
+          </div>
+        </div>
+      `;
+    }
+    _renderQueueCard(item) {
+      const rawVid = item.vid ? String(item.vid) : '';
+      const cVid = cleanVid(rawVid);
+      const targetUrl = toVacancyUrl(cVid, item.url);
+      let displayTitle = collapseSpaces(item.title || '');
+      displayTitle = displayTitle.replace(/\s*#\d+\b/g, '').trim();
+      if (!displayTitle || /^(?:отклик на вакансию|отклик без резюме)$/i.test(displayTitle)) {
+        displayTitle = 'Вакансия';
+      }
+      const displayEmployer = collapseSpaces(item.employer || '');
+      const reasonInfo = formatQueueReasonInfo(item.reason);
+      const cleanSalary = formatCleanSalary(item.salary || '');
+      const isViewed = Boolean(item.viewed);
+
+      return `
+        <div class="hha-queue-card ${isViewed ? 'is-viewed' : ''}" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-url="${escapeHtml(targetUrl || '#')}" role="link" tabindex="0" title="Открыть вакансию в новой вкладке">
+          <div class="hha-queue-card-top">
+            <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="${escapeHtml(displayTitle)}">
+              <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
+            </a>
+            <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">✕</button>
+          </div>
+          ${displayEmployer ? `
+          <div class="hha-queue-card-mid">
+            <span class="hha-queue-employer" title="${escapeHtml(displayEmployer)}">${escapeHtml(displayEmployer)}</span>
+          </div>` : ''}
+          <div class="hha-queue-card-bottom">
+            ${isViewed ? `<span class="hha-queue-badge badge-viewed">Просмотрено</span>` : ''}
+            <span class="hha-queue-badge badge-${escapeHtml(reasonInfo.type)}">${escapeHtml(reasonInfo.text)}</span>
+            ${cleanSalary ? `<span class="hha-queue-salary" title="${escapeHtml(item.salary || cleanSalary)}">${escapeHtml(cleanSalary)}</span>` : ''}
+          </div>
+        </div>
+      `;
     }
 
     _syncQueue() {
@@ -7009,47 +6894,13 @@ function cleanVid(vid) {
       const queueStream = this._shadow.querySelector('[data-el="queue-stream"]');
       if (queueStream) {
         if (this._queue && this._queue.length > 0) {
-          // Sort queue: unviewed items first, viewed items last; newest first within each group
           const sorted = [...this._queue].sort((a, b) => {
             const aViewed = a.viewed ? 1 : 0;
             const bViewed = b.viewed ? 1 : 0;
             if (aViewed !== bViewed) return aViewed - bViewed;
             return (Number(b.addedAt) || 0) - (Number(a.addedAt) || 0);
           });
-          queueStream.innerHTML = sorted.map(item => {
-            const rawVid = item.vid ? String(item.vid) : '';
-            const cVid = cleanVid(rawVid);
-            const targetUrl = toVacancyUrl(cVid, item.url);
-            let displayTitle = collapseSpaces(item.title || '');
-            displayTitle = displayTitle.replace(/\s*#\d+\b/g, '').trim();
-            if (!displayTitle || /^(?:отклик на вакансию|отклик без резюме)$/i.test(displayTitle)) {
-              displayTitle = 'Вакансия';
-            }
-            const displayEmployer = collapseSpaces(item.employer || '');
-            const reasonInfo = formatQueueReasonInfo(item.reason);
-            const cleanSalary = formatCleanSalary(item.salary || '');
-            const isViewed = Boolean(item.viewed);
-
-            return `
-              <div class="hha-queue-card ${isViewed ? 'is-viewed' : ''}" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-url="${escapeHtml(targetUrl || '#')}" role="link" tabindex="0" title="Открыть вакансию в новой вкладке">
-                <div class="hha-queue-card-top">
-                  <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="${escapeHtml(displayTitle)}">
-                    <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
-                  </a>
-                  <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">✕</button>
-                </div>
-                ${displayEmployer ? `
-                <div class="hha-queue-card-mid">
-                  <span class="hha-queue-employer" title="${escapeHtml(displayEmployer)}">${escapeHtml(displayEmployer)}</span>
-                </div>` : ''}
-                <div class="hha-queue-card-bottom">
-                  ${isViewed ? `<span class="hha-queue-badge badge-viewed">Просмотрено</span>` : ''}
-                  <span class="hha-queue-badge badge-${escapeHtml(reasonInfo.type)}">${escapeHtml(reasonInfo.text)}</span>
-                  ${cleanSalary ? `<span class="hha-queue-salary" title="${escapeHtml(item.salary || cleanSalary)}">${escapeHtml(cleanSalary)}</span>` : ''}
-                </div>
-              </div>
-            `;
-          }).join('');
+          queueStream.innerHTML = sorted.map(item => this._renderQueueCard(item)).join('');
         } else {
           queueStream.innerHTML = `
             <div class="hha-log-empty">
@@ -7065,7 +6916,6 @@ function cleanVid(vid) {
         this._updateOverlayScrollbar();
       }
     }
-
     _syncConfig() {
       if (!this._shadow) return;
       const c = this._config || {};
@@ -7107,7 +6957,7 @@ function cleanVid(vid) {
   }
 
   // Auto-mount in browser if document is ready
-  if (!globalThis.__HHA_TEST__ && typeof window !== 'undefined' && typeof document !== 'undefined') {
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     if (document.body) {
       mountHud();
     } else {
@@ -7115,12 +6965,5 @@ function cleanVid(vid) {
     }
   }
 
-  return {
-    HhaHudElement,
-    mountHud,
-    clamp,
-    formatTime,
-    ICONS,
-    STYLES
-  };
-});
+  globalThis.HhaHud = { mountHud };
+})();
