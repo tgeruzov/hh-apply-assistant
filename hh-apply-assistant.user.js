@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         HH Apply Assistant
-// @namespace    http://tampermonkey.net/
-// @version      0.0.9
+// @namespace    https://github.com/tgeruzov/hh-apply-assistant
+// @version      0.1.0
 // @author       Timur Geruzov
 // @description  HH Apply Assistant - Автоматизация откликов на вакансии hh.ru с плавающим HUD интерфейсом
 // @license      GPL-3.0-only
 // @homepageURL  https://github.com/tgeruzov/hh-apply-assistant
 // @supportURL   https://github.com/tgeruzov/hh-apply-assistant/issues
+// @updateURL    https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js
+// @downloadURL  https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js
 // @match        *://*.hh.ru/search/vacancy*
 // @match        *://*.hh.ru/vacancy/*
 // @match        *://*.hh.ru/applicant/vacancy_response*
@@ -40,6 +42,12 @@ const formatCleanSalary = (raw) => {
 
 function cleanVid(vid) {
   return vid ? String(vid).trim().replace(/^v_/i, '') : '';
+}
+
+function formatTime(dOrTs = new Date()) {
+  const d = dOrTs instanceof Date ? dOrTs : (dOrTs ? new Date(dOrTs) : new Date());
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 /**
@@ -262,11 +270,6 @@ function cleanVid(vid) {
     return clean;
   }
 
-  function formatLogTime(d = new Date()) {
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  }
-
   function formatLogData(data) {
     if (!data || typeof data !== 'object') return '';
     const parts = [];
@@ -376,7 +379,7 @@ function cleanVid(vid) {
 
     appendLogEntry(entry);
 
-    const timeStr = formatLogTime(new Date(ts));
+    const timeStr = formatTime(ts);
     const dataStr = formatLogData(cleanData);
     const line = `[HHA] ${timeStr} ${entry.event}${dataStr ? ' ' + dataStr : ''}`;
 
@@ -449,13 +452,6 @@ function cleanVid(vid) {
     storage.localSet(KEYS.dailyCounters, JSON.stringify(counters));
   }
 
-  function resetDailyCounters() {
-    lastCommittedVid = null;
-    const fresh = makeFreshCounters();
-    saveDailyCounters(fresh);
-    return fresh;
-  }
-
   function normalizeReasonCode(rawReason, defaultPrefix = 'skip') {
     if (!rawReason) return defaultPrefix + '_unknown';
     let s = String(rawReason).trim().toLowerCase().replace(/[-\s]+/g, '_');
@@ -485,7 +481,7 @@ function cleanVid(vid) {
     return `${defaultPrefix}_${s}`;
   }
 
-  function checkSkipRateAnomaly(outcome, reason) {
+  function checkSkipRateAnomaly(reason) {
     let total = toNum(storage.sessionGet(KEYS.sessionProcessedTotal), 0) + 1;
     storage.sessionSet(KEYS.sessionProcessedTotal, String(total));
 
@@ -521,19 +517,16 @@ function cleanVid(vid) {
     const finalOutcome = validOutcomes.includes(outcome) ? outcome : 'error';
     const finalReason = normalizeReasonCode(reason, finalOutcome === 'applied' ? 'applied' : (finalOutcome === 'queued' ? 'queued' : (finalOutcome === 'skipped' ? 'skip' : 'error')));
 
-    // 1. Update daily counters
     const counters = getDailyCounters();
     if (finalOutcome in counters && finalOutcome !== 'date') {
       counters[finalOutcome]++;
       saveDailyCounters(counters);
     }
 
-    // 2. Clear watchdog stall tracking for this vacancy upon outcome
     storage.sessionRemove(KEYS.watchdogStallCount);
     storage.sessionRemove(KEYS.watchdogStallVid);
     markProgress();
 
-    // 3. Log event
     const logLevel = finalOutcome === 'error' ? 'error' : (finalOutcome === 'skipped' ? 'warn' : 'info');
     const logData = {
       vid: clean || undefined,
@@ -545,10 +538,8 @@ function cleanVid(vid) {
     }
     hhaLog(logLevel, 'outcome', logData);
 
-    // 4. Anomaly check for session-processed items (excluding already_applied and hidden_employer)
-    checkSkipRateAnomaly(finalOutcome, finalReason);
+    checkSkipRateAnomaly(finalReason);
 
-    // 5. Emit event on event bus
     events.emit('outcome', {
       vid: clean,
       outcome: finalOutcome,
@@ -641,12 +632,6 @@ function cleanVid(vid) {
         return true;
       }
       return false;
-    },
-    save(list) {
-      const clean = Array.isArray(list) ? list.map(normalizeManualEntry).filter(Boolean) : [];
-      const ok = storage.localSet(KEYS.manualList, JSON.stringify(clean));
-      events.emit('manualQueue', { action: 'sync', queue: clean });
-      return ok;
     },
     add(entry) {
       const item = normalizeManualEntry(entry);
@@ -1185,12 +1170,12 @@ function cleanVid(vid) {
 
   function detectRelocationWarning(root = globalThis.document) {
     const scope = root || globalThis.document;
-    const direct = q('[data-qa="relocation-warning-confirm"]', scope);
+    const direct = q(SELECTORS.relocationBtn, scope);
     if (direct && isVisible(direct) && !isReviewOrFeedbackElement(direct)) return direct;
 
     const alert = q('[data-qa="magritte-alert"], [role="dialog"]', scope);
     if (alert && isVisible(alert) && !isReviewOrFeedbackElement(alert)) {
-      const confirmBtn = q('[data-qa="relocation-warning-confirm"]', alert)
+      const confirmBtn = q(SELECTORS.relocationBtn, alert)
         || findPatternElement(alert, 'button, [role="button"]', /^вс[её]\s*равно(?:\s*откликнуться)?$/i, 35);
       if (confirmBtn && isVisible(confirmBtn)) return confirmBtn;
     }
@@ -1200,7 +1185,7 @@ function cleanVid(vid) {
     if (title && isVisible(title)) {
       const container = title.closest?.('[data-qa="magritte-alert"], [role="dialog"]') || title.parentElement;
       if (container && !isReviewOrFeedbackElement(container)) {
-        const confirmBtn = q('[data-qa="relocation-warning-confirm"]', container)
+        const confirmBtn = q(SELECTORS.relocationBtn, container)
           || findPatternElement(container, 'button, [role="button"]', /^вс[её]\s*равно(?:\s*откликнуться)?$/i, 35)
           || findPatternElement(container, 'button, [role="button"]', /^(?:откликнуться|подтвердить)$/i, 35);
         if (confirmBtn && isVisible(confirmBtn)) return confirmBtn;
@@ -1690,7 +1675,7 @@ function cleanVid(vid) {
   function detectDailyLimit(root = globalThis.document) {
     if (!root) return false;
 
-    // 1. Check all notification, toast, alert, snackbar and modal scopes first
+    // Check notification, toast, alert, snackbar and modal scopes
     const notificationSelectors = [
       '[role="alert"]',
       '[role="status"]',
@@ -1714,7 +1699,7 @@ function cleanVid(vid) {
       }
     }
 
-    // 2. Check top-level overlay containers and last appended elements of document.body
+    // Check top-level overlay containers and trailing body elements
     const body = root.body || (root.nodeType === 9 ? root.body : root);
     if (body && body.children) {
       const children = Array.from(body.children);
@@ -1729,7 +1714,7 @@ function cleanVid(vid) {
         }
       }
 
-      // 3. Fallback check across root textContent
+      // Fallback check across root textContent
       const fullText = (body.textContent || '').slice(0, 3000);
       if (DAILY_LIMIT_REGEX.test(fullText)) {
         return true;
@@ -1799,7 +1784,7 @@ function cleanVid(vid) {
     if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
     const text = (modal.textContent || modal.innerText || '').slice(0, 3000);
     if (/резюме\s*скрыто|resume\s*is\s*hidden/i.test(text)) return 'RESUME_HIDDEN';
-    if (q('[data-qa="response-reject-warning"]', modal)) return 'REJECT_WARNING';
+    if (q(SELECTORS.rejectWarning, modal)) return 'REJECT_WARNING';
     if (REJECT_REGEX.test(text)) return 'REJECT_REGEX';
     if (/тестирование|анкета|вопросы|questionnaire|test/i.test(text)) return 'TEST_REQUIRED';
     if (detectCaptcha() || /капч[аеы]|captcha|recaptcha|smartcaptcha/i.test(text)) return 'CAPTCHA';
@@ -1818,7 +1803,7 @@ function cleanVid(vid) {
     if (detectDailyLimit(root) || detectDailyLimit()) return 'DAILY_LIMIT';
     if (detectCaptcha()) return 'CAPTCHA';
     if (detectRateLimit()) return 'RATE_LIMIT';
-    const warningEl = q('[data-qa="response-reject-warning"]', root);
+    const warningEl = q(SELECTORS.rejectWarning, root);
     if (warningEl && isVisible(warningEl)) return 'REJECT_WARNING';
     if (hasReliableRejectWarning(root)) return 'REJECT_REGEX';
     if (detectRelocationWarning()) return 'RELOCATION_WARNING';
@@ -1841,25 +1826,16 @@ function cleanVid(vid) {
   }
 
   function detectResponseOutcomeOnce({ allowDocumentStrongText = false } = {}) {
-    // 0. Daily limit reached check
     if (detectDailyLimit()) return 'DAILY_LIMIT';
-
-    // 1. Relocation warning alert has absolute top priority
     if (detectRelocationWarning()) return 'RELOCATION_WARNING';
+    if (isAttachCoverAvailable()) return 'ATTACH_COVER';
 
-    // 2. Cover letter attachment on vacancy page banner
-    if (isAttachCoverAvailable()) {
-      return 'ATTACH_COVER';
-    }
-
-    // 3. Modals and bottom sheets (iterate through all visible dialogs)
     const modals = getVisibleModals();
     for (const modal of modals) {
       const outcome = detectResponseOutcomeInRoot(modal, true);
       if (outcome) return outcome;
     }
 
-    // 4. Exact response confirmations
     if (hasExactResponseConfirmation() || isResponseConfirmed({ allowDocumentStrongText })) return 'SUCCESS';
 
     return null;
@@ -1924,7 +1900,7 @@ function cleanVid(vid) {
     let salary = customSalary || '';
 
     if (Page.isSearch() && clean) {
-      const links = qa('a[data-qa="serp-item__title"], a[data-qa="vacancy-serp__vacancy-title"], a[href*="/vacancy/"]');
+      const links = qa(`${SELECTORS.vacancyLink}, a[href*="/vacancy/"]`);
       for (const l of links) {
         if (getVacancyIDFromHref(l.href) === clean) {
           if (!title) title = readSerpCardTitle(l);
@@ -2102,18 +2078,9 @@ function cleanVid(vid) {
     if (blockReason === 'CAPTCHA') { haltForCaptcha(); return 'CAPTCHA'; }
     if (blockReason === 'RATE_LIMIT') { haltForRateLimit(); return 'BLOCKED'; }
     if (blockReason === 'TEST_REQUIRED' || blockReason === 'RESUME_HIDDEN') return blockReason;
-    if (blockReason === 'REJECT_WARNING' || blockReason === 'REJECT_REGEX') {
-      const closeBtn = q('[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]', modal);
-      if (closeBtn) clickElement(closeBtn);
-      return blockReason === 'REJECT_REGEX' ? 'SKIP_REJECT_REGEX' : 'SKIP_REJECT_WARNING';
-    }
 
-    if (hasReliableRejectWarning(modal)) {
-      const closeBtn = q('[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]', modal);
-      if (closeBtn) clickElement(closeBtn);
-      const isWarningSelector = Boolean(q('[data-qa="response-reject-warning"]', modal));
-      return isWarningSelector ? 'SKIP_REJECT_WARNING' : 'SKIP_REJECT_REGEX';
-    }
+    const rejectOutcome = await checkAndHandleRejectWarning(modal);
+    if (rejectOutcome) return rejectOutcome;
 
     const resumeOk = await selectResumeIfRequired(modal, runId);
     if (!resumeOk || !isRunCurrent(runId)) return 'STOPPED';
@@ -2260,7 +2227,7 @@ function cleanVid(vid) {
     return 'FAIL';
   }
 
-  async function simulateHumanReading(vid, runId = currentRunId) {
+  async function simulateHumanReading(runId = currentRunId) {
     if (!isRunCurrent(runId)) return;
     const doc = globalThis.document;
     const win = globalThis.window;
@@ -2359,7 +2326,7 @@ function cleanVid(vid) {
         return 'OK';
       }
 
-      await simulateHumanReading(vid, runId);
+      await simulateHumanReading(runId);
       if (!isRunCurrent(runId)) return 'STOPPED';
       const applyBtn = await waitForCondition(() => query('vacancyApply'), 4000, activeAbortController?.signal);
       if (!applyBtn) {
@@ -3063,12 +3030,6 @@ function cleanVid(vid) {
       .replace(/'/g, '&#39;');
   }
 
-  function formatTime(ts) {
-    const d = ts ? new Date(ts) : new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  }
-
   const ERROR_TITLES = {
     GLOBAL_UNCAUGHT_ERROR: 'Внутренний сбой интерфейса',
     GLOBAL_UNHANDLED_REJECTION: 'Сбой асинхронной операции',
@@ -3100,8 +3061,8 @@ function cleanVid(vid) {
     WATCHDOG_GIVEUP: 'Зависание при обработке вакансии',
   };
 
-  function formatHumanError(code, rawMessage) {
-    const title = ERROR_TITLES[code];
+  function parseErrorDetails(code, rawMessage) {
+    const defaultTitle = ERROR_TITLES[code] || 'Произошла ошибка при выполнении';
     let cleanMsg = String(rawMessage || '').trim();
     cleanMsg = cleanMsg.replace(/^\[(?:Глобальная ошибка|Необработанный Promise rejection)\]\s*/i, '');
     cleanMsg = cleanMsg.replace(/\s*\([^)]*(?:userscript\.html|chrome-extension:)[^)]*\)\s*$/i, '');
@@ -3110,11 +3071,20 @@ function cleanVid(vid) {
     cleanMsg = cleanMsg.replace(/^TypeError:\s*/i, 'Ошибка типа данных: ');
     cleanMsg = collapseSpaces(cleanMsg);
 
-    if (title && cleanMsg) {
-      if (cleanMsg.length > 70 || /^[a-z_]+$/i.test(cleanMsg) || /^[a-z0-9_\s.]+$/i.test(cleanMsg)) return title;
-      return `${title}: ${cleanMsg}`;
+    let title = defaultTitle;
+    let desc = '';
+
+    if (!cleanMsg || cleanMsg === defaultTitle || cleanMsg.toUpperCase() === String(code || '').toUpperCase()) {
+      return { title, desc: '' };
     }
-    return title || cleanMsg || 'Произошла ошибка при выполнении';
+
+    if (cleanMsg.toLowerCase().startsWith(defaultTitle.toLowerCase())) {
+      desc = cleanMsg.slice(defaultTitle.length).replace(/^[\s:–—-]+/, '').trim();
+    } else {
+      desc = cleanMsg;
+    }
+
+    return { title, desc };
   }
 
   function formatQueueReasonInfo(reason) {
@@ -3202,7 +3172,7 @@ function cleanVid(vid) {
       --md-sys-color-outline: #707976;
       --md-sys-color-outline-variant: #E2E7E5;
 
-      /* Surface Container Roles (Tonal Elevation) */
+      /* Surface Colors */
       --md-sys-color-surface-container-lowest: #FFFFFF;
       --md-sys-color-surface-container-low: #F6F8F7;
       --md-sys-color-surface-container: #F0F4F2;
@@ -3275,7 +3245,7 @@ function cleanVid(vid) {
       /* Centralized Layout Padding Token */
       --hha-content-padding-x: 12px;
 
-      /* Dynamic Island Shared Element Layout Tokens */
+      /* Layout Tokens */
       --pill-width: 166px;
       --flyout-width: min(390px, calc(100vw - 16px));
       --shared-counter-offset: calc((var(--flyout-width, 390px) - var(--pill-width, 166px)) / 2 - var(--hha-content-padding-x, 12px));
@@ -4264,6 +4234,10 @@ function cleanVid(vid) {
         visibility 0s linear 0s;
     }
 
+    .hha-root.has-error .hha-panel[data-panel="settings"] {
+      overflow: hidden !important;
+    }
+
     .hha-panels.slide-forward .hha-panel:not(.active) {
       transform: translate3d(calc(-1 * var(--hha-motion-tab-shift, 6px)), 0, 0);
     }
@@ -4273,7 +4247,7 @@ function cleanVid(vid) {
     }
 
     /* 8. Queue & Log Containers */
-    /* Tab 2: Queue Container (Unified List Surface) */
+    /* Tab 2: Queue Container */
     [data-panel="queue"] {
       overflow: hidden !important;
     }
@@ -4420,7 +4394,7 @@ function cleanVid(vid) {
       letter-spacing: 0.2px;
     }
 
-    /* Queue List Items (Unified List Pattern) */
+    /* Queue List Items */
     .hha-queue-card {
       display: flex;
       flex-direction: column;
@@ -4669,10 +4643,11 @@ function cleanVid(vid) {
       flex: 1;
       height: 100%;
       min-height: 0;
+      max-height: 100%;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      gap: 12px;
+      gap: 10px;
       box-sizing: border-box;
       padding: 14px 16px;
       margin-bottom: 0 !important;
@@ -4694,19 +4669,50 @@ function cleanVid(vid) {
       flex-direction: column;
       align-items: flex-start;
       gap: 8px;
-      min-height: 50px;
-      flex: 1;
+      min-height: 0;
+      flex: 1 1 auto;
       overflow-y: auto;
+      overflow-x: hidden;
       scrollbar-width: thin;
+      scrollbar-color: color-mix(in srgb, var(--md-sys-color-error) 30%, transparent) transparent;
+      padding-right: 4px;
+    }
+
+    .hha-card-error-body::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .hha-card-error-body::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .hha-card-error-body::-webkit-scrollbar-thumb {
+      background: color-mix(in srgb, var(--md-sys-color-error) 30%, transparent);
+      border-radius: var(--md-sys-shape-corner-full);
+    }
+
+    .hha-card-error-body::-webkit-scrollbar-thumb:hover {
+      background: color-mix(in srgb, var(--md-sys-color-error) 50%, transparent);
     }
 
     .hha-card-error-title {
       font-size: var(--md-sys-typescale-body-medium-size);
-      font-weight: 600;
+      font-weight: 700;
       line-height: 1.35;
       color: var(--md-sys-color-on-error-container);
       word-break: break-word;
       user-select: text;
+      flex-shrink: 0;
+    }
+
+    .hha-card-error-desc {
+      font-size: var(--md-sys-typescale-body-small-size);
+      font-weight: 400;
+      line-height: 1.45;
+      color: color-mix(in srgb, var(--md-sys-color-on-error-container) 90%, transparent);
+      word-break: break-word;
+      user-select: text;
+      white-space: pre-wrap;
     }
 
     .hha-card-error-code {
@@ -4718,10 +4724,12 @@ function cleanVid(vid) {
       line-height: 1.4;
       color: color-mix(in srgb, var(--md-sys-color-on-error-container) 85%, transparent);
       background: color-mix(in srgb, var(--md-sys-color-error) 12%, transparent);
-      padding: 5px 9px;
+      padding: 4px 8px;
       border-radius: var(--md-sys-shape-corner-small);
       word-break: break-all;
       user-select: text;
+      margin-top: 2px;
+      flex-shrink: 0;
     }
 
     .hha-card-error-actions {
@@ -4730,6 +4738,8 @@ function cleanVid(vid) {
       justify-content: flex-end;
       gap: 8px;
       margin-top: 4px;
+      padding-top: 8px;
+      border-top: 1px solid color-mix(in srgb, var(--md-sys-color-error) 15%, transparent);
       flex-shrink: 0;
     }
 
@@ -5628,9 +5638,14 @@ function cleanVid(vid) {
 
     _render() {
       const hasError = Boolean(this._lastErrorPayload);
-      const errorHumanText = hasError ? escapeHtml(formatHumanError(this._lastErrorPayload.code, this._lastErrorPayload.message)) : '';
+      const parsedErr = hasError ? parseErrorDetails(this._lastErrorPayload.code, this._lastErrorPayload.message) : { title: '', desc: '' };
+      const errorTitleText = escapeHtml(parsedErr.title);
+      const errorDescText = escapeHtml(parsedErr.desc);
       const errCode = this._lastErrorPayload?.code || '';
-      const errorCodeText = hasError ? escapeHtml(errCode ? `Код: ${errCode}` : 'Код: ERROR') : '';
+      let errorCodeText = hasError ? (errCode ? `Код: ${escapeHtml(errCode)}` : 'Код: ERROR') : '';
+      if (hasError && this._lastErrorPayload?.details?.vid) {
+        errorCodeText += ` [вакансия #${escapeHtml(this._lastErrorPayload.details.vid)}]`;
+      }
 
       this._shadow.innerHTML = `
         <style>${STYLES}</style>
@@ -5680,8 +5695,9 @@ function cleanVid(vid) {
                 </div>
 
                 <div class="hha-card hha-card-error" data-el="error-card"${hasError ? '' : ' style="display: none;"'}>
-                  <div class="hha-card-error-body">
-                    <div class="hha-card-error-title" data-el="error-card-title">${errorHumanText}</div>
+                  <div class="hha-card-error-body" data-el="error-card-body">
+                    <div class="hha-card-error-title" data-el="error-card-title">${errorTitleText}</div>
+                    <div class="hha-card-error-desc" data-el="error-card-desc"${errorDescText ? '' : ' style="display: none;"'}>${errorDescText}</div>
                     <div class="hha-card-error-code" data-el="error-card-code">${errorCodeText}</div>
                   </div>
                   <div class="hha-card-error-actions">
@@ -5798,12 +5814,12 @@ function cleanVid(vid) {
       const header = this._shadow.querySelector('[data-el="island-header"]');
       if (!root || !pill) return;
 
-      pill.addEventListener('pointerdown', (e) => this._onPointerDown(e, 'pill'));
+      pill.addEventListener('pointerdown', (e) => this._onPointerDown(e));
       pill.addEventListener('pointerup', this._onPointerUp);
       pill.addEventListener('pointercancel', this._onPointerUp);
 
       if (header) {
-        header.addEventListener('pointerdown', (e) => this._onPointerDown(e, 'header'));
+        header.addEventListener('pointerdown', (e) => this._onPointerDown(e));
         header.addEventListener('pointerup', this._onPointerUp);
         header.addEventListener('pointercancel', this._onPointerUp);
       }
@@ -6008,32 +6024,44 @@ function cleanVid(vid) {
         url
       };
 
-      // 1. Switch active tab to settings so user sees error immediately (even before shadow is attached)
+      // Switch active tab to settings so user sees error immediately
       this.setActiveTab('settings');
 
       if (!this._shadow) return;
 
-      const humanMsg = formatHumanError(code, message);
+      const parsedErr = parseErrorDetails(code, message);
       let codeMsg = code ? `Код: ${code}` : 'Код: ERROR';
       if (details && details.vid) {
         codeMsg += ` [вакансия #${details.vid}]`;
       }
 
-      // 2. Update and show Error Card inside Settings tab, hide Cover Card
+      // Show Error Card in Settings tab and hide Cover Card
       const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
       if (root) root.classList.add('has-error');
       const coverCard = this._shadow.querySelector('[data-el="cover-card"]');
       const errorCard = this._shadow.querySelector('[data-el="error-card"]');
       const errorTitle = this._shadow.querySelector('[data-el="error-card-title"]');
+      const errorDesc = this._shadow.querySelector('[data-el="error-card-desc"]');
       const errorCode = this._shadow.querySelector('[data-el="error-card-code"]');
+      const errorBody = this._shadow.querySelector('[data-el="error-card-body"]');
 
       if (coverCard) coverCard.style.display = 'none';
       if (errorCard) errorCard.style.display = 'flex';
-      if (errorTitle) errorTitle.textContent = humanMsg;
+      if (errorTitle) errorTitle.textContent = parsedErr.title;
+      if (errorDesc) {
+        if (parsedErr.desc) {
+          errorDesc.textContent = parsedErr.desc;
+          errorDesc.style.display = '';
+        } else {
+          errorDesc.textContent = '';
+          errorDesc.style.display = 'none';
+        }
+      }
       if (errorCode) errorCode.textContent = codeMsg;
+      if (errorBody) errorBody.scrollTop = 0;
       this._updatePosition();
 
-      // 3. Mark status group with error state
+      // Mark status group with error state
       const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
       if (statusGroup) {
         statusGroup.classList.add('has-error');
@@ -6053,7 +6081,12 @@ function cleanVid(vid) {
       if (root) root.classList.remove('has-error');
       const coverCard = this._shadow.querySelector('[data-el="cover-card"]');
       const errorCard = this._shadow.querySelector('[data-el="error-card"]');
+      const errorDesc = this._shadow.querySelector('[data-el="error-card-desc"]');
       if (errorCard) errorCard.style.display = 'none';
+      if (errorDesc) {
+        errorDesc.textContent = '';
+        errorDesc.style.display = 'none';
+      }
       if (coverCard) coverCard.style.display = 'flex';
       this._updatePosition();
 
@@ -6163,12 +6196,12 @@ function cleanVid(vid) {
 
       const action = actionTarget.dataset.action;
       const actionMap = {
-        'quick-toggle': (tgt, ev) => { ev.stopPropagation(); this._handleToggleAutomation(); },
-        'toggle-expand': (tgt, ev) => { ev.stopPropagation(); this.toggleExpand(); },
-        'collapse-island': (tgt, ev) => { ev.stopPropagation(); this.toggleExpand(false); },
+        'quick-toggle': (_, ev) => { ev.stopPropagation(); this._handleToggleAutomation(); },
+        'toggle-expand': (_, ev) => { ev.stopPropagation(); this.toggleExpand(); },
+        'collapse-island': (_, ev) => { ev.stopPropagation(); this.toggleExpand(false); },
         'switch-tab': (tgt, ev) => { ev.stopPropagation(); this.setActiveTab(tgt.dataset.tab); },
         'copy-last-error': (tgt, ev) => { ev.stopPropagation(); this._copyLastErrorToClipboard(tgt); },
-        'dismiss-error': (tgt, ev) => { ev.stopPropagation(); this._dismissError(); },
+        'dismiss-error': (_, ev) => { ev.stopPropagation(); this._dismissError(); },
         'clear-queue': (tgt, ev) => { ev.stopPropagation(); this._handleClearQueueAction(tgt); },
         'open-vacancy': (tgt, ev) => { this._handleOpenVacancyAction(tgt, ev); },
         'delete-queue-item': (tgt, ev) => { ev.stopPropagation(); this._handleDeleteQueueItemAction(tgt); }
@@ -6345,7 +6378,7 @@ function cleanVid(vid) {
 
     // --- Drag & Drop with Pointer Capture API ---
 
-    _onPointerDown(e, handleType) {
+    _onPointerDown(e) {
       if (e.target && typeof e.target.closest === 'function') {
         if (e.target.closest('button, input, textarea, a, select, [data-action="collapse-island"]')) {
           return; // Let interactive controls handle their own events
@@ -6574,8 +6607,7 @@ function cleanVid(vid) {
         const pillWidth = this._getPillWidth();
         root.style.setProperty('--pill-width', `${pillWidth}px`);
         const isQueue = this._activeTab === 'queue';
-        const hasErr = Boolean(this._lastErrorPayload);
-        const baseH = isQueue ? 520 : (hasErr ? 180 : 320);
+        const baseH = isQueue ? 520 : 320;
         const maxFlyoutH = Math.max(120, winH - 100);
         const finalH = Math.min(baseH, maxFlyoutH);
         root.style.setProperty('--flyout-height', `${finalH}px`);
