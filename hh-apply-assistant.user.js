@@ -54,8 +54,8 @@ function cleanVid(vid) {
   // --- 1. Constants, Selectors & Defaults ---
   const VERSION = '0.1.0';
   const SELECTORS = {
-    modal: '[data-qa="modal-container"], [data-qa="response-popup-container"], .bloko-modal, .modal-content',
-    modalClose: '[data-qa="modal-close"], [data-qa="response-popup-close"], [data-qa="bloko-modal-close"], [data-qa="popup-close"], button[aria-label="Закрыть"], button.bloko-modal-close-button',
+    modal: '[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]',
+    modalClose: '[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]',
     applyBtn: '[data-qa="vacancy-serp__vacancy_response"]',
     vacancyApply: '[data-qa="vacancy-response-link-bottom"], [data-qa="vacancy-response-link-top"], a[data-qa*="vacancy-response-link"]',
     attachCoverBtn: '[data-qa="responded-success-attach-cover-letter"]',
@@ -97,11 +97,11 @@ function cleanVid(vid) {
     lastAttempt: STORAGE_PREFIX + 'last_attempt_id',
     manualList: STORAGE_PREFIX + 'manual_queue',
     tabId: STORAGE_PREFIX + 'tab_id',
-    stats: STORAGE_PREFIX + 'run_stats',
     pendingVacancyMeta: STORAGE_PREFIX + 'pending_vacancy_meta',
     blacklist: STORAGE_PREFIX + 'blacklist_v1',
     attempts: STORAGE_PREFIX + 'attempts_v1',
     dailyCounters: STORAGE_PREFIX + 'daily_counters',
+    lastCommittedVid: STORAGE_PREFIX + 'last_committed_vid',
     logBuffer: 'hha:log_buffer',
     watchdogStallCount: 'hha:watchdog_stall_count',
     watchdogStallVid: 'hha:watchdog_stall_vid',
@@ -126,7 +126,6 @@ function cleanVid(vid) {
     coverText: DEFAULT_COVER_TEXT,
     useCover: false,
     skipHidden: true,
-    limit: MAX_DAILY_LIMIT
   };
 
   // --- 2. Event Bus ---
@@ -140,15 +139,10 @@ function cleanVid(vid) {
     off(event, fn) {
       if (!this._e[event]) return;
       if (!fn) { delete this._e[event]; return; }
-      this._e[event] = this._e[event].filter(h => h !== fn && h.fn !== fn);
+      this._e[event] = this._e[event].filter(h => h !== fn);
       if (!this._e[event].length) delete this._e[event];
     }
-    once(event, fn) {
-      if (typeof fn !== 'function') return () => {};
-      const wrapper = (...args) => { this.off(event, wrapper); fn(...args); };
-      wrapper.fn = fn;
-      return this.on(event, wrapper);
-    }
+
     emit(event, ...args) {
       const handlers = this._e[event];
       if (handlers) {
@@ -416,6 +410,7 @@ function cleanVid(vid) {
 
   // --- Watchdog Progress Tracking ---
   let lastProgressTs = Date.now();
+  let lastCommittedVid = null;
   function markProgress() {
     lastProgressTs = Date.now();
   }
@@ -426,6 +421,10 @@ function cleanVid(vid) {
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
+  }
+
+  function makeFreshCounters(today = getLocalDateKey()) {
+    return { date: today, applied: 0, queued: 0, skipped: 0, error: 0 };
   }
 
   function getDailyCounters() {
@@ -441,7 +440,7 @@ function cleanVid(vid) {
         error: Number(data.error) || 0
       };
     }
-    const fresh = { date: today, applied: 0, queued: 0, skipped: 0, error: 0 };
+    const fresh = makeFreshCounters(today);
     storage.localSet(KEYS.dailyCounters, JSON.stringify(fresh));
     return fresh;
   }
@@ -451,8 +450,8 @@ function cleanVid(vid) {
   }
 
   function resetDailyCounters() {
-    const today = getLocalDateKey();
-    const fresh = { date: today, applied: 0, queued: 0, skipped: 0, error: 0 };
+    lastCommittedVid = null;
+    const fresh = makeFreshCounters();
     saveDailyCounters(fresh);
     return fresh;
   }
@@ -565,7 +564,6 @@ function cleanVid(vid) {
       coverText: String(m.coverText ?? DEFAULT_COVER_TEXT).slice(0, MAX_COVER_LENGTH),
       useCover: Boolean(m.useCover),
       skipHidden: m.skipHidden !== false,
-      limit: MAX_DAILY_LIMIT
     };
   }
 
@@ -597,36 +595,7 @@ function cleanVid(vid) {
     timer = setTimeout(() => { cleanup(); markProgress(); resolve(); }, ms);
   });
 
-  // --- 7. Statistics & History ---
-  function getStats() {
-    const v = parseJson(storage.sessionGet(KEYS.stats), null);
-    return {
-      attempts: Number(v?.attempts) || 0,
-      success: Number(v?.success) || 0,
-      manual: Number(v?.manual) || 0,
-      skipped: Number(v?.skipped) || 0,
-      startedAt: Number(v?.startedAt) || Date.now()
-    };
-  }
-
-  function saveStats(d) {
-    const ok = storage.sessionSet(KEYS.stats, JSON.stringify(d));
-    events.emit('stats', d);
-    return ok;
-  }
-
-  function bumpStat(field, by = 1) {
-    const s = getStats();
-    if (field in s && field !== 'attempts') s[field] = (s[field] || 0) + by;
-    s.attempts = (s.attempts || 0) + by;
-    saveStats(s);
-  }
-
-  function resetStats() {
-    return saveStats({ attempts: 0, success: 0, manual: 0, skipped: 0, startedAt: Date.now() });
-  }
-
-  // --- 8. Manual Queue Domain ---
+  // --- 7. Manual Queue Domain ---
 
   function normalizeManualEntry(entry) {
     if (!entry) return null;
@@ -708,7 +677,7 @@ function cleanVid(vid) {
     }
   };
 
-  // --- 9. State Accessors ---
+  // --- 8. State Accessors ---
   const TAB_ID = (() => {
     const win = globalThis.window;
     const sessionTabId = storage.sessionGet(KEYS.tabId);
@@ -747,11 +716,6 @@ function cleanVid(vid) {
   const setRunning = (val) => (val ? storage.sessionSet(KEYS.isRunning, '1') : storage.sessionRemove(KEYS.isRunning));
 
   const getSentCount = () => getDailyCounters().applied;
-  function resetSentCount() {
-    resetDailyCounters();
-    events.emit('progress', { sent: 0, percentage: 0 });
-    return true;
-  }
 
   let memProcessedIds = null;
   let memProcessedIdsDirty = false;
@@ -779,12 +743,6 @@ function cleanVid(vid) {
       memProcessedIdsDirty = true;
     }
     return true;
-  }
-
-  function clearProcessedIDs() {
-    memProcessedIds = new Set();
-    memProcessedIdsDirty = false;
-    return storage.sessionRemove(KEYS.history);
   }
 
   // --- Attempts & Blacklist Tracking (Circuit Breaker) ---
@@ -873,20 +831,17 @@ function cleanVid(vid) {
     flushLogBuffer();
     flushStorageCaches();
   };
-  if (typeof window !== 'undefined') {
-    window.addEventListener('pagehide', onPageHide, { capture: true });
-    window.addEventListener('visibilitychange', () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-        onPageHide();
-      }
-    }, { capture: true });
-  }
+  window.addEventListener('pagehide', onPageHide, { capture: true });
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      onPageHide();
+    }
+  }, { capture: true });
 
   function handleVacancyFailure(vid, reason = 'apply_failed', runId = currentRunId, meta = null) {
     if (!vid) return returnToList(null, { markProcessed: false, runId });
     const clean = cleanVid(vid);
     const attempts = recordVacancyAttempt(clean);
-    bumpStat('attempts');
 
     if (attempts >= MAX_VACANCY_ATTEMPTS) {
       addToBlacklist(clean, reason);
@@ -971,7 +926,7 @@ function cleanVid(vid) {
     events.emit('status', { status: key, code: currentStatus.code, details: details || {} });
   }
 
-  // --- 10. Concurrency & Instance Locks ---
+  // --- 9. Concurrency & Instance Locks ---
   const INSTANCE_LOCK_TTL = 30000;
   let currentLeaseId = null;
   let instanceLeaseVerified = false;
@@ -1111,7 +1066,7 @@ function cleanVid(vid) {
     return 'OWNED';
   }
 
-  // --- 11. Run Lifecycle & Guards ---
+  // --- 10. Run Lifecycle & Guards ---
   let isLoopActive = false;
   let stopSignal = false;
   let currentRunId = 0;
@@ -1173,7 +1128,7 @@ function cleanVid(vid) {
     haltEngine('RATE_LIMITED', 'Rate limit detected. Automation halted.');
   };
   const haltForDailyLimit = (msg = `Достигнут суточный лимит HeadHunter: не более ${MAX_DAILY_LIMIT} откликов за 24 часа. Автоматизация остановлена.`) => {
-    hhaLog('warn', 'hh_limit_reached', { limit: MAX_DAILY_LIMIT, source: 'hh_ui' });
+    hhaLog('warn', 'hh_limit_reached', { source: 'hh_ui' });
     terminateRun('DAILY_LIMIT_REACHED', msg, { limit: MAX_DAILY_LIMIT, period: '24h' }, false);
   };
   const haltForLostInstanceLock = () => {
@@ -1181,7 +1136,7 @@ function cleanVid(vid) {
     haltEngine(isBlocked ? 'STORAGE_BLOCKED' : 'TAB_LOCK_LOST', isBlocked ? 'Storage access blocked. Lost tab lock.' : 'Active tab lock lost.');
   };
 
-  // --- 12. DOM Queries & Form Automation ---
+  // --- 11. DOM Queries & Form Automation ---
   function q(sel, root) {
     try { return (root || globalThis.document)?.querySelector(sel) || null; } catch (_) { return null; }
   }
@@ -1270,11 +1225,10 @@ function cleanVid(vid) {
     },
     relocationBtn: (r) => detectRelocationWarning(r),
     rejectWarning: (r) => {
-      const scope = (r && r !== globalThis.document && r !== globalThis.document?.body) ? r : q('[data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"], [data-qa="bottom-sheet-content"], [role="alert"]');
+      const scope = (r && r !== globalThis.document && r !== globalThis.document?.body) ? r : q(SELECTORS.modal + ', [role="alert"]');
       if (!scope) return null;
       return findPatternElement(scope, 'div, p, span, section', REJECT_REGEX, 250);
     },
-    responseChat: (r) => findPatternElement(r, 'a, button', /чат|перейти в чат|сообщения|chat/i, 60),
     pagerNext: (r) => findPatternElement(r, 'a, button', /дальше|впер[её]д|следующая|next/i, 60)
   };
 
@@ -1333,13 +1287,13 @@ function cleanVid(vid) {
 
   function getVisibleModals(root = globalThis.document) {
     if (!root) return [];
-    return qa(SELECTORS.modal, root).filter(m => isVisible(m));
+    return qa(SELECTORS.modal, root).filter(m => isVisible(m) && !isReviewOrFeedbackElement(m));
   }
 
   async function closeModal(modal = null) {
     const targetModal = modal || getVisibleModals()[0] || null;
     if (!targetModal) return false;
-    const closeBtn = q(SELECTORS.modalClose, targetModal) || q('[data-qa*="close" i], button[aria-label*="закрыть" i]', targetModal);
+    const closeBtn = q(SELECTORS.modalClose, targetModal);
     if (!closeBtn) return false;
     await clickElement(closeBtn);
     return true;
@@ -1349,8 +1303,6 @@ function cleanVid(vid) {
     const meta = SELECTOR_METADATA[key] || {};
     const selectorName = meta.name || key;
     const expectedCss = SELECTORS[key] || '';
-    const heuristic = meta.heuristic || '';
-
     let snippet = '';
     try {
       if (scope) {
@@ -1371,7 +1323,6 @@ function cleanVid(vid) {
       selector: key,
       selectorName,
       expectedCss,
-      heuristic,
       snippet,
       contextSnippet: snippet,
       url,
@@ -1416,15 +1367,9 @@ function cleanVid(vid) {
     return hash.toString(36);
   }
 
-  function resolveCurrentVid(preferCard = null) {
-    if (preferCard) {
-      const cardVid = getVacancyID(preferCard);
-      if (cardVid) return cardVid.startsWith('v_') ? cardVid : 'v_' + cardVid;
-    }
+  function resolveCurrentVid() {
     const last = getLastAttemptID();
     if (last) return last.startsWith('v_') ? last : 'v_' + last;
-    const bodyVid = getVacancyID(globalThis.document?.body);
-    if (bodyVid) return bodyVid.startsWith('v_') ? bodyVid : 'v_' + bodyVid;
     const locHref = globalThis.location?.href || '';
     const hrefVid = getVacancyIDFromHref(locHref);
     if (hrefVid) return 'v_' + cleanVid(hrefVid);
@@ -1552,7 +1497,12 @@ function cleanVid(vid) {
         try {
           const r = checkFn();
           if (r) cleanup(r);
-        } catch (_) {}
+        } catch (e) {
+          if (!hasLoggedError) {
+            hasLoggedError = true;
+            hhaLog('debug', 'wait_condition_poll_error', { error: String(e && e.message || e) });
+          }
+        }
       };
 
       const throttledCheck = () => {
@@ -1593,11 +1543,12 @@ function cleanVid(vid) {
     return waitForCondition(() => query(keyOrSelector), timeout, signal);
   }
 
-  // --- 13. Page Classification & Security Anomalies ---
+  // --- 12. Page Classification & Security Anomalies ---
   const Page = {
     isVacancy: () => Boolean(globalThis.location?.pathname?.startsWith('/vacancy/')),
     isResponseForm: () => Boolean(globalThis.location?.pathname?.startsWith('/applicant/vacancy_response')),
-    isSearch: () => Boolean(globalThis.location && (globalThis.location.href?.includes('/search/vacancy') || globalThis.location.pathname?.startsWith('/search'))),
+    isSearchList: () => Boolean(globalThis.location?.pathname?.startsWith('/search/vacancy')),
+    isSearch: () => Boolean(globalThis.location?.pathname?.startsWith('/search')),
     isArticle: () => Boolean(globalThis.location?.pathname?.startsWith('/article/'))
   };
 
@@ -1749,12 +1700,8 @@ function cleanVid(vid) {
       '[class*="toast" i]',
       '[data-qa*="snackbar" i]',
       '[class*="snackbar" i]',
-      '[data-qa*="popup" i]',
-      '[class*="popup" i]',
-      '[data-qa*="modal" i]',
-      '[class*="modal" i]',
       '[data-qa*="bloko-notification" i]',
-      '[data-qa="bottom-sheet-content"]'
+      SELECTORS.modal
     ].join(', ');
 
     const candidates = qa(notificationSelectors, root);
@@ -1824,9 +1771,9 @@ function cleanVid(vid) {
     return /(?:вы уже откликались|отклик уже отправлен|already applied)/i.test(bodyText);
   };
 
-  const getResponseDetectionScope = () => q('[data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]') || globalThis.document?.body || globalThis.document?.documentElement;
+  const getResponseDetectionScope = () => q(SELECTORS.modal) || globalThis.document?.body || globalThis.document?.documentElement;
   const hasReliableRejectWarning = (root) => {
-    const scope = (root && root !== globalThis.document && root !== globalThis.document?.body) ? root : q('[data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"], [data-qa="bottom-sheet-content"], [role="alert"]');
+    const scope = (root && root !== globalThis.document && root !== globalThis.document?.body) ? root : q(SELECTORS.modal + ', [role="alert"]');
     if (!scope) return false;
     const el = query('rejectWarning', scope);
     return Boolean(el && isVisible(el));
@@ -1847,7 +1794,7 @@ function cleanVid(vid) {
   }
 
   function detectModalBlockReason(modalScope = null) {
-    const modal = modalScope || qa('[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]').find(m => isVisible(m) && !isReviewOrFeedbackElement(m)) || null;
+    const modal = modalScope || getVisibleModals()[0] || null;
     if (!modal) return null;
     if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
     const text = (modal.textContent || modal.innerText || '').slice(0, 3000);
@@ -1858,6 +1805,12 @@ function cleanVid(vid) {
     if (detectCaptcha() || /капч[аеы]|captcha|recaptcha|smartcaptcha/i.test(text)) return 'CAPTCHA';
     if (detectRateLimit() || /слишком\s*много\s*запросов|доступ\s*ограничен|rate\s*limit|blocked/i.test(text)) return 'RATE_LIMIT';
     return null;
+  }
+
+  function isAttachCoverAvailable(root = null) {
+    if (!config.useCover) return false;
+    const btn = root ? queryExact('attachCoverBtn', root) : queryExact('attachCoverBtn');
+    return Boolean(btn && isVisible(btn) && !isReviewOrFeedbackElement(btn));
   }
 
   function detectResponseOutcomeInRoot(root, includeExactSelectors) {
@@ -1875,10 +1828,10 @@ function cleanVid(vid) {
       /(?:выберите|выбор)\s+(?:подходящее\s+)?резюме|резюме\s+для\s+отклика/i.test(root.textContent || '')
     );
 
-    if (includeExactSelectors && config.useCover && queryExact('attachCoverBtn', root)) {
+    if (includeExactSelectors && isAttachCoverAvailable(root)) {
       return 'ATTACH_COVER';
     }
-    if (includeExactSelectors && (queryExact('responseChat', root) || hasResponseTextConfirmation(root))) {
+    if (includeExactSelectors && (queryExact('responseChat', root) || hasResponseTextConfirmation(root) || (!config.useCover && queryExact('attachCoverBtn', root)))) {
       return 'SUCCESS';
     }
     if (query('letterTextarea', root) || query('attachCoverInModal', root) || query('letterSubmit', root) || q('[data-qa="vacancy-response-popup-form"]', root) || isResumeModal) {
@@ -1895,18 +1848,15 @@ function cleanVid(vid) {
     if (detectRelocationWarning()) return 'RELOCATION_WARNING';
 
     // 2. Cover letter attachment on vacancy page banner
-    const attachBtn = queryExact('attachCoverBtn');
-    if (config.useCover && attachBtn && isVisible(attachBtn) && !isReviewOrFeedbackElement(attachBtn)) {
+    if (isAttachCoverAvailable()) {
       return 'ATTACH_COVER';
     }
 
     // 3. Modals and bottom sheets (iterate through all visible dialogs)
-    const modals = qa('[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]');
+    const modals = getVisibleModals();
     for (const modal of modals) {
-      if (isVisible(modal) && !isReviewOrFeedbackElement(modal)) {
-        const outcome = detectResponseOutcomeInRoot(modal, true);
-        if (outcome) return outcome;
-      }
+      const outcome = detectResponseOutcomeInRoot(modal, true);
+      if (outcome) return outcome;
     }
 
     // 4. Exact response confirmations
@@ -1915,7 +1865,7 @@ function cleanVid(vid) {
     return null;
   }
 
-  // --- 14. Application Flow & Scenarios ---
+  // --- 13. Application Flow & Scenarios ---
   function markVacancyProcessed(vid, runId = currentRunId) {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
     return vid ? addProcessedID(vid) : true;
@@ -1924,7 +1874,10 @@ function cleanVid(vid) {
   function commitSuccess(vid, runId = currentRunId) {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
     markVacancyProcessed(vid, runId);
-    bumpStat('success');
+    if (vid) {
+      lastCommittedVid = cleanVid(vid);
+      storage.sessionSet(KEYS.lastCommittedVid, lastCommittedVid);
+    }
     recordOutcome(vid, 'applied', 'applied_success');
     const cur = getSentCount();
     events.emit('progress', {
@@ -1934,10 +1887,30 @@ function cleanVid(vid) {
     return true;
   }
 
+  function revertCommittedApplied(vid) {
+    const lastCommitted = lastCommittedVid || storage.sessionGet(KEYS.lastCommittedVid);
+    const cleanTarget = cleanVid(vid || lastCommitted || '');
+    if (lastCommitted && cleanTarget && lastCommitted === cleanTarget) {
+      const counters = getDailyCounters();
+      if (counters.applied > 0) {
+        counters.applied--;
+        saveDailyCounters(counters);
+        const cur = getSentCount();
+        events.emit('progress', {
+          sent: cur,
+          percentage: Math.min(100, Math.round((cur / MAX_DAILY_LIMIT) * 100))
+        });
+      }
+      lastCommittedVid = null;
+      storage.sessionRemove(KEYS.lastCommittedVid);
+      return true;
+    }
+    return false;
+  }
+
   function skipVacancy(vid, reason = 'skip_reject_warning', runId = currentRunId) {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
     markVacancyProcessed(vid, runId);
-    bumpStat('skipped');
     recordOutcome(vid, 'skipped', reason);
   }
 
@@ -2001,7 +1974,6 @@ function cleanVid(vid) {
     const res = ManualQueue.add(entry);
     if (res.success) {
       if (res.isNew) {
-        bumpStat('manual');
         recordOutcome(clean, 'queued', note || 'manual');
       }
       return true;
@@ -2026,7 +1998,7 @@ function cleanVid(vid) {
     const origin = globalThis.location?.origin || 'https://hh.ru';
     const returnUrl = (rawReturn && (rawReturn.includes('/search/vacancy') || rawReturn.startsWith('http') || rawReturn.startsWith('/'))) ? rawReturn : `${origin}/search/vacancy`;
     const loc = globalThis.location;
-    if (loc && !Page.isSearch() && loc.href !== returnUrl) {
+    if (loc && !Page.isSearchList() && loc.href !== returnUrl) {
       isNavigating = true;
       setTimeout(() => { isNavigating = false; }, 7000);
       try { loc.assign(returnUrl); } catch (_) { loc.href = returnUrl; }
@@ -2037,7 +2009,8 @@ function cleanVid(vid) {
   async function submitCoverLetterForm(scope = null, runId = currentRunId) {
     if (!isRunCurrent(runId)) return false;
     const ta = query('letterTextarea', scope);
-    if (ta && config.useCover) { fillTextarea(ta, config.coverText);
+    if (ta && config.useCover) {
+      fillTextarea(ta, config.coverText);
       await actionPause();
       if (!isRunCurrent(runId)) return false;
     }
@@ -2051,7 +2024,7 @@ function cleanVid(vid) {
     if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
       await waitForCondition(() => !submit.disabled && submit.getAttribute?.('aria-disabled') !== 'true', 1500, activeAbortController?.signal);
       if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
-        reportError('Кнопка отправки письма остается неактивной (disabled) после ожидания, пробуем клик...', 'SUBMIT_BTN_STILL_DISABLED');
+        reportError('Кнопка отправки письма остаётся неактивной (disabled) после ожидания, пробуем клик...', 'SUBMIT_BTN_STILL_DISABLED');
       }
     }
 
@@ -2096,11 +2069,11 @@ function cleanVid(vid) {
       return isRunCurrent(runId) ? 'OK' : 'STOPPED';
     }
 
-    const modalScope = q('[data-qa="bottom-sheet-content"], [role="dialog"]') || globalThis.document?.body;
+    const modalScope = getVisibleModals()[0] || q(SELECTORS.modal) || globalThis.document?.body;
     await submitCoverLetterForm(modalScope, runId);
     if (!isRunCurrent(runId)) return 'STOPPED';
     await waitForCondition(() => {
-      const sheet = q('[data-qa="bottom-sheet-content"]');
+      const sheet = getVisibleModals()[0];
       const isSheetClosed = !sheet || !isVisible(sheet);
       return isSheetClosed || isResponseConfirmed({ allowDocumentStrongText: true });
     }, 5000, activeAbortController?.signal);
@@ -2176,8 +2149,7 @@ function cleanVid(vid) {
   }
 
   async function handleModalOutcome(vid, runId) {
-    const modals = getVisibleModals();
-    const modal = modals.find(m => !isReviewOrFeedbackElement(m)) || modals[0] || null;
+    const modal = getVisibleModals()[0] || null;
     const res = await handleScenarioB(modal, runId);
     if (res === 'OK' && vid) {
       commitSuccess(vid, runId);
@@ -2222,6 +2194,16 @@ function cleanVid(vid) {
       if (nextOutcome) {
         return await dispatchOutcome(nextOutcome, vid, runId, relocAttempts + 1);
       }
+      if (isResponseConfirmed()) {
+        if (vid && !Page.isResponseForm() && !pageLooksLikeTest()) commitSuccess(vid, runId);
+        return 'OK';
+      }
+      reportError('Таймаут подтверждения релокации', 'RELOCATION_TIMEOUT', { vid });
+      if (vid) {
+        saveCurrentForManual(vid, 'relocation_timeout', runId);
+        markVacancyProcessed(vid, runId);
+      }
+      return 'FAIL';
     }
     reportError('Не удалось подтвердить предупреждение о релокации', 'RELOCATION_BTN_NOT_FOUND', { vid });
     if (vid) {
@@ -2240,7 +2222,13 @@ function cleanVid(vid) {
 
     if (outcome === 'ATTACH_COVER') {
       const res = await handleScenarioA(query('attachCoverBtn'), runId);
-      if (res === 'OK' && vid && !Page.isResponseForm() && !pageLooksLikeTest()) commitSuccess(vid, runId);
+      if (res === 'OK' && vid) {
+        if (!Page.isResponseForm() && !pageLooksLikeTest()) {
+          commitSuccess(vid, runId);
+        } else {
+          hhaLog('warn', 'commit_skipped', { vid, reason: Page.isResponseForm() ? 'response_form' : 'page_looks_like_test' });
+        }
+      }
       return res;
     }
 
@@ -2249,7 +2237,13 @@ function cleanVid(vid) {
     }
 
     if (outcome === 'SUCCESS') {
-      if (vid && !Page.isResponseForm() && !pageLooksLikeTest()) commitSuccess(vid, runId);
+      if (vid) {
+        if (!Page.isResponseForm() && !pageLooksLikeTest()) {
+          commitSuccess(vid, runId);
+        } else {
+          hhaLog('warn', 'commit_skipped', { vid, reason: Page.isResponseForm() ? 'response_form' : 'page_looks_like_test' });
+        }
+      }
       return 'OK';
     }
 
@@ -2265,6 +2259,7 @@ function cleanVid(vid) {
 
     return 'FAIL';
   }
+
   async function simulateHumanReading(vid, runId = currentRunId) {
     if (!isRunCurrent(runId)) return;
     const doc = globalThis.document;
@@ -2400,6 +2395,7 @@ function cleanVid(vid) {
       return handleVacancyFailure(vid, 'vacancy-page-error', runId);
     }
   }
+
   async function submitResponsePage(vid, runId = currentRunId) {
     if (!isRunCurrent(runId)) return;
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
@@ -2407,6 +2403,7 @@ function cleanVid(vid) {
     handlingResponsePage = true;
     try {
       if (pageLooksLikeTest()) {
+        revertCommittedApplied(lastCommittedVid || vid);
         saveCurrentForManual(vid, 'test-questionnaire', runId);
         return returnToList(vid, { markProcessed: true, runId });
       }
@@ -2494,28 +2491,53 @@ function cleanVid(vid) {
     }
   }
 
-  // --- 15. Main Execution Loop ---
+  // --- 14. Main Execution Loop ---
   async function initLoopSession() {
-    if (isLoopActive) return null;
+    if (isLoopActive || isNavigating) return null;
+    if (Page.isResponseForm() && handlingResponsePage) return null;
+
+    if (activeAbortController) {
+      try { activeAbortController.abort(); } catch (_) {}
+      activeAbortController = null;
+    }
+
     isLoopActive = true;
     stopSignal = false;
     currentRunId++;
     const runId = currentRunId;
     activeAbortController = new AbortController();
+
     setRunning(true);
     markProgress();
     hhaLog('info', 'start', { runId, limit: MAX_DAILY_LIMIT });
-    setStatus('running', 'STARTING');
+    setStatus('running', 'LOOP_STARTING');
 
-    const hasLock = await acquireInstanceLock(TAB_ID);
-    if (!hasLock) {
+    const acquired = await acquireInstanceLock(TAB_ID);
+    if (runId !== currentRunId || stopSignal || !isRunning()) {
+      if (acquired) await releaseInstanceLock(TAB_ID);
       isLoopActive = false;
+      return null;
+    }
+    if (!acquired) {
+      currentRunId++;
+      stopSignal = true;
+      isLoopActive = false;
+      setRunning(false);
+      const isBlocked = storage.isLocalBlocked();
+      const code = isBlocked ? 'STORAGE_BLOCKED' : 'TAB_BUSY';
+      const msg = isBlocked ? 'Доступ к хранилищу заблокирован.' : 'Другая вкладка уже выполняет отклики. Запуск в текущей вкладке отменен.';
+      setStatus('idle', code, { message: msg });
+      reportError(msg, code);
       return null;
     }
     return runId;
   }
 
   async function handleResponsePageRoute(runId) {
+    if (handlingResponsePage) {
+      isLoopActive = false;
+      return;
+    }
     handlingResponsePage = true;
     setTrapLock(45000, runId);
     const vid = resolveCurrentVid();
@@ -2600,7 +2622,7 @@ function cleanVid(vid) {
     }
 
     if (!safeTargetUrl) {
-      reportError(`Вакансия #${vid} ведет на сторонний внешний сайт (${rawTargetUrl}). Сохранена в ручную очередь.`, 'EXTERNAL_VACANCY_URL', { vid, targetUrl: rawTargetUrl });
+      reportError(`Вакансия #${vid} ведёт на внешний сайт (${rawTargetUrl}). Сохранена в ручную очередь.`, 'EXTERNAL_VACANCY_URL', { vid, targetUrl: rawTargetUrl });
       saveCurrentForManual(vid, 'queued_external_site', runId, title, employer, salary, rawTargetUrl);
       addToBlacklist(vid, 'external_site');
       markVacancyProcessed(vid, runId);
@@ -2706,7 +2728,7 @@ function cleanVid(vid) {
       finalizeRun(runId, 'error', `Main loop error: ${(e && e.message) || e}`);
     }
   }
-  // --- 16. Watchdog & Recovery ---
+  // --- 15. Watchdog & Recovery ---
   function checkRateLimitAnomaly(doc, bodyText) {
     if (detectInaccessibleVacancy(doc, bodyText)) {
       const vid = resolveCurrentVid();
@@ -2747,6 +2769,8 @@ function cleanVid(vid) {
       }
     }
 
+    if (handlingResponsePage || (isLoopActive && Page.isResponseForm())) return false;
+
     if (!Page.isSearch() && !isNavigating && (now - pageLoadedAt) > PAGE_WATCHDOG_TIMEOUT) {
       const vid = resolveCurrentVid();
       reportError(`Страница не ответила за ${PAGE_WATCHDOG_TIMEOUT / 1000} секунд. Принудительный возврат к поиску.`, 'PAGE_HANG_TIMEOUT', { vid, url: globalThis.location?.href });
@@ -2754,35 +2778,6 @@ function cleanVid(vid) {
       return true;
     }
     return false;
-  }
-
-  function handleWatchdogResponseForm() {
-    if (isNavigating || handlingResponsePage) return;
-    if (isLoopActive || getActiveTrapLock()) return;
-    if (currentRunId === 0) currentRunId = 1;
-    setTrapLock(45000, currentRunId);
-    const vid = resolveCurrentVid();
-    if (!pageLooksLikeTest()) {
-      handlingResponsePage = true;
-      submitResponsePage(vid, currentRunId);
-      return;
-    }
-    handlingResponsePage = true;
-    if (resumeTimer) {
-      clearTimeout(resumeTimer);
-      resumeTimer = null;
-    }
-    if (vid) {
-      const counters = getDailyCounters();
-      if (counters.applied > 0 && isProcessed(vid)) {
-        counters.applied--;
-        storage.localSet(KEYS.dailyCounters, JSON.stringify(counters));
-      }
-    }
-    if (saveCurrentForManual(vid, 'queued_questionnaire', currentRunId)) {
-      markVacancyProcessed(vid, currentRunId);
-      returnToList(vid, { markProcessed: true, runId: currentRunId });
-    }
   }
 
   function watchdogTick() {
@@ -2811,9 +2806,7 @@ function cleanVid(vid) {
       return;
     }
 
-    if (Page.isResponseForm()) {
-      handleWatchdogResponseForm();
-    } else {
+    if (!Page.isResponseForm()) {
       clearTrapLock();
       handlingResponsePage = false;
     }
@@ -2849,7 +2842,7 @@ function cleanVid(vid) {
     storage.sessionRemove(KEYS.skipAlertShown);
   }
 
-  // --- 17. Public API ---
+  // --- 16. Public API ---
   const HHApplyAssistant = {
     start: () => startLoop(),
     stop: (code = 'STOPPED_BY_USER', reason = '') => terminateRun(code, reason || (code === 'STOPPED_BY_USER' ? 'Automation stopped by user' : code), {}, false),
@@ -2900,11 +2893,12 @@ function cleanVid(vid) {
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
     destroy: () => teardownRuntime(),
+    revertCommittedApplied: (vid) => revertCommittedApplied(vid),
     hhaDumpLog: () => hhaDumpLog(),
     hhaClearLog: () => hhaClearLog()
   };
 
-  // --- 18. Bootstrap & Global Binding ---
+  // --- 17. Bootstrap & Global Binding ---
   function bootstrap() {
     if (watchdogIntervalId === null) {
       watchdogIntervalId = setInterval(() => {
@@ -3052,7 +3046,7 @@ function cleanVid(vid) {
  * HH Apply Assistant - Floating HUD UI Module
  * Form factor: Floating Pill + Flyout Overlay
  * Implementation: Native Web Component with Closed Shadow DOM
-  */
+ */
 
 (function () {
   'use strict';
@@ -3080,6 +3074,7 @@ function cleanVid(vid) {
     GLOBAL_UNHANDLED_REJECTION: 'Сбой асинхронной операции',
     DOM_SELECTOR_NOT_FOUND: 'Элемент страницы не найден',
     SUBMIT_BTN_NOT_FOUND: 'Кнопка отправки не найдена',
+    SUBMIT_BTN_STILL_DISABLED: 'Кнопка отправки неактивна',
     ATTACH_BTN_NOT_FOUND: 'Кнопка прикрепления письма не найдена',
     LETTER_FORM_TIMEOUT: 'Форма письма не открылась вовремя',
     RELOCATION_LOOP_GUARD: 'Зацикливание предупреждения о релокации',
@@ -3095,16 +3090,14 @@ function cleanVid(vid) {
     TAB_BUSY: 'Скрипт уже запущен в другой вкладке',
     TAB_LOCK_LOST: 'Потеряна блокировка вкладки',
     VACANCY_URL_NOT_FOUND: 'Не удалось определить ссылку вакансии',
-    DAILY_LIMIT_REACHED: 'Достигнут лимит откликов на сегодня',
     MAX_ATTEMPTS_EXCEEDED: 'Превышен лимит попыток отклика',
     VACANCY_ATTEMPT_FAILED: 'Сбой отклика (повторим позже)',
     PAGE_HANG_TIMEOUT: 'Страница вакансии зависла',
-    EXTERNAL_VACANCY_URL: 'Вакансия ведет на внешний сайт',
+    EXTERNAL_VACANCY_URL: 'Вакансия ведёт на внешний сайт',
     CAPTCHA_DETECTED: 'Обнаружена капча: решите её вручную',
     RATE_LIMITED: 'Слишком частые запросы (Rate Limit)',
     SKIP_RATE_ALERT: 'Аномально много пропусков вакансий',
     WATCHDOG_GIVEUP: 'Зависание при обработке вакансии',
-    STOPPED_BY_USER: 'Остановлено пользователем'
   };
 
   function formatHumanError(code, rawMessage) {
@@ -3194,14 +3187,7 @@ function cleanVid(vid) {
       --md-sys-color-on-primary: #FFFFFF;
       --md-sys-color-primary-container: #BCECE3;
       --md-sys-color-on-primary-container: #00201D;
-      --md-sys-color-inverse-primary: #52DBC7;
-
-      --md-sys-color-secondary: #4A635F;
       --md-sys-color-secondary-container: #CCE8E2;
-      --md-sys-color-on-secondary-container: #05201C;
-
-      --md-sys-color-tertiary: #456179;
-      --md-sys-color-on-tertiary: #FFFFFF;
       --md-sys-color-tertiary-container: #CCE5FF;
       --md-sys-color-on-tertiary-container: #001D31;
 
@@ -3209,31 +3195,22 @@ function cleanVid(vid) {
       --md-sys-color-on-error: #FFFFFF;
       --md-sys-color-error-container: #FFDAD6;
       --md-sys-color-on-error-container: #410002;
-
-      --md-sys-color-background: #FAFDFB;
-      --md-sys-color-on-background: #191C1B;
       --md-sys-color-surface: #FAFDFB;
       --md-sys-color-on-surface: #191C1B;
-      --md-sys-color-surface-variant: #DAE5E1;
       --md-sys-color-on-surface-variant: #3F4946;
 
       --md-sys-color-outline: #707976;
       --md-sys-color-outline-variant: #E2E7E5;
 
-      /* M3 Surface Container Roles (Tonal Elevation) */
+      /* Surface Container Roles (Tonal Elevation) */
       --md-sys-color-surface-container-lowest: #FFFFFF;
       --md-sys-color-surface-container-low: #F6F8F7;
       --md-sys-color-surface-container: #F0F4F2;
       --md-sys-color-surface-container-high: #EEF1EF;
       --md-sys-color-surface-container-highest: #E4E8E6;
-      --md-sys-color-surface-dim: #D8DBD9;
-      --md-sys-color-surface-bright: #FAFDFB;
 
       --md-sys-color-inverse-surface: #2E3130;
       --md-sys-color-inverse-on-surface: #EFF1EF;
-
-      /* M3 Extended Semantic Roles: Warning (Harmonized with palette) */
-      --md-custom-color-on-warning: #FFFFFF;
 
       /* Shape Scale */
       --md-sys-shape-corner-extra-small: 4px;
@@ -3269,12 +3246,11 @@ function cleanVid(vid) {
 
       --md-sys-typescale-label-small-size: 11px;
 
-      /* Control Height (M3 Compact Standard) */
+      /* Control Height (Compact Standard) */
       --md-comp-control-height: 32px;
 
       /* Motion: Easing */
       --md-sys-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
-      --md-sys-motion-easing-emphasized: cubic-bezier(0.2, 0, 0, 1);
       --md-sys-motion-easing-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
 
       /* Motion: Duration */
@@ -3345,10 +3321,6 @@ function cleanVid(vid) {
 
     .hha-root.dir-up {
       place-items: end center;
-    }
-
-    .hha-root:not(.dir-up) {
-      place-items: start center;
     }
 
     /* 3. Pill */
@@ -3515,7 +3487,8 @@ function cleanVid(vid) {
     .hha-pill-status-group.has-error .hha-current-count {
       color: var(--md-sys-color-error);
     }
-/* 4. Quick Action Button */
+
+    /* 4. Quick Action Button */
     .hha-btn-start,
     .hha-btn-stop,
     .hha-btn-done,
@@ -3583,7 +3556,7 @@ function cleanVid(vid) {
       transition: opacity 50ms ease-out 0s;
     }
 
-    /* M3 Filled Button for Start (Primary Role) */
+    /* Filled Button for Start (Primary Role) */
     .hha-btn-start {
       background: var(--md-sys-color-primary);
       color: var(--md-sys-color-on-primary);
@@ -3602,7 +3575,7 @@ function cleanVid(vid) {
       transform: scale(0.97);
     }
 
-    /* M3 Filled Button for Stop (Error Role) */
+    /* Filled Button for Stop (Error Role) */
     .hha-btn-stop {
       background: var(--md-sys-color-error);
       color: var(--md-sys-color-on-error);
@@ -3623,7 +3596,7 @@ function cleanVid(vid) {
       transform: scale(0.97);
     }
 
-    /* Living Breathing Indicator when Automation is Running */
+    /* Indicator when Automation is Running */
     .hha-root.is-running .hha-pill-progress-fill {
       animation: hhaProgressBreathe 2.4s ease-in-out infinite;
     }
@@ -3650,7 +3623,7 @@ function cleanVid(vid) {
       }
     }
 
-    /* M3 Filled Success Button for Done / Limit Reached */
+    /* Filled Success Button for Done / Limit Reached */
     .hha-btn-done {
       background: var(--md-sys-color-primary);
       color: var(--md-sys-color-on-primary);
@@ -3670,7 +3643,7 @@ function cleanVid(vid) {
       transform: scale(0.97);
     }
 
-    /* M3 Neutral Tonal Button for Daily Limit Reached */
+    /* Neutral Tonal Button for Daily Limit Reached */
     .hha-btn-limit {
       background: var(--md-sys-color-surface-container-highest);
       color: var(--md-sys-color-on-surface-variant);
@@ -3688,7 +3661,7 @@ function cleanVid(vid) {
       transform: scale(0.97);
     }
 
-    /* M3 Filled Error Button for Error / Reset State */
+    /* Filled Error Button for Error / Reset State */
     .hha-btn-error {
       background: var(--md-sys-color-error);
       color: var(--md-sys-color-on-error);
@@ -3709,16 +3682,8 @@ function cleanVid(vid) {
       color: var(--md-sys-color-on-error);
     }
 
-    .hha-btn-quick:disabled,
-    .hha-btn-quick.is-disabled {
-      opacity: 0.38;
-      cursor: not-allowed;
-      pointer-events: none;
-      box-shadow: none;
-    }
-
     /* 5. Flyout Panel */
-.hha-flyout {
+    .hha-flyout {
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-body-small-size);
       line-height: var(--md-sys-typescale-body-small-line-height);
@@ -3764,10 +3729,6 @@ function cleanVid(vid) {
       transform-origin: center bottom;
     }
 
-    .hha-root:not(.dir-up) .hha-flyout {
-      transform-origin: center top;
-    }
-
     .hha-root.is-animating .hha-panel,
     .hha-root.is-animating .hha-log-stream,
     .hha-root:not(.is-expanded) .hha-panel,
@@ -3809,7 +3770,7 @@ function cleanVid(vid) {
         visibility var(--hha-motion-expand-duration, 500ms) linear 0s;
     }
 
-    /* ─── Inner Elements Unified Synchronous Transitions ─── */
+    /* Inner Elements Unified Synchronous Transitions */
     .hha-flyout .hha-island-header {
       flex-shrink: 0;
       opacity: 0;
@@ -3851,12 +3812,6 @@ function cleanVid(vid) {
       opacity: 1;
       transform: translate3d(0, 0, 0);
       transition: opacity 320ms ease-out 60ms, transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 60ms;
-    }
-
-    .hha-root.is-expanded .hha-panel.active .hha-card:nth-child(1),
-    .hha-root.is-expanded .hha-panel.active .hha-card:nth-child(2),
-    .hha-root.is-expanded .hha-panel.active .hha-log-card {
-      animation: none !important;
     }
 
     /* 5.1 Island Header */
@@ -4203,7 +4158,7 @@ function cleanVid(vid) {
       background: color-mix(in srgb, var(--md-sys-color-on-surface) 10%, transparent);
     }
 
-    /* M3 Active Tab Indicator */
+    /* Active Tab Indicator */
     .hha-tab-btn.active {
       background: transparent !important;
       border: none !important;
@@ -4223,7 +4178,7 @@ function cleanVid(vid) {
       border: none;
     }
 
-    /* Focus Rings (M3 Dual Focus Indicators) */
+    /* Focus Rings (Dual Focus Indicators) */
     .hha-pill-status-group:focus-visible,
     .hha-tab-btn:focus-visible,
     .hha-btn-quick:focus-visible,
@@ -4318,7 +4273,7 @@ function cleanVid(vid) {
     }
 
     /* 8. Queue & Log Containers */
-    /* Tab 2: Queue Container (M3 Unified List Surface) */
+    /* Tab 2: Queue Container (Unified List Surface) */
     [data-panel="queue"] {
       overflow: hidden !important;
     }
@@ -4444,7 +4399,7 @@ function cleanVid(vid) {
       max-width: 240px;
     }
 
-    /* Queue Toolbar (M3 Secondary List Header) */
+    /* Queue Toolbar (Secondary List Header) */
     .hha-queue-toolbar {
       display: flex;
       align-items: center;
@@ -4465,7 +4420,7 @@ function cleanVid(vid) {
       letter-spacing: 0.2px;
     }
 
-    /* Queue List Items (M3 Unified List Pattern) */
+    /* Queue List Items (Unified List Pattern) */
     .hha-queue-card {
       display: flex;
       flex-direction: column;
@@ -4519,7 +4474,7 @@ function cleanVid(vid) {
       box-shadow: none;
     }
 
-    /* Viewed Queue Card state (M3 Accessible Subdued State) */
+    /* Viewed Queue Card state (Accessible Subdued State) */
     .hha-queue-card.is-viewed {
       opacity: 1;
       background: var(--md-sys-color-surface-container-low);
@@ -4620,7 +4575,7 @@ function cleanVid(vid) {
       margin: 0;
     }
 
-    /* M3 Assist Chips / Badges */
+    /* Assist Chips / Badges */
     .hha-queue-badge {
       display: inline-flex;
       align-items: center;
@@ -4633,12 +4588,6 @@ function cleanVid(vid) {
       font-weight: 500;
       letter-spacing: -0.05px;
       flex-shrink: 0;
-    }
-
-    .hha-queue-badge.badge-warning {
-      background: var(--md-custom-color-warning-container);
-      color: var(--md-custom-color-on-warning-container);
-      border: none;
     }
 
     .hha-queue-badge.badge-error {
@@ -4682,7 +4631,7 @@ function cleanVid(vid) {
       flex-shrink: 1;
     }
 
-    /* Delete item button with M3 Icon Button state layers */
+    /* Delete item button with Icon Button state layers */
     .hha-log-item-delete {
       width: 20px;
       height: 20px;
@@ -4850,7 +4799,7 @@ function cleanVid(vid) {
       transform: scale(0.96);
     }
 
-    /* Clear all in queue: M3 Text Button (Error role) */
+    /* Clear all in queue: Text Button (Error role) */
     .hha-btn-clear-all {
       display: inline-flex;
       align-items: center;
@@ -5056,7 +5005,7 @@ function cleanVid(vid) {
       background-color: var(--md-sys-color-on-surface);
     }
 
-    /* M3 Checked Switch */
+    /* Checked Switch */
     .hha-switch-input:checked + .hha-switch-slider {
       background-color: var(--md-sys-color-primary);
       border: none;
@@ -5073,7 +5022,7 @@ function cleanVid(vid) {
       background-color: var(--md-sys-color-on-primary);
     }
 
-    /* M3 Squish Transition on Active/Press */
+    /* Squish Transition on Active/Press */
     .hha-switch:active .hha-switch-slider::before {
       width: 16px;
     }
@@ -5159,7 +5108,7 @@ function cleanVid(vid) {
       cursor: not-allowed;
     }
 
-    /* Accessibility: M3 Motion Reduction (opacity only, <= 100ms, no transforms or growth) */
+    /* Accessibility: Motion Reduction (opacity only, <= 100ms, no transforms or growth) */
     @media (prefers-reduced-motion: reduce) {
       .hha-pill-progress-fill,
       .hha-btn-stop {
@@ -5189,15 +5138,15 @@ function cleanVid(vid) {
 
       this._isExpanded = false;
       this._activeTab = 'settings'; // 'settings' | 'queue'
-      const initWinW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
-      const initWinH = (typeof window !== 'undefined' && window.innerHeight) || 768;
+      const initWinW = window.innerWidth || 1024;
+      const initWinH = window.innerHeight || 768;
       this._pillPos = { x: Math.max(8, initWinW - 220), y: Math.max(8, initWinH - 36 - 24) };
       this._collapsedPillWidth = 166;
       this._isAnimating = false;
       this._queue = [];
       this._lastErrorPayload = null;
       this._config = {
-            useCover: false,
+        useCover: false,
         coverText: '',
         skipHidden: true
       };
@@ -5234,7 +5183,6 @@ function cleanVid(vid) {
     }
 
     _addWindowListener(type, handler, options) {
-      if (typeof window === 'undefined') return () => {};
       window.addEventListener(type, handler, options);
       const entry = { type, handler, options };
       this._windowListeners.push(entry);
@@ -5246,7 +5194,7 @@ function cleanVid(vid) {
     }
 
     _removeAllWindowListeners() {
-      if (typeof window === 'undefined' || !Array.isArray(this._windowListeners)) return;
+      if (!Array.isArray(this._windowListeners)) return;
       for (const { type, handler, options } of this._windowListeners) {
         try { window.removeEventListener(type, handler, options); } catch (_) {}
       }
@@ -5257,15 +5205,13 @@ function cleanVid(vid) {
 
       // Restore expanded state and active tab from localStorage across page navigations
       try {
-        if (typeof localStorage !== 'undefined') {
-          const savedExpanded = localStorage.getItem('hha_hud_expanded_v2');
-          if (savedExpanded !== null) {
-            this._isExpanded = savedExpanded === 'true';
-          }
-          const savedTab = localStorage.getItem('hha_hud_active_tab_v2');
-          if (savedTab && ['settings', 'queue'].includes(savedTab)) {
-            this._activeTab = savedTab;
-          }
+        const savedExpanded = localStorage.getItem('hha_hud_expanded_v2');
+        if (savedExpanded !== null) {
+          this._isExpanded = savedExpanded === 'true';
+        }
+        const savedTab = localStorage.getItem('hha_hud_active_tab_v2');
+        if (savedTab && ['settings', 'queue'].includes(savedTab)) {
+          this._activeTab = savedTab;
         }
       } catch (_) {}
 
@@ -5295,12 +5241,10 @@ function cleanVid(vid) {
 
       this._syncAll();
 
-      if (typeof window !== 'undefined') {
-        if (this._resizeRemover) {
-          try { this._resizeRemover(); } catch (_) {}
-        }
-        this._resizeRemover = this._addWindowListener('resize', this._onResize, { passive: true });
+      if (this._resizeRemover) {
+        try { this._resizeRemover(); } catch (_) {}
       }
+      this._resizeRemover = this._addWindowListener('resize', this._onResize, { passive: true });
 
       // Auto-bind to global assistant if present
       const globalAssistant = globalThis.HHApplyAssistant || (globalThis.window && globalThis.window.HHApplyAssistant);
@@ -5331,10 +5275,10 @@ function cleanVid(vid) {
 
       this._domEventsBound = false;
       this.unbindAssistant();
-      if (this._onDocClick && typeof document !== 'undefined') {
+      if (this._onDocClick) {
         document.removeEventListener('click', this._onDocClick);
       }
-      if (this._onDocKeyDown && typeof document !== 'undefined') {
+      if (this._onDocKeyDown) {
         document.removeEventListener('keydown', this._onDocKeyDown);
       }
       if (this._coverDebounceTimer) { clearTimeout(this._coverDebounceTimer); this._coverDebounceTimer = null; }
@@ -5352,7 +5296,7 @@ function cleanVid(vid) {
       if (typeof assistant.getState === 'function') {
         const s = assistant.getState();
         if (s) {
-          const sent = s.sentCount !== undefined ? s.sentCount : s.sentToday;
+          const sent = s.sentCount !== undefined ? s.sentCount : 0;
           this.updateStatus(s.status, s.statusCode || s.code);
           this.updateProgress(sent);
         }
@@ -5446,9 +5390,7 @@ function cleanVid(vid) {
       this._isAnimating = true;
 
       try {
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('hha_hud_expanded_v2', String(this._isExpanded));
-        }
+        localStorage.setItem('hha_hud_expanded_v2', String(this._isExpanded));
       } catch (_) {}
 
       this._hideTooltip();
@@ -5525,10 +5467,6 @@ function cleanVid(vid) {
       return res;
     }
 
-    close() {
-      return this.toggleExpand(false);
-    }
-
     setActiveTab(tabName) {
       if (!['settings', 'queue'].includes(tabName)) {
         tabName = 'settings';
@@ -5539,9 +5477,7 @@ function cleanVid(vid) {
       this._hideTooltip();
 
       try {
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('hha_hud_active_tab_v2', this._activeTab);
-        }
+        localStorage.setItem('hha_hud_active_tab_v2', this._activeTab);
       } catch (_) {}
 
       if (!this._shadow) return;
@@ -5842,9 +5778,7 @@ function cleanVid(vid) {
           }
         }
       };
-      if (typeof document !== 'undefined') {
-        document.addEventListener('click', this._onDocClick);
-      }
+      document.addEventListener('click', this._onDocClick);
 
       this._onDocKeyDown = (e) => {
         if (e && e.key === 'Escape' && this._isExpanded) {
@@ -5852,9 +5786,7 @@ function cleanVid(vid) {
           this.toggleExpand(false);
         }
       };
-      if (typeof document !== 'undefined') {
-        document.addEventListener('keydown', this._onDocKeyDown);
-      }
+      document.addEventListener('keydown', this._onDocKeyDown);
     }
 
     _bindDomEvents() {
@@ -5915,7 +5847,9 @@ function cleanVid(vid) {
 
       this._bindFormEvents();
       this._bindDocumentEvents();
+      this._initOverlayScrollbar();
     }
+
     _setupThumbDrag(thumb, stream, scrollbar, onDragEnd) {
       let isDragging = false;
       let startY = 0;
@@ -6064,7 +5998,7 @@ function cleanVid(vid) {
       const code = errPayload.code || (errPayload.level === 'ERR' ? 'ERROR' : 'INFO');
       const message = String(errPayload.message || 'Произошла непредвиденная ошибка');
       const details = errPayload.details || errPayload.context || {};
-      const url = details.url || (typeof window !== 'undefined' && window.location ? window.location.href : (typeof location !== 'undefined' ? location.href : ''));
+      const url = details.url || (window.location ? window.location.href : (typeof location !== 'undefined' ? location.href : ''));
 
       this._lastErrorPayload = {
         time,
@@ -6099,12 +6033,7 @@ function cleanVid(vid) {
       if (errorCode) errorCode.textContent = codeMsg;
       this._updatePosition();
 
-      // 3. Show refined error indicator on collapsed pill
-      const errorDot = this._shadow.querySelector('[data-el="pill-error-dot"]');
-      if (errorDot) {
-        errorDot.style.display = 'inline-block';
-        errorDot.setAttribute('title', `${humanMsg} (нажмите для деталей)`);
-      }
+      // 3. Mark status group with error state
       const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
       if (statusGroup) {
         statusGroup.classList.add('has-error');
@@ -6248,8 +6177,8 @@ function cleanVid(vid) {
       const handler = actionMap[action];
       if (handler) handler(actionTarget, e);
     }
+
     _fallbackCopyText(text) {
-      if (typeof document === 'undefined') return false;
       try {
         const ta = document.createElement('textarea');
         ta.value = text;
@@ -6287,7 +6216,7 @@ function cleanVid(vid) {
         `Time: ${err.time || formatTime()}`,
         `Code: ${err.code || 'UNKNOWN'}`,
         `Message: ${err.message || ''}`,
-        `URL: ${err.url || (typeof window !== 'undefined' && window.location ? window.location.href : (typeof location !== 'undefined' ? location.href : ''))}`,
+        `URL: ${err.url || (window.location ? window.location.href : (typeof location !== 'undefined' ? location.href : ''))}`,
         `User-Agent: ${typeof navigator !== 'undefined' ? navigator.userAgent : ''}`
       ];
       if (err.details && Object.keys(err.details).length > 0) {
@@ -6453,14 +6382,12 @@ function cleanVid(vid) {
         e.preventDefault();
       }
 
-      if (typeof window !== 'undefined') {
-        this._dragWindowRemovers = [
+      this._dragWindowRemovers = [
           this._addWindowListener('pointermove', this._onPointerMove, { capture: true }),
           this._addWindowListener('pointerup', this._onPointerUp, { capture: true }),
           this._addWindowListener('pointercancel', this._onPointerUp, { capture: true }),
           this._addWindowListener('blur', this._onPointerUp, { capture: true })
         ];
-      }
 
       try {
         if (target && typeof target.setPointerCapture === 'function') {
@@ -6486,8 +6413,8 @@ function cleanVid(vid) {
         const rawCenterX = this._dragStartPillPos.x + dx;
         const rawY = this._dragStartPillPos.y + dy;
 
-        const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
-        const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
+        const winW = window.innerWidth || 1024;
+        const winH = window.innerHeight || 768;
 
         this._pillPos = this._clampPillCoordinates(rawCenterX, rawY, winW, winH);
         if (!this._dragRafId) {
@@ -6573,8 +6500,8 @@ function cleanVid(vid) {
       this._dragTarget = null;
 
       if (wasDragging) {
-        const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
-        const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
+        const winW = window.innerWidth || 1024;
+        const winH = window.innerHeight || 768;
         this._calculateSnapping(winW, winH, root);
         this._persistPosition();
         this._suppressNextClick();
@@ -6606,8 +6533,8 @@ function cleanVid(vid) {
     }
 
     _onResize() {
-      const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
-      const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
+      const winW = window.innerWidth || 1024;
+      const winH = window.innerHeight || 768;
       this._pillPos = this._clampPillCoordinates(this._pillPos.x, this._pillPos.y, winW, winH);
       this._persistPosition();
       this._updatePosition();
@@ -6618,8 +6545,8 @@ function cleanVid(vid) {
       const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
       if (!root) return;
 
-      const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
-      const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
+      const winW = window.innerWidth || 1024;
+      const winH = window.innerHeight || 768;
 
       // Pill is ALWAYS at the bottom, flyout is ALWAYS above the pill
       root.classList.add('dir-up');
@@ -6662,8 +6589,8 @@ function cleanVid(vid) {
     }
 
     _restorePosition() {
-      const winW = (typeof window !== 'undefined' && window.innerWidth) || 1024;
-      const winH = (typeof window !== 'undefined' && window.innerHeight) || 768;
+      const winW = window.innerWidth || 1024;
+      const winH = window.innerHeight || 768;
 
       // Default position: Bottom-Right with 24px margin
       const defCenterX = Math.max(203, winW - 219);
@@ -6671,18 +6598,16 @@ function cleanVid(vid) {
 
       let pos = null;
       try {
-        if (typeof localStorage !== 'undefined') {
-          const rawV3 = localStorage.getItem('hha_hud_pos_v3');
-          if (rawV3) {
-            pos = JSON.parse(rawV3);
-          } else {
-            // Migrate legacy v2 coordinate (v2 stored left coordinate)
-            const rawV2 = localStorage.getItem('hha_hud_pos_v2');
-            if (rawV2) {
-              const p2 = JSON.parse(rawV2);
-              if (p2 && typeof p2.x === 'number') {
-                pos = { x: p2.x + 83, y: p2.y };
-              }
+        const rawV3 = localStorage.getItem('hha_hud_pos_v3');
+        if (rawV3) {
+          pos = JSON.parse(rawV3);
+        } else {
+          // Migrate legacy v2 coordinate (v2 stored left coordinate)
+          const rawV2 = localStorage.getItem('hha_hud_pos_v2');
+          if (rawV2) {
+            const p2 = JSON.parse(rawV2);
+            if (p2 && typeof p2.x === 'number' && !isNaN(p2.x) && typeof p2.y === 'number' && !isNaN(p2.y)) {
+              pos = { x: p2.x + 83, y: p2.y };
             }
           }
         }
@@ -6700,9 +6625,7 @@ function cleanVid(vid) {
 
     _persistPosition() {
       try {
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('hha_hud_pos_v3', JSON.stringify({ x: this._pillPos.x, y: this._pillPos.y }));
-        }
+        localStorage.setItem('hha_hud_pos_v3', JSON.stringify({ x: this._pillPos.x, y: this._pillPos.y }));
       } catch (_) {}
     }
 
@@ -6826,40 +6749,6 @@ function cleanVid(vid) {
         </div>
       `;
     }
-    _renderQueueCard(item) {
-      const rawVid = item.vid ? String(item.vid) : '';
-      const cVid = cleanVid(rawVid);
-      const targetUrl = toVacancyUrl(cVid, item.url);
-      let displayTitle = collapseSpaces(item.title || '');
-      displayTitle = displayTitle.replace(/\s*#\d+\b/g, '').trim();
-      if (!displayTitle || /^(?:отклик на вакансию|отклик без резюме)$/i.test(displayTitle)) {
-        displayTitle = 'Вакансия';
-      }
-      const displayEmployer = collapseSpaces(item.employer || '');
-      const reasonInfo = formatQueueReasonInfo(item.reason);
-      const cleanSalary = formatCleanSalary(item.salary || '');
-      const isViewed = Boolean(item.viewed);
-
-      return `
-        <div class="hha-queue-card ${isViewed ? 'is-viewed' : ''}" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-url="${escapeHtml(targetUrl || '#')}" role="link" tabindex="0" title="Открыть вакансию в новой вкладке">
-          <div class="hha-queue-card-top">
-            <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="${escapeHtml(displayTitle)}">
-              <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
-            </a>
-            <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">✕</button>
-          </div>
-          ${displayEmployer ? `
-          <div class="hha-queue-card-mid">
-            <span class="hha-queue-employer" title="${escapeHtml(displayEmployer)}">${escapeHtml(displayEmployer)}</span>
-          </div>` : ''}
-          <div class="hha-queue-card-bottom">
-            ${isViewed ? `<span class="hha-queue-badge badge-viewed">Просмотрено</span>` : ''}
-            <span class="hha-queue-badge badge-${escapeHtml(reasonInfo.type)}">${escapeHtml(reasonInfo.text)}</span>
-            ${cleanSalary ? `<span class="hha-queue-salary" title="${escapeHtml(item.salary || cleanSalary)}">${escapeHtml(cleanSalary)}</span>` : ''}
-          </div>
-        </div>
-      `;
-    }
 
     _syncQueue() {
       if (!this._shadow) return;
@@ -6906,7 +6795,7 @@ function cleanVid(vid) {
             <div class="hha-log-empty">
               <div class="hha-log-empty-icon">${ICONS.inboxEmpty}</div>
               <div class="hha-log-empty-text">Очередь пуста</div>
-              <div class="hha-log-empty-subtext">Сюда попадают вакансии с тестами и анкетами для ручного отклика</div>
+              <div class="hha-log-empty-subtext">Сюда попадают вакансии с тестами, анкетами и внешними ссылками</div>
             </div>
           `;
         }
@@ -6916,6 +6805,7 @@ function cleanVid(vid) {
         this._updateOverlayScrollbar();
       }
     }
+
     _syncConfig() {
       if (!this._shadow) return;
       const c = this._config || {};
@@ -6943,7 +6833,7 @@ function cleanVid(vid) {
   }
 
   function mountHud(assistant = null) {
-    if (typeof document === 'undefined' || !document.body) return null;
+    if (!document.body) return null;
     let hud = document.querySelector('hha-hud');
     if (!hud) {
       hud = document.createElement('hha-hud');
