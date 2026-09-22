@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.1.2
+// @version      0.1.3
 // @author       Timur Geruzov
 // @description  HH Apply Assistant - Автоматизация откликов на вакансии hh.ru с плавающим HUD интерфейсом
 // @license      GPL-3.0-only
@@ -60,7 +60,7 @@ function formatTime(dOrTs = new Date()) {
   'use strict';
 
   // --- 1. Constants, Selectors & Defaults ---
-  const VERSION = '0.1.2';
+  const VERSION = '0.1.3';
   const SELECTORS = {
     modal: '[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]',
     modalClose: '[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]',
@@ -577,7 +577,7 @@ function formatTime(dOrTs = new Date()) {
   }
 
   const actionPause = () => wait(randBetween(ACTION_TIMINGS.action[0], ACTION_TIMINGS.action[1]));
-  const vacancyPause = () => wait(Math.max(2000, randBetween(ACTION_TIMINGS.delay[0], ACTION_TIMINGS.delay[1])));
+  const vacancyPauseMs = () => Math.max(2000, randBetween(ACTION_TIMINGS.delay[0], ACTION_TIMINGS.delay[1]));
 
   const wait = (ms) => new Promise((resolve) => {
     const sig = activeAbortController?.signal;
@@ -917,6 +917,16 @@ function formatTime(dOrTs = new Date()) {
     events.emit('status', { status: key, code: currentStatus.code, details: details || {} });
   }
 
+  // The current step of a run, for the HUD status line. `until` is set for timed
+  // pauses so the HUD can count them down: a pause should not look like a hang.
+  let currentActivity = null;
+  function setActivity(code, { vid = null, durationMs = 0 } = {}) {
+    currentActivity = code
+      ? { code, vid: cleanVid(vid) || null, durationMs: durationMs > 0 ? durationMs : 0, until: durationMs > 0 ? Date.now() + durationMs : null }
+      : null;
+    events.emit('activity', currentActivity);
+  }
+
   // --- 9. Concurrency & Instance Locks ---
   const INSTANCE_LOCK_TTL = 30000;
   const WEBLOCK_ACQUIRE_TIMEOUT = 2000;
@@ -1091,6 +1101,7 @@ function formatTime(dOrTs = new Date()) {
     }
     isLoopActive = false;
     setRunning(false);
+    setActivity(null);
     releaseInstanceLock(TAB_ID);
     const statusKey = (code === 'DAILY_LIMIT_REACHED' || code === 'DONE') ? 'done' : (isError ? 'error' : (code === 'STOPPED_BY_USER' ? 'stopped' : code.toLowerCase()));
     setStatus(statusKey, code, details);
@@ -2013,6 +2024,7 @@ function formatTime(dOrTs = new Date()) {
     const loc = globalThis.location;
     if (loc && !Page.isSearchList() && loc.href !== returnUrl) {
       isNavigating = true;
+      setActivity('returning');
       setTimeout(() => { isNavigating = false; }, 7000);
       try { loc.assign(returnUrl); } catch (_) { loc.href = returnUrl; }
     }
@@ -2060,6 +2072,7 @@ function formatTime(dOrTs = new Date()) {
     if (!config.useCover) {
       return 'OK';
     }
+    setActivity('attaching_letter');
     await actionPause();
     if (!isRunCurrent(runId)) return 'STOPPED';
 
@@ -2154,6 +2167,7 @@ function formatTime(dOrTs = new Date()) {
 
   async function handleModalOutcome(vid, runId) {
     const modal = getVisibleModals()[0] || null;
+    setActivity('submitting', { vid });
     const res = await handleScenarioB(modal, runId);
     if (res === 'OK' && vid) {
       commitSuccess(vid, runId);
@@ -2187,6 +2201,7 @@ function formatTime(dOrTs = new Date()) {
       }
       return 'FAIL';
     }
+    setActivity('relocation', { vid });
     const relocBtn = detectRelocationWarning() || query('relocationBtn');
     if (relocBtn) {
       await clickElement(relocBtn);
@@ -2264,7 +2279,7 @@ function formatTime(dOrTs = new Date()) {
     return 'FAIL';
   }
 
-  async function simulateHumanReading(runId = currentRunId) {
+  async function simulateHumanReading(vid, runId = currentRunId) {
     if (!isRunCurrent(runId)) return;
     const doc = globalThis.document;
     const win = globalThis.window;
@@ -2288,6 +2303,7 @@ function formatTime(dOrTs = new Date()) {
     const maxDelay = Math.round(t.delay[1] * 0.85);
     const totalDuration = randBetween(minDelay, maxDelay);
     const stepDelay = Math.round(totalDuration / steps);
+    setActivity('reading', { vid, durationMs: stepDelay * steps });
 
     for (let i = 1; i <= steps; i++) {
       if (!isRunCurrent(runId)) {
@@ -2363,8 +2379,9 @@ function formatTime(dOrTs = new Date()) {
         return 'OK';
       }
 
-      await simulateHumanReading(runId);
+      await simulateHumanReading(vid, runId);
       if (!isRunCurrent(runId)) return 'STOPPED';
+      setActivity('applying', { vid });
       const applyBtn = await waitForCondition(() => query('vacancyApply'), 4000, activeAbortController?.signal);
       if (!applyBtn) {
         reportWarning(`Кнопка «Откликнуться» не найдена на странице вакансии #${vid}`, 'NO_APPLY_BUTTON', describeSelectorFailure('vacancyApply', globalThis.document?.body, { vid, url: pageUrl }));
@@ -2383,6 +2400,7 @@ function formatTime(dOrTs = new Date()) {
       await actionPause();
       if (!isRunCurrent(runId)) return 'STOPPED';
 
+      setActivity('waiting_outcome', { vid });
       const outcome = await waitForVacancyApplyOutcome(applyBtn, vid, runId);
       if (outcome === 'BLOCKED' || outcome === 'RESPONSE_PAGE') return outcome;
 
@@ -2408,6 +2426,7 @@ function formatTime(dOrTs = new Date()) {
     if (!isRunCurrent(runId)) return;
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
     setStatus('running', 'SUBMITTING_RESPONSE_PAGE');
+    setActivity('submitting', { vid });
     handlingResponsePage = true;
     try {
       if (pageLooksLikeTest()) {
@@ -2488,6 +2507,7 @@ function formatTime(dOrTs = new Date()) {
 
   async function navigateToNextSearchPage(nextBtn, runId) {
     if (!nextBtn) return;
+    setActivity('next_page');
     await actionPause();
     if (!isRunCurrent(runId)) return;
     const href = toSearchListUrl(nextBtn.getAttribute?.('href') || nextBtn.href);
@@ -2641,7 +2661,9 @@ function formatTime(dOrTs = new Date()) {
     setLastAttemptID(vid);
     if (globalThis.location) setReturnUrl(globalThis.location.href);
     hhaLog('info', 'navigate_vacancy', { vid, url: safeTargetUrl });
-    await vacancyPause();
+    const pauseMs = vacancyPauseMs();
+    setActivity('pause_before_vacancy', { vid, durationMs: pauseMs });
+    await wait(pauseMs);
     if (stopSignal || runId !== currentRunId) return false;
     try {
       globalThis.location.assign(safeTargetUrl);
@@ -2653,6 +2675,7 @@ function formatTime(dOrTs = new Date()) {
 
   async function handleSearchPage(runId) {
     if (globalThis.location) setReturnUrl(globalThis.location.href);
+    setActivity('scanning');
 
     let allBtns = queryAll('applyBtn');
     if (!allBtns.length) {
@@ -2869,6 +2892,7 @@ function formatTime(dOrTs = new Date()) {
       status: currentStatus.statusKey,
       statusCode: currentStatus.code,
       statusDetails: currentStatus.details,
+      activity: currentActivity,
       sentCount: getSentCount(),
       hasInstanceLock: instanceLeaseVerified,
       hasTrapLock: Boolean(getActiveTrapLock()),
@@ -2892,6 +2916,7 @@ function formatTime(dOrTs = new Date()) {
       clearReturnUrl();
       clearPendingVacancyMeta();
       resetSessionCounters();
+      setActivity(null);
       setStatus('idle', 'IDLE');
       flushLogBuffer();
       flushStorageCaches();
@@ -2949,6 +2974,7 @@ function formatTime(dOrTs = new Date()) {
         }
       }
       setStatus('running', 'AUTO_STARTING');
+      setActivity('resuming', { durationMs: 1500 });
       resumeTimer = setTimeout(() => {
         resumeTimer = null;
         if (isRunning()) startLoop();
@@ -3123,6 +3149,35 @@ function formatTime(dOrTs = new Date()) {
     LETTER_FORM_TIMEOUT: LETTER_HINT,
     SUBMIT_BTN_NOT_FOUND: LETTER_HINT,
     SKIP_RATE_ALERT: 'Проверьте фильтры поиска. Если вакансии пропускаются зря, скопируйте отчёт и приложите его к issue на GitHub.',
+  };
+
+  const ACTIVITY_TEXT = {
+    resuming: 'Продолжаю на новой странице',
+    scanning: 'Ищу следующую вакансию в выдаче',
+    pause_before_vacancy: 'Пауза перед вакансией',
+    reading: 'Читаю вакансию',
+    applying: 'Нажимаю Откликнуться',
+    waiting_outcome: 'Жду ответа hh.ru',
+    relocation: 'Подтверждаю релокацию',
+    submitting: 'Отправляю отклик',
+    attaching_letter: 'Прикрепляю письмо',
+    returning: 'Возвращаюсь в поиск',
+    next_page: 'Перехожу на следующую страницу',
+  };
+
+  // One-word versions for the collapsed pill; the full text is in its tooltip.
+  const ACTIVITY_SHORT = {
+    resuming: 'Загрузка',
+    scanning: 'Поиск',
+    pause_before_vacancy: 'Пауза',
+    reading: 'Читаю',
+    applying: 'Отклик',
+    waiting_outcome: 'Жду hh.ru',
+    relocation: 'Релокация',
+    submitting: 'Отправка',
+    attaching_letter: 'Письмо',
+    returning: 'В поиск',
+    next_page: 'Дальше',
   };
 
   function parseErrorDetails(code, rawMessage) {
@@ -3453,6 +3508,45 @@ function formatTime(dOrTs = new Date()) {
       cursor: grabbing;
     }
 
+    /* Sized to the text; _setPillStepText() animates between measured widths.
+       The countdown keeps the width thanks to tabular digits. */
+    .hha-pill-step {
+      display: none;
+      width: auto;
+      max-width: 96px;
+      transition: width var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard);
+      font-size: var(--md-sys-typescale-label-medium-size);
+      font-weight: 500;
+      line-height: var(--md-comp-control-height);
+      color: var(--md-sys-color-on-surface-variant);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-variant-numeric: tabular-nums;
+      pointer-events: none;
+    }
+
+    .hha-root.is-running .hha-pill-step {
+      display: inline-block;
+    }
+
+    .hha-pill-step-bar {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      width: 100%;
+      height: 2px;
+      transform: scaleX(0);
+      transform-origin: left center;
+      background: var(--md-sys-color-primary);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .hha-root.is-running .hha-pill-step-bar.is-active {
+      opacity: 1;
+    }
+
     .hha-pill-status {
       position: relative;
       display: inline-flex;
@@ -3469,21 +3563,6 @@ function formatTime(dOrTs = new Date()) {
       border: none;
       cursor: pointer;
       user-select: none;
-    }
-
-    .hha-pill-progress-fill {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      left: 0;
-      height: 100%;
-      width: 0%;
-      background: var(--md-sys-color-secondary-container);
-      opacity: 0.75;
-      border-radius: var(--md-sys-shape-corner-full);
-      z-index: 1;
-      pointer-events: none;
-      transition: width var(--md-sys-motion-duration-medium4) var(--md-sys-motion-easing-emphasized-decelerate);
     }
 
     .hha-pill-progress {
@@ -3631,30 +3710,26 @@ function formatTime(dOrTs = new Date()) {
       transform: scale(0.97);
     }
 
-    /* Indicator when Automation is Running */
-    .hha-root.is-running .hha-pill-progress-fill {
-      animation: hhaProgressBreathe 2.4s ease-in-out infinite;
-    }
-
-    .hha-root.is-running .hha-btn-stop {
+    /* Indicator when Automation is Running. The button breathes through the opacity
+       of an inner overlay: the compositor animates it without repainting, while a
+       pulsing box-shadow repainted every frame of the run and was clipped by the pill. */
+    .hha-root.is-running .hha-btn-stop::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: var(--md-sys-color-on-error);
+      opacity: 0;
+      pointer-events: none;
       animation: hhaStopPulse 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-    }
-
-    @keyframes hhaProgressBreathe {
-      0%, 100% {
-        opacity: 0.65;
-      }
-      50% {
-        opacity: 0.95;
-      }
     }
 
     @keyframes hhaStopPulse {
       0%, 100% {
-        box-shadow: 0 0 0 0 color-mix(in srgb, var(--md-sys-color-error) 45%, transparent);
+        opacity: 0;
       }
       50% {
-        box-shadow: 0 0 0 5px color-mix(in srgb, var(--md-sys-color-error) 15%, transparent);
+        opacity: 0.14;
       }
     }
 
@@ -3747,7 +3822,7 @@ function formatTime(dOrTs = new Date()) {
       z-index: 3;
       transform-origin: center bottom;
       transform: scale(0.92) translate3d(0, 12px, 0);
-      will-change: transform, opacity, border-radius, box-shadow;
+      will-change: transform, opacity;
       backface-visibility: hidden;
       transition:
         height 400ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
@@ -3856,7 +3931,7 @@ function formatTime(dOrTs = new Date()) {
       justify-content: flex-end;
       height: 42px;
       min-height: 42px;
-      padding: 0 12px;
+      padding: 6px 12px 0 16px;
       background: var(--md-sys-color-surface-container-low);
       border-bottom: 1px solid var(--md-sys-color-outline-variant);
       border-radius: var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0;
@@ -3879,8 +3954,8 @@ function formatTime(dOrTs = new Date()) {
     .hha-header-drag-handle {
       position: absolute;
       left: 50%;
-      top: 50%;
-      transform: translate(-50%, -50%);
+      top: 6px;
+      transform: translateX(-50%);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -3899,6 +3974,19 @@ function formatTime(dOrTs = new Date()) {
     .hha-island-header:hover .hha-header-grip {
       background: var(--md-sys-color-outline);
       width: 40px;
+    }
+
+    .hha-status-line {
+      flex: 1;
+      min-width: 0;
+      font-size: var(--md-sys-typescale-label-medium-size);
+      font-weight: 500;
+      line-height: 16px;
+      color: var(--md-sys-color-on-surface-variant);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-variant-numeric: tabular-nums;
     }
 
     .hha-btn-collapse {
@@ -5199,17 +5287,27 @@ function formatTime(dOrTs = new Date()) {
 
     /* Accessibility: Motion Reduction (opacity only, <= 100ms, no transforms or growth) */
     @media (prefers-reduced-motion: reduce) {
-      .hha-pill-progress-fill,
-      .hha-btn-stop {
+      /* The pause bar is excluded: it shows how long the pause lasts, it is not decoration. */
+      *:not(.hha-pill-step-bar),
+      *::before,
+      *::after {
+        transition-duration: 100ms !important;
+        transition-delay: 0s !important;
         animation: none !important;
       }
 
       .hha-pill,
       .hha-flyout,
-      .hha-panel {
+      .hha-panel,
+      .hha-panels,
+      .hha-island-header,
+      .hha-island-footer,
+      .hha-footer-status-group,
+      .hha-tabs,
+      .hha-btn-quick,
+      .hha-btn-label.is-swapping,
+      .hha-queue-card.is-removing {
         transform: none !important;
-        transition-duration: 100ms !important;
-        transition-delay: 0s !important;
       }
     }
   `;
@@ -5241,6 +5339,8 @@ function formatTime(dOrTs = new Date()) {
       };
       this._status = { status: 'idle', code: 'IDLE' };
       this._progress = { sent: 0, percentage: 0 };
+      this._activity = null;
+      this._statusLineTimer = null;
 
       this._isPointerDown = false;
       this._dragMoved = false;
@@ -5373,6 +5473,7 @@ function formatTime(dOrTs = new Date()) {
       }
       if (this._coverDebounceTimer) { clearTimeout(this._coverDebounceTimer); this._coverDebounceTimer = null; }
       if (this._coverStatusTimer) { clearTimeout(this._coverStatusTimer); this._coverStatusTimer = null; }
+      if (this._statusLineTimer) { clearTimeout(this._statusLineTimer); this._statusLineTimer = null; }
       if (this._animTimer) { clearTimeout(this._animTimer); this._animTimer = null; }
       if (this._queueConfirmTimer) { clearTimeout(this._queueConfirmTimer); this._queueConfirmTimer = null; }
     }
@@ -5388,6 +5489,7 @@ function formatTime(dOrTs = new Date()) {
         const s = assistant.getState();
         if (s) {
           const sent = s.sentCount !== undefined ? s.sentCount : 0;
+          this._activity = s.activity || null;
           this.updateStatus(s.status, s.statusCode || s.code);
           this.updateProgress(sent);
         }
@@ -5412,6 +5514,11 @@ function formatTime(dOrTs = new Date()) {
           }),
           assistant.on('progress', (payload) => {
             if (payload) this.updateProgress(payload.sent);
+          }),
+          assistant.on('activity', (activity) => {
+            this._activity = activity || null;
+            this._syncStatusLine();
+            this._syncPillBar();
           }),
           assistant.on('error', (payload) => this._showError(payload)),
           assistant.on('manualQueue', (payload) => {
@@ -5721,15 +5828,16 @@ function formatTime(dOrTs = new Date()) {
         <style>${STYLES}</style>
         <div class="hha-root" data-el="root" data-active-tab="${this._activeTab}">
           <div class="hha-pill" data-el="pill">
-            <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и очередь" title="Отклики: отправлено / в очереди">
-              <div class="hha-pill-progress-fill" data-el="pill-progress-fill"></div>
+            <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и очередь" data-summary-title>
               <div class="hha-pill-status">
                 <span class="hha-pill-progress" data-el="pill-progress"><span class="hha-current-count" data-el="pill-current-count">0</span><span class="hha-pill-divider" aria-hidden="true">/</span><span class="hha-queue-count" data-el="pill-queue-count">0</span></span>
               </div>
             </div>
+            <div class="hha-pill-step" data-el="pill-step" aria-hidden="true"></div>
             <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="pill-quick-btn">
               <span class="hha-btn-label" data-el="pill-quick-label">Старт</span>
             </button>
+            <div class="hha-pill-step-bar" data-el="pill-step-bar"></div>
           </div>
 
           <!-- Flyout Overlay (390px wide, max 320px/520px height) -->
@@ -5739,6 +5847,7 @@ function formatTime(dOrTs = new Date()) {
               <div class="hha-header-drag-handle" title="Перетащите для перемещения">
                 <span class="hha-header-grip"></span>
               </div>
+              <div class="hha-status-line" data-el="status-line"></div>
               <button type="button" class="hha-btn-collapse" data-action="collapse-island" aria-label="Свернуть панель" title="Свернуть">✕</button>
             </header>
 
@@ -5807,7 +5916,7 @@ function formatTime(dOrTs = new Date()) {
 
             <!-- Bottom Dock: Counter on the Left + Tabs in Center + Quick Action Button on the Right -->
             <footer class="hha-island-footer">
-              <div class="hha-footer-status-group" data-action="toggle-expand" data-el="footer-status-group" tabindex="0" role="button" aria-expanded="true" aria-label="Свернуть панель" title="Отклики: отправлено / в очереди">
+              <div class="hha-footer-status-group" data-action="toggle-expand" data-el="footer-status-group" tabindex="0" role="button" aria-expanded="true" aria-label="Свернуть панель" data-summary-title>
                 <div class="hha-footer-status">
                   <span class="hha-footer-progress" data-el="footer-progress"><span class="hha-current-count" data-el="footer-current-count">0</span><span class="hha-pill-divider" aria-hidden="true">/</span><span class="hha-queue-count" data-el="footer-queue-count">0</span></span>
                 </div>
@@ -5883,7 +5992,10 @@ function formatTime(dOrTs = new Date()) {
 
     _bindDocumentEvents() {
       this._onDocClick = (e) => {
-        if (this._isExpanded && e) {
+        // The script itself clicks buttons on the page; only a real click outside
+        // the HUD should collapse it, otherwise the panel closes on every step.
+        if (!e?.isTrusted) return;
+        if (this._isExpanded) {
           const path = (typeof e.composedPath === 'function') ? e.composedPath() : [];
           if (!path.includes(this) && (!e.target || (typeof this.contains === 'function' && !this.contains(e.target)))) {
             this.toggleExpand(false);
@@ -6245,7 +6357,7 @@ function formatTime(dOrTs = new Date()) {
         card.style.maxHeight = `${card.offsetHeight}px`;
         void card.offsetHeight;
         card.classList.add('is-removing');
-        setTimeout(executeRemove, 200);
+        setTimeout(executeRemove, 220);
       } else {
         executeRemove();
       }
@@ -6749,9 +6861,12 @@ function formatTime(dOrTs = new Date()) {
       const isRunning = status === 'running';
 
       const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
-      if (root) {
+      if (root && root.classList.contains('is-running') !== isRunning) {
         root.classList.toggle('is-running', isRunning);
+        // The step segment appears only while running, so the pill changes width.
+        this._updatePosition();
       }
+      this._syncPillBar();
 
       const quickBtns = this._shadow.querySelectorAll('.hha-btn-quick');
       if (quickBtns.length > 0) {
@@ -6796,7 +6911,7 @@ function formatTime(dOrTs = new Date()) {
                 labelEl.textContent = targetLabel;
                 labelEl.classList.remove('is-swapping');
               }
-            }, 80);
+            }, 150);
           } else {
             labelEl.textContent = targetLabel;
           }
@@ -6804,6 +6919,7 @@ function formatTime(dOrTs = new Date()) {
         this._hasSyncedStatus = true;
       }
       if (this._lastErrorPayload) this._syncErrorCard();
+      this._syncStatusLine();
     }
 
     _syncProgress() {
@@ -6813,11 +6929,98 @@ function formatTime(dOrTs = new Date()) {
 
       const currentEls = this._shadow.querySelectorAll('.hha-current-count');
       currentEls.forEach(el => { el.textContent = String(cur); });
+      this._syncStatusLine();
+    }
 
-      const pillFills = this._shadow.querySelectorAll('[data-el="pill-progress-fill"]');
-      if (pillFills.length) {
-        const percent = MAX_DAILY_LIMIT > 0 ? Math.min(100, Math.max(0, Math.round((cur / MAX_DAILY_LIMIT) * 100))) : 0;
-        pillFills.forEach(fill => { fill.style.width = `${percent}%`; });
+    _summaryText() {
+      const sent = this._progress ? this._progress.sent : 0;
+      const queued = this._queue ? this._queue.length : 0;
+      return `Отправлено сегодня: ${sent} из ${MAX_DAILY_LIMIT}, в очереди: ${queued}`;
+    }
+
+    _statusLineText() {
+      const { status, code } = this._status;
+      if (status === 'running') {
+        const a = this._activity;
+        if (!a) return 'Работаю';
+        let text = ACTIVITY_TEXT[a.code] || 'Работаю';
+        // Cards without a link get a hash instead of an id; it means nothing to the user.
+        if (a.vid && /^\d+$/.test(a.vid)) text += ` #${a.vid}`;
+        const secondsLeft = a.until ? Math.ceil((a.until - Date.now()) / 1000) : 0;
+        if (secondsLeft > 0) text += `, ${secondsLeft} с`;
+        return text;
+      }
+      if (code === 'DAILY_LIMIT_REACHED') return 'Суточный лимит hh.ru исчерпан';
+      if (code === 'COMPLETED') return `Дневной лимит скрипта: ${MAX_DAILY_LIMIT} откликов`;
+      if (status === 'done') return 'Вакансии в выдаче закончились';
+      if (status === 'error') return 'Остановлено из-за ошибки';
+      return this._summaryText();
+    }
+
+    _pillStepText() {
+      if (this._status.status !== 'running') return '';
+      const a = this._activity;
+      if (!a) return 'Работаю';
+      const secondsLeft = a.until ? Math.ceil((a.until - Date.now()) / 1000) : 0;
+      return (ACTIVITY_SHORT[a.code] || 'Работаю') + (secondsLeft > 0 ? ` ${secondsLeft} с` : '');
+    }
+
+    // A width transition does not run when `auto` changes with the text, so the
+    // new width is measured and the element moves between two pixel values.
+    _setPillStepText(text) {
+      const step = this._shadow?.querySelector('[data-el="pill-step"]');
+      if (!step || step.textContent === text) return;
+      const from = step.offsetWidth;
+      step.textContent = text;
+      step.style.width = 'auto';
+      const to = step.offsetWidth;
+      if (from === to) return;
+      step.style.width = `${from}px`;
+      void step.offsetWidth;
+      step.style.width = `${to}px`;
+    }
+
+    // The bar under the pill fills up over a timed pause. One CSS transition per
+    // pause is enough; the second-by-second countdown lives in the text.
+    _syncPillBar() {
+      const bar = this._shadow?.querySelector('[data-el="pill-step-bar"]');
+      if (!bar) return;
+      const a = this._status.status === 'running' ? this._activity : null;
+      const remaining = a?.until ? a.until - Date.now() : 0;
+      bar.style.transition = 'none';
+      if (!a?.durationMs || remaining <= 0) {
+        bar.classList.remove('is-active');
+        bar.style.transform = 'scaleX(0)';
+        return;
+      }
+      bar.style.transform = `scaleX(${Math.min(1, Math.max(0, 1 - remaining / a.durationMs))})`;
+      bar.classList.add('is-active');
+      void bar.offsetWidth;
+      bar.style.transition = `transform ${Math.round(remaining)}ms linear`;
+      bar.style.transform = 'scaleX(1)';
+    }
+
+    _syncStatusLine() {
+      if (this._statusLineTimer) {
+        clearTimeout(this._statusLineTimer);
+        this._statusLineTimer = null;
+      }
+      if (!this._shadow) return;
+      const text = this._statusLineText();
+      const summary = this._summaryText();
+      const line = this._shadow.querySelector('[data-el="status-line"]');
+      if (line) {
+        line.textContent = text;
+        line.title = text;
+      }
+      const hover = text === summary ? summary : `${summary}\n${text}`;
+      this._shadow.querySelectorAll('[data-summary-title]').forEach(el => { el.title = hover; });
+
+      this._setPillStepText(this._pillStepText());
+
+      const until = this._status.status === 'running' ? this._activity?.until : null;
+      if (until && until > Date.now()) {
+        this._statusLineTimer = setTimeout(() => this._syncStatusLine(), 1000);
       }
     }
 
@@ -6910,6 +7113,7 @@ function formatTime(dOrTs = new Date()) {
       if (this._isExpanded && this._activeTab === 'queue' && !this._isAnimating) {
         this._updateOverlayScrollbar();
       }
+      this._syncStatusLine();
     }
 
     _syncConfig() {
