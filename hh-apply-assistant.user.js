@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.1.0
+// @version      0.1.1
 // @author       Timur Geruzov
 // @description  HH Apply Assistant - Автоматизация откликов на вакансии hh.ru с плавающим HUD интерфейсом
 // @license      GPL-3.0-only
@@ -60,7 +60,7 @@ function formatTime(dOrTs = new Date()) {
   'use strict';
 
   // --- 1. Constants, Selectors & Defaults ---
-  const VERSION = '0.1.0';
+  const VERSION = '0.1.1';
   const SELECTORS = {
     modal: '[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]',
     modalClose: '[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]',
@@ -125,7 +125,6 @@ function formatTime(dOrTs = new Date()) {
   const SKIP_ALERT_RATIO = 0.7; // 70% threshold for skip rate alert
   const MAX_LOG_ENTRIES = 600;
   const REJECT_REGEX = /(?:не\s*соответствует(?:\s*требованиям)?|не\s*подходит|(?:^|[\s.,!?:;«»'"()—–-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;«»'"()—–-]|$)|reject|warning)/i;
-  const pageLoadedAt = Date.now();
 
   const ACTION_TIMINGS = { delay: [3500, 6500], action: [250, 500] };
 
@@ -153,16 +152,9 @@ function formatTime(dOrTs = new Date()) {
 
     emit(event, ...args) {
       const handlers = this._e[event];
-      if (handlers) {
-        for (const h of handlers.slice()) {
-          try { h(...args); } catch (err) { console.error(`[HH] Listener error for "${event}":`, err); }
-        }
-      }
-      const win = globalThis.window;
-      if (win && typeof win.dispatchEvent === 'function') {
-        try {
-          win.dispatchEvent(new CustomEvent('hha:' + event, { detail: args.length === 1 ? args[0] : (args.length > 1 ? args : null) }));
-        } catch (_) {}
+      if (!handlers) return;
+      for (const h of handlers.slice()) {
+        try { h(...args); } catch (err) { console.error(`[HH] Listener error for "${event}":`, err); }
       }
     }
     removeAllListeners(event) {
@@ -250,6 +242,11 @@ function formatTime(dOrTs = new Date()) {
     } catch (_) {
       return '';
     }
+  }
+
+  function toSearchListUrl(rawUrl) {
+    const safe = toSafeHhUrl(rawUrl);
+    return safe && new URL(safe).pathname.startsWith('/search/vacancy') ? safe : '';
   }
 
   // --- 5. Error Reporting, Logging & Telemetry ---
@@ -913,6 +910,7 @@ function formatTime(dOrTs = new Date()) {
 
   // --- 9. Concurrency & Instance Locks ---
   const INSTANCE_LOCK_TTL = 30000;
+  const WEBLOCK_ACQUIRE_TIMEOUT = 2000;
   let currentLeaseId = null;
   let instanceLeaseVerified = false;
   let hasActiveWebLock = false;
@@ -981,7 +979,7 @@ function formatTime(dOrTs = new Date()) {
 
         let timeoutId;
         const timeoutPromise = new Promise(resolve => {
-          timeoutId = setTimeout(() => resolve('TIMEOUT'), 1000);
+          timeoutId = setTimeout(() => resolve('TIMEOUT'), WEBLOCK_ACQUIRE_TIMEOUT);
         });
         const acquired = await Promise.race([lockPromise, timeoutPromise]);
         clearTimeout(timeoutId);
@@ -1197,15 +1195,16 @@ function formatTime(dOrTs = new Date()) {
   const applyBtnHeuristic = (r) => findPatternElement(r, 'button, a, [role="button"]', /откликнуться|отклик без резюме|перейти к отклику|apply|respond/i, 60);
   const coverBtnHeuristic = (r) => findPatternElement(r, 'button, a, [role="button"], span', /сопроводительное|письмо|cover letter|add cover/i, 60);
 
+  // vacancyApply has no text fallback on purpose: the first visible «Откликнуться»
+  // on a vacancy page may belong to the similar vacancies block.
   const HEURISTIC_RESOLVERS = {
     applyBtn: applyBtnHeuristic,
-    vacancyApply: applyBtnHeuristic,
     attachCoverBtn: coverBtnHeuristic,
     attachCoverInModal: coverBtnHeuristic,
     letterSubmit: (r) => {
       const el = findPatternElement(r, 'button, [role="button"], input[type="submit"]', /^(отправить|сохранить|отправить отклик|откликнуться|продолжить|выбрать|send|submit|apply)$/i, 50)
         || findPatternElement(r, 'button, [role="button"], input[type="submit"]', /отправить|сохранить|откликнуться|send|submit|apply/i, 50);
-      if (el && !el.closest?.('[data-qa*="vacancy-response-link"]')) return el;
+      if (el && !el.closest?.('[data-qa*="vacancy-response-link"], [data-qa*="vacancy-serp"]')) return el;
       return null;
     },
     relocationBtn: (r) => detectRelocationWarning(r),
@@ -1214,7 +1213,12 @@ function formatTime(dOrTs = new Date()) {
       if (!scope) return null;
       return findPatternElement(scope, 'div, p, span, section', REJECT_REGEX, 250);
     },
-    pagerNext: (r) => findPatternElement(r, 'a, button', /дальше|впер[её]д|следующая|next/i, 60)
+    // The last results page has no pager-next, so a loose match here would pick
+    // any link like «Читать дальше» or a vacancy titled «Next.js».
+    pagerNext: (r) => {
+      const link = findPatternElement(r, 'a[href]', /^(?:дальше|впер[её]д|следующая|next)$/i, 20);
+      return link && toSearchListUrl(link.href) ? link : null;
+    }
   };
 
   async function selectResumeIfRequired(scope, runId) {
@@ -1284,6 +1288,18 @@ function formatTime(dOrTs = new Date()) {
     return true;
   }
 
+  // Fallback for a submit button without data-qa. It is searched only inside the
+  // response form: page-wide, button[type="submit"] can be the header search form.
+  function findResponseFormSubmit(scope = null) {
+    const doc = globalThis.document;
+    const isPageScope = !scope || scope === doc || scope === doc?.body;
+    const field = query('letterTextarea', scope) || q('input[type="radio"][name*="resume" i]', scope);
+    const form = field?.closest?.('form')
+      || q('[data-qa="vacancy-response-popup-form"]', scope)
+      || (isPageScope ? null : scope);
+    return form ? q('button[type="submit"]', form) : null;
+  }
+
   function notifySelectorFailure(key, scope = null, extra = {}) {
     const meta = SELECTOR_METADATA[key] || {};
     const selectorName = meta.name || key;
@@ -1338,8 +1354,8 @@ function formatTime(dOrTs = new Date()) {
     const str = String(href);
     const redirectMatch = str.match(/[?&](?:vacancyId|utm_redirect_vacancy_id)=(\d+)|(?:vacancyId|utm_redirect_vacancy_id)%3D(\d+)/i);
     if (redirectMatch) return String(redirectMatch[1] || redirectMatch[2]);
-    const pathMatch = str.match(/\/vacancy\/(\d+)|\/article\/(\d+)/i);
-    return pathMatch ? String(pathMatch[1] || pathMatch[2]) : null;
+    const pathMatch = str.match(/\/vacancy\/(\d+)/i);
+    return pathMatch ? pathMatch[1] : null;
   }
 
   function hashString(str) {
@@ -1364,8 +1380,7 @@ function formatTime(dOrTs = new Date()) {
   function getVacancyID(node) {
     const card = getVacancyCard(node);
     const link = card ? query('vacancyLink', card) : null;
-    const href = link?.href || node?.href || node?.getAttribute?.('href') || '';
-    const id = getVacancyIDFromHref(href);
+    const id = getVacancyIDFromHref(link?.href) || getVacancyIDFromHref(node?.href || node?.getAttribute?.('href'));
     if (id) return 'v_' + id;
     const cardId = card?.dataset?.id || (card?.innerText ? card.innerText.slice(0, 80).trim() : '') || String(node?.className || 'unknown');
     return 'v_' + hashString(cardId);
@@ -1400,9 +1415,25 @@ function formatTime(dOrTs = new Date()) {
     }
   }
 
+  function isExternalLink(el) {
+    if (el?.tagName !== 'A' || !el.href) return false;
+    try {
+      const { protocol } = new URL(el.href);
+      return (protocol === 'http:' || protocol === 'https:') && !toSafeHhUrl(el.href);
+    } catch (_) {
+      return false;
+    }
+  }
+
   // --- Direct element click ---
   function clickElement(el) {
     if (!el || stopSignal) return false;
+    // The script does not run outside hh.ru, so following such a link would leave
+    // the run stuck on a foreign page.
+    if (isExternalLink(el)) {
+      hhaLog('warn', 'click_external_blocked', { url: el.href });
+      return false;
+    }
     if (el.tagName === 'A' && el.target && el.target.toLowerCase() === '_blank') {
       try { el.target = '_self'; } catch (_) {}
     }
@@ -1470,6 +1501,9 @@ function formatTime(dOrTs = new Date()) {
         if (observer) observer.disconnect();
         if (signal) signal.removeEventListener('abort', onAbort);
 
+        // A finished wait is a step forward, as in wait(): the page watchdog
+        // measures time between steps, not the length of the whole flow.
+        markProgress();
         resolve(res);
       };
       const onAbort = () => cleanup(false);
@@ -1551,9 +1585,10 @@ function formatTime(dOrTs = new Date()) {
       const redirectVid = sp.get('utm_redirect_vacancy_id');
       if (redirectVid) return 'v_' + cleanVid(redirectVid);
     } catch (_) {}
+    const lastAttempt = getLastAttemptID();
+    if (lastAttempt) return lastAttempt;
     const hrefId = getVacancyIDFromHref(globalThis.location.href);
-    if (hrefId) return 'v_' + cleanVid(hrefId);
-    return getLastAttemptID();
+    return hrefId ? 'v_' + hrefId : null;
   }
 
   function isGenericVacancyTitle(text) {
@@ -1729,7 +1764,8 @@ function formatTime(dOrTs = new Date()) {
     const loc = globalThis.location;
     if (!doc) return false;
     if (loc && /\/error|\/blocked|\/forbidden|\/denied|\/rate-limit/i.test(loc.pathname)) return true;
-    if (doc.title && /(?:429|503|error\s+(?:429|503)|доступ\s+ограничен|too\s+many\s+requests|service\s+unavailable)/i.test(doc.title)) return true;
+    // The title holds the vacancy name, so a bare 429/503 would also match «смена 4290 ₽».
+    if (doc.title && /(?:^\s*(?:429|503)\b|(?:error|ошибка)\s*(?:429|503)\b|доступ\s+ограничен|too\s+many\s+requests|service\s+(?:temporarily\s+)?unavailable)/i.test(doc.title)) return true;
     if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]', doc)) {
       return true;
     }
@@ -1990,8 +2026,7 @@ function formatTime(dOrTs = new Date()) {
       await actionPause();
       if (!isRunCurrent(runId)) return false;
     }
-    const submit = query('letterSubmit', scope)
-      || q('button[type="submit"]', scope);
+    const submit = query('letterSubmit', scope) || findResponseFormSubmit(scope);
     if (!submit) {
       reportError('Кнопка отправки формы сопроводительного письма не найдена', 'SUBMIT_BTN_NOT_FOUND');
       return false;
@@ -2336,6 +2371,11 @@ function formatTime(dOrTs = new Date()) {
         returnToList(vid, { markProcessed: true, runId });
         return 'FAIL';
       }
+      if (isExternalLink(applyBtn)) {
+        if (vid) saveCurrentForManual(vid, 'queued_external_site', runId);
+        returnToList(vid, { markProcessed: true, runId });
+        return 'OK';
+      }
       await actionPause();
       if (!isRunCurrent(runId)) return 'STOPPED';
       await clickElement(applyBtn);
@@ -2388,7 +2428,7 @@ function formatTime(dOrTs = new Date()) {
       }
 
       const submitBtn = await waitForCondition(
-        () => query('letterSubmit') || q('button[type="submit"]'),
+        () => query('letterSubmit') || findResponseFormSubmit(),
         4000,
         activeAbortController?.signal
       );
@@ -2449,7 +2489,7 @@ function formatTime(dOrTs = new Date()) {
     if (!nextBtn) return;
     await actionPause();
     if (!isRunCurrent(runId)) return;
-    const href = nextBtn.getAttribute?.('href') || nextBtn.href;
+    const href = toSearchListUrl(nextBtn.getAttribute?.('href') || nextBtn.href);
     if (href && globalThis.location) {
       setReturnUrl(href);
       try { globalThis.location.assign(href); } catch (_) { globalThis.location.href = href; }
@@ -2569,6 +2609,7 @@ function formatTime(dOrTs = new Date()) {
     }, 1500);
   }
 
+  // Returns true once navigation to the vacancy has started.
   async function navigateToVacancyFromSearch(btn, runId) {
     const card = getVacancyCard(btn);
     const link = card ? query('vacancyLink', card) : null;
@@ -2585,7 +2626,7 @@ function formatTime(dOrTs = new Date()) {
       reportError(`Не удалось определить URL для вакансии #${vid}`, 'VACANCY_URL_NOT_FOUND', { vid });
       recordOutcome(vid, 'error', 'error_selector_missing');
       handleVacancyFailure(vid, 'no_url', runId, { title, employer, salary });
-      return;
+      return false;
     }
 
     if (!safeTargetUrl) {
@@ -2593,19 +2634,20 @@ function formatTime(dOrTs = new Date()) {
       saveCurrentForManual(vid, 'queued_external_site', runId, title, employer, salary, rawTargetUrl);
       addToBlacklist(vid, 'external_site');
       markVacancyProcessed(vid, runId);
-      return;
+      return false;
     }
 
     setLastAttemptID(vid);
     if (globalThis.location) setReturnUrl(globalThis.location.href);
     hhaLog('info', 'navigate_vacancy', { vid, url: safeTargetUrl });
     await vacancyPause();
-    if (stopSignal || runId !== currentRunId) return;
+    if (stopSignal || runId !== currentRunId) return false;
     try {
       globalThis.location.assign(safeTargetUrl);
     } catch (_) {
       globalThis.location.href = safeTargetUrl;
     }
+    return true;
   }
 
   async function handleSearchPage(runId) {
@@ -2637,26 +2679,27 @@ function formatTime(dOrTs = new Date()) {
     const targets = [];
     for (const b of allBtns) {
       const vid = getVacancyID(b);
+      if (processed.has(vid) || isBlacklisted(vid)) continue;
       if (config.skipHidden && !isVisible(b)) {
         markVacancyProcessed(vid, runId);
         recordOutcome(vid, 'skipped', 'skip_hidden_employer');
         continue;
       }
-      if (processed.has(vid) || isBlacklisted(vid)) continue;
       targets.push(b);
     }
 
-    if (!targets.length) {
-      const nextBtn = query('pagerNext');
-      if (nextBtn) {
-        await navigateToNextSearchPage(nextBtn, runId);
-        return;
-      }
-      const finalSent = getSentCount();
-      return finalizeRun(runId, 'done', `Все вакансии в выдаче обработаны. Всего отправлено: ${finalSent}`);
+    for (const target of targets) {
+      if (await navigateToVacancyFromSearch(target, runId)) return;
+      if (stopSignal || runId !== currentRunId) return;
     }
 
-    await navigateToVacancyFromSearch(targets[0], runId);
+    const nextBtn = query('pagerNext');
+    if (nextBtn) {
+      await navigateToNextSearchPage(nextBtn, runId);
+      return;
+    }
+    const finalSent = getSentCount();
+    return finalizeRun(runId, 'done', `Все вакансии в выдаче обработаны. Всего отправлено: ${finalSent}`);
   }
 
   async function processCurrentPage(runId) {
@@ -2698,6 +2741,8 @@ function formatTime(dOrTs = new Date()) {
   // --- 15. Watchdog & Recovery ---
   function checkRateLimitAnomaly(doc, bodyText) {
     if (detectInaccessibleVacancy(doc, bodyText)) {
+      // Already leaving the page: without this the skip is recorded on every tick.
+      if (isNavigating) return true;
       const vid = resolveCurrentVid();
       if (vid) skipVacancy(vid, 'skip_inaccessible', currentRunId);
       returnToList(vid, { markProcessed: true, runId: currentRunId });
@@ -2738,9 +2783,10 @@ function formatTime(dOrTs = new Date()) {
 
     if (handlingResponsePage || (isLoopActive && Page.isResponseForm())) return false;
 
-    if (!Page.isSearch() && !isNavigating && (now - pageLoadedAt) > PAGE_WATCHDOG_TIMEOUT) {
+    if (!Page.isSearch() && !isNavigating && (now - lastProgressTs) > PAGE_WATCHDOG_TIMEOUT) {
       const vid = resolveCurrentVid();
       reportError(`Страница не ответила за ${PAGE_WATCHDOG_TIMEOUT / 1000} секунд. Принудительный возврат к поиску.`, 'PAGE_HANG_TIMEOUT', { vid, url: globalThis.location?.href });
+      markProgress();
       handleVacancyFailure(vid, 'error_timeout', currentRunId);
       return true;
     }
@@ -3119,12 +3165,13 @@ function formatTime(dOrTs = new Date()) {
     return { text: 'Ручной отклик', type: 'info' };
   }
 
+  // The saved url goes first: for a promo page it is the only working link, while
+  // the id there can be an article number or a hash of the card text.
   function toVacancyUrl(vid, url) {
-    const clean = cleanVid(vid);
-    const origin = (typeof globalThis !== 'undefined' && globalThis.location?.origin) || 'https://hh.ru';
-    if (clean) return `${origin}/vacancy/${clean}`;
     if (url && !url.includes('/applicant/vacancy_response')) return url;
-    return url || '';
+    const clean = cleanVid(vid);
+    const origin = globalThis.location?.origin || 'https://hh.ru';
+    return /^\d+$/.test(clean) ? `${origin}/vacancy/${clean}` : (url || '');
   }
 
   // --- 2. SVG Icons ---
