@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.1.1
+// @version      0.1.2
 // @author       Timur Geruzov
 // @description  HH Apply Assistant - Автоматизация откликов на вакансии hh.ru с плавающим HUD интерфейсом
 // @license      GPL-3.0-only
@@ -60,7 +60,7 @@ function formatTime(dOrTs = new Date()) {
   'use strict';
 
   // --- 1. Constants, Selectors & Defaults ---
-  const VERSION = '0.1.1';
+  const VERSION = '0.1.2';
   const SELECTORS = {
     modal: '[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]',
     modalClose: '[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]',
@@ -405,6 +405,16 @@ function formatTime(dOrTs = new Date()) {
       message,
       fatal: false,
       details: details || {}
+    });
+  }
+
+  // For problems the run gets past by itself (a retry, a vacancy sent to the queue).
+  // They go to the log only, so the HUD does not show a routine retry as a failure.
+  function reportWarning(msg, code, details = null) {
+    hhaLog('warn', 'warning', {
+      code,
+      message: String(msg || ''),
+      ...(details && typeof details === 'object' ? details : {})
     });
   }
 
@@ -838,11 +848,10 @@ function formatTime(dOrTs = new Date()) {
         meta?.salary || '',
         meta?.url || ''
       );
-      reportError(`Вакансия #${clean} превысила лимит попыток (${attempts}/${MAX_VACANCY_ATTEMPTS}). Отправлена в ручную очередь и заблокирована на 24ч.`, 'MAX_ATTEMPTS_EXCEEDED', { vid: clean, attempts, reason });
+      reportWarning(`Вакансия #${clean} превысила лимит попыток (${attempts}/${MAX_VACANCY_ATTEMPTS}). Отправлена в ручную очередь и заблокирована на 24ч.`, 'MAX_ATTEMPTS_EXCEEDED', { vid: clean, attempts, reason });
       return returnToList(vid, { markProcessed: true, runId });
     } else {
-      hhaLog('warn', 'attempt_failed', { vid: clean, attempts, maxAttempts: MAX_VACANCY_ATTEMPTS, reason: reason || 'apply_failed' });
-      reportError(`Сбой при отклике на вакансию #${clean} (попытка ${attempts}/${MAX_VACANCY_ATTEMPTS}). Возврат к списку.`, 'VACANCY_ATTEMPT_FAILED', { vid: clean, attempts, reason });
+      reportWarning(`Сбой при отклике на вакансию #${clean} (попытка ${attempts}/${MAX_VACANCY_ATTEMPTS}). Возврат к списку.`, 'VACANCY_ATTEMPT_FAILED', { vid: clean, attempts, reason });
       return returnToList(vid, { markProcessed: false, runId });
     }
   }
@@ -1103,12 +1112,12 @@ function formatTime(dOrTs = new Date()) {
   const haltForCaptcha = () => {
     const vid = resolveCurrentVid();
     recordOutcome(vid, 'error', 'error_captcha');
-    haltEngine('CAPTCHA_DETECTED', 'Captcha detected on page. Automation halted.');
+    haltEngine('CAPTCHA_DETECTED', 'hh.ru показал капчу, автоматизация остановлена.');
   };
   const haltForRateLimit = () => {
     const vid = resolveCurrentVid();
     recordOutcome(vid, 'error', 'error_rate_limit');
-    haltEngine('RATE_LIMITED', 'Rate limit detected. Automation halted.');
+    haltEngine('RATE_LIMITED', 'hh.ru ограничил частоту запросов, автоматизация остановлена.');
   };
   const haltForDailyLimit = (msg = `Достигнут суточный лимит HeadHunter: не более ${MAX_DAILY_LIMIT} откликов за 24 часа. Автоматизация остановлена.`) => {
     hhaLog('warn', 'hh_limit_reached', { source: 'hh_ui' });
@@ -1116,7 +1125,7 @@ function formatTime(dOrTs = new Date()) {
   };
   const haltForLostInstanceLock = () => {
     const isBlocked = storage.isLocalBlocked();
-    haltEngine(isBlocked ? 'STORAGE_BLOCKED' : 'TAB_LOCK_LOST', isBlocked ? 'Storage access blocked. Lost tab lock.' : 'Active tab lock lost.');
+    haltEngine(isBlocked ? 'STORAGE_BLOCKED' : 'TAB_LOCK_LOST', isBlocked ? 'Браузер запретил сайту хранить данные, скрипт потерял блокировку вкладки.' : 'Блокировку вкладки перехватила другая вкладка.');
   };
 
   // --- 11. DOM Queries & Form Automation ---
@@ -1300,10 +1309,9 @@ function formatTime(dOrTs = new Date()) {
     return form ? q('button[type="submit"]', form) : null;
   }
 
-  function notifySelectorFailure(key, scope = null, extra = {}) {
-    const meta = SELECTOR_METADATA[key] || {};
-    const selectorName = meta.name || key;
-    const expectedCss = SELECTORS[key] || '';
+  // Details for an error report about a missing element: what was expected and
+  // the start of the HTML where it was looked for.
+  function describeSelectorFailure(key, scope = null, extra = {}) {
     let snippet = '';
     try {
       if (scope) {
@@ -1315,21 +1323,14 @@ function formatTime(dOrTs = new Date()) {
       }
     } catch (_) {}
 
-    const url = globalThis.location?.href || '';
-    const msg = `Не найден селектор: ${key} (${selectorName})`;
-    const sub = `Ожидался CSS: ${expectedCss}`;
-
-    reportError(msg, 'DOM_SELECTOR_NOT_FOUND', {
-      key,
+    return {
       selector: key,
-      selectorName,
-      expectedCss,
+      selectorName: SELECTOR_METADATA[key]?.name || key,
+      expectedCss: SELECTORS[key] || '',
       snippet,
-      contextSnippet: snippet,
-      url,
-      sub,
+      url: globalThis.location?.href || '',
       ...extra
-    });
+    };
   }
 
   function getVacancyCard(node) {
@@ -2028,14 +2029,14 @@ function formatTime(dOrTs = new Date()) {
     }
     const submit = query('letterSubmit', scope) || findResponseFormSubmit(scope);
     if (!submit) {
-      reportError('Кнопка отправки формы сопроводительного письма не найдена', 'SUBMIT_BTN_NOT_FOUND');
+      reportWarning('Кнопка отправки формы не найдена', 'SUBMIT_BTN_NOT_FOUND', describeSelectorFailure('letterSubmit', scope || globalThis.document?.body));
       return false;
     }
 
     if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
       await waitForCondition(() => !submit.disabled && submit.getAttribute?.('aria-disabled') !== 'true', 1500, activeAbortController?.signal);
       if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
-        reportError('Кнопка отправки письма остаётся неактивной (disabled) после ожидания, пробуем клик...', 'SUBMIT_BTN_STILL_DISABLED');
+        reportWarning('Кнопка отправки остаётся неактивной после ожидания, нажимаем всё равно', 'SUBMIT_BTN_STILL_DISABLED');
       }
     }
 
@@ -2066,8 +2067,7 @@ function formatTime(dOrTs = new Date()) {
     if (attachBtn) {
       await clickElement(attachBtn);
     } else {
-      reportError('Кнопка «Приложить сопроводительное письмо» не найдена', 'ATTACH_BTN_NOT_FOUND');
-      notifySelectorFailure('attachCoverBtn', globalThis.document?.body);
+      reportError('Отклик отправлен без письма: не нашлась кнопка, которая прикрепляет письмо.', 'ATTACH_BTN_NOT_FOUND', describeSelectorFailure('attachCoverBtn', globalThis.document?.body));
       return isRunCurrent(runId) ? 'OK' : 'STOPPED';
     }
 
@@ -2075,14 +2075,17 @@ function formatTime(dOrTs = new Date()) {
     if (!isRunCurrent(runId)) return 'STOPPED';
     const ta = await waitForElement('letterTextarea', 5000, activeAbortController?.signal);
     if (!ta) {
-      reportError('Поле ввода письма не появилось за 5 с', 'LETTER_FORM_TIMEOUT');
-      notifySelectorFailure('letterTextarea', globalThis.document?.body);
+      reportError('Отклик отправлен без письма: поле для письма не появилось за 5 секунд.', 'LETTER_FORM_TIMEOUT', describeSelectorFailure('letterTextarea', globalThis.document?.body));
       return isRunCurrent(runId) ? 'OK' : 'STOPPED';
     }
 
     const modalScope = getVisibleModals()[0] || q(SELECTORS.modal) || globalThis.document?.body;
-    await submitCoverLetterForm(modalScope, runId);
+    const letterSent = await submitCoverLetterForm(modalScope, runId);
     if (!isRunCurrent(runId)) return 'STOPPED';
+    if (!letterSent) {
+      reportError('Отклик отправлен без письма: не нашлась кнопка отправки письма.', 'SUBMIT_BTN_NOT_FOUND', describeSelectorFailure('letterSubmit', modalScope));
+      return 'OK';
+    }
     await waitForCondition(() => {
       const sheet = getVisibleModals()[0];
       const isSheetClosed = !sheet || !isVisible(sheet);
@@ -2131,7 +2134,6 @@ function formatTime(dOrTs = new Date()) {
     const submitted = await submitCoverLetterForm(modal, runId);
     if (!submitted) {
       if (!isRunCurrent(runId)) return 'STOPPED';
-      notifySelectorFailure('letterSubmit', modal);
       return 'FAIL';
     }
 
@@ -2178,7 +2180,7 @@ function formatTime(dOrTs = new Date()) {
 
   async function handleRelocationOutcome(vid, runId, relocAttempts) {
     if (relocAttempts >= 2) {
-      reportError('Превышен лимит попыток подтверждения релокации (loop guard)', 'RELOCATION_LOOP_GUARD', { vid, relocAttempts });
+      reportWarning('Предупреждение о релокации повторяется, вакансия отправлена в очередь', 'RELOCATION_LOOP_GUARD', { vid, relocAttempts });
       if (vid) {
         saveCurrentForManual(vid, 'relocation_loop', runId);
         markVacancyProcessed(vid, runId);
@@ -2200,14 +2202,14 @@ function formatTime(dOrTs = new Date()) {
         if (vid && !Page.isResponseForm() && !pageLooksLikeTest()) commitSuccess(vid, runId);
         return 'OK';
       }
-      reportError('Таймаут подтверждения релокации', 'RELOCATION_TIMEOUT', { vid });
+      reportWarning('Таймаут подтверждения релокации', 'RELOCATION_TIMEOUT', { vid });
       if (vid) {
         saveCurrentForManual(vid, 'relocation_timeout', runId);
         markVacancyProcessed(vid, runId);
       }
       return 'FAIL';
     }
-    reportError('Не удалось подтвердить предупреждение о релокации', 'RELOCATION_BTN_NOT_FOUND', { vid });
+    reportWarning('Не удалось подтвердить предупреждение о релокации', 'RELOCATION_BTN_NOT_FOUND', { vid });
     if (vid) {
       saveCurrentForManual(vid, 'relocation_unconfirmed', runId);
       markVacancyProcessed(vid, runId);
@@ -2341,7 +2343,7 @@ function formatTime(dOrTs = new Date()) {
     }
 
     if (!outcome) {
-      reportError(`Таймаут ожидания исхода отклика на вакансию #${vid}!`, 'OUTCOME_TIMEOUT', { vid });
+      reportWarning(`Таймаут ожидания исхода отклика на вакансию #${vid}`, 'OUTCOME_TIMEOUT', { vid });
     }
     return outcome;
   }
@@ -2365,8 +2367,7 @@ function formatTime(dOrTs = new Date()) {
       if (!isRunCurrent(runId)) return 'STOPPED';
       const applyBtn = await waitForCondition(() => query('vacancyApply'), 4000, activeAbortController?.signal);
       if (!applyBtn) {
-        reportError(`Кнопка «Откликнуться» не найдена на странице вакансии #${vid}`, 'NO_APPLY_BUTTON', { vid, url: pageUrl });
-        notifySelectorFailure('vacancyApply', globalThis.document?.body);
+        reportWarning(`Кнопка «Откликнуться» не найдена на странице вакансии #${vid}`, 'NO_APPLY_BUTTON', describeSelectorFailure('vacancyApply', globalThis.document?.body, { vid, url: pageUrl }));
         if (vid) saveCurrentForManual(vid, 'no-apply-button', runId);
         returnToList(vid, { markProcessed: true, runId });
         return 'FAIL';
@@ -2434,7 +2435,7 @@ function formatTime(dOrTs = new Date()) {
       );
       if (!isRunCurrent(runId)) return;
       if (!submitBtn) {
-        notifySelectorFailure('letterSubmit', globalThis.document?.body);
+        reportWarning('Кнопка отправки формы отклика не найдена', 'SUBMIT_BTN_NOT_FOUND', describeSelectorFailure('letterSubmit', globalThis.document?.body, { vid }));
         saveCurrentForManual(vid, 'no-submit-button', runId);
         return returnToList(vid, { markProcessed: true, runId });
       }
@@ -2445,7 +2446,7 @@ function formatTime(dOrTs = new Date()) {
           haltForDailyLimit();
           return;
         }
-        reportError('Не удалось нажать кнопку отправки формы отклика', 'SUBMIT_FAILED', { vid });
+        reportWarning('Не удалось нажать кнопку отправки формы отклика', 'SUBMIT_FAILED', { vid });
         return handleVacancyFailure(vid, 'submit-form-failed', runId);
       }
       const confirmed = await waitForCondition(
@@ -2461,7 +2462,7 @@ function formatTime(dOrTs = new Date()) {
         return;
       }
       if (!confirmed) {
-        reportError(`Не удалось подтвердить отправку отклика #${vid}`, 'SUBMIT_UNCONFIRMED', { vid });
+        reportWarning(`Не удалось подтвердить отправку отклика #${vid}`, 'SUBMIT_UNCONFIRMED', { vid });
         return handleVacancyFailure(vid, 'unconfirmed', runId);
       }
       commitSuccess(vid, runId);
@@ -2623,14 +2624,14 @@ function formatTime(dOrTs = new Date()) {
     const safeTargetUrl = toSafeHhUrl(rawTargetUrl);
 
     if (!rawTargetUrl) {
-      reportError(`Не удалось определить URL для вакансии #${vid}`, 'VACANCY_URL_NOT_FOUND', { vid });
+      reportWarning(`Не удалось определить URL для вакансии #${vid}`, 'VACANCY_URL_NOT_FOUND', { vid });
       recordOutcome(vid, 'error', 'error_selector_missing');
       handleVacancyFailure(vid, 'no_url', runId, { title, employer, salary });
       return false;
     }
 
     if (!safeTargetUrl) {
-      reportError(`Вакансия #${vid} ведёт на внешний сайт (${rawTargetUrl}). Сохранена в ручную очередь.`, 'EXTERNAL_VACANCY_URL', { vid, targetUrl: rawTargetUrl });
+      reportWarning(`Вакансия #${vid} ведёт на внешний сайт (${rawTargetUrl}). Сохранена в ручную очередь.`, 'EXTERNAL_VACANCY_URL', { vid, targetUrl: rawTargetUrl });
       saveCurrentForManual(vid, 'queued_external_site', runId, title, employer, salary, rawTargetUrl);
       addToBlacklist(vid, 'external_site');
       markVacancyProcessed(vid, runId);
@@ -2669,9 +2670,9 @@ function formatTime(dOrTs = new Date()) {
           await navigateToNextSearchPage(nextBtn, runId);
           return;
         }
-        notifySelectorFailure('applyBtn', cards[0], { cardsCount: cards.length });
         recordOutcome(null, 'error', 'error_selector_missing');
-        return finalizeRun(runId, 'error', 'Селектор applyBtn не найден на странице поиска');
+        if (runId !== currentRunId) return;
+        return haltEngine('DOM_SELECTOR_NOT_FOUND', 'В выдаче не нашлась кнопка отклика, автоматизация остановлена.', describeSelectorFailure('applyBtn', cards[0], { cardsCount: cards.length }));
       }
     }
 
@@ -2735,7 +2736,7 @@ function formatTime(dOrTs = new Date()) {
 
       await processCurrentPage(runId);
     } catch (e) {
-      finalizeRun(runId, 'error', `Main loop error: ${(e && e.message) || e}`);
+      finalizeRun(runId, 'error', `Сбой основного цикла: ${(e && e.message) || e}`);
     }
   }
   // --- 15. Watchdog & Recovery ---
@@ -2775,8 +2776,7 @@ function formatTime(dOrTs = new Date()) {
         storage.sessionRemove(KEYS.watchdogStallCount);
         hhaLog('error', 'watchdog_giveup', { vid: currentVid || undefined, stallCount, elapsedMs });
         recordOutcome(currentVid, 'error', 'error_timeout');
-        terminateRun('WATCHDOG_GIVEUP', 'Зависание при обработке вакансии после 2 перезагрузок.', { vid: currentVid }, true);
-        reportError('Зависание при обработке вакансии. Автоматизация остановлена после 2 перезагрузок.', 'WATCHDOG_GIVEUP', { vid: currentVid });
+        terminateRun('WATCHDOG_GIVEUP', 'Страница не отвечала и после двух перезагрузок, автоматизация остановлена.', { vid: currentVid }, true);
         return true;
       }
     }
@@ -2785,7 +2785,7 @@ function formatTime(dOrTs = new Date()) {
 
     if (!Page.isSearch() && !isNavigating && (now - lastProgressTs) > PAGE_WATCHDOG_TIMEOUT) {
       const vid = resolveCurrentVid();
-      reportError(`Страница не ответила за ${PAGE_WATCHDOG_TIMEOUT / 1000} секунд. Принудительный возврат к поиску.`, 'PAGE_HANG_TIMEOUT', { vid, url: globalThis.location?.href });
+      reportWarning(`Страница не ответила за ${PAGE_WATCHDOG_TIMEOUT / 1000} секунд. Принудительный возврат к поиску.`, 'PAGE_HANG_TIMEOUT', { vid, url: globalThis.location?.href });
       markProgress();
       handleVacancyFailure(vid, 'error_timeout', currentRunId);
       return true;
@@ -2801,7 +2801,9 @@ function formatTime(dOrTs = new Date()) {
     const bodyText = (doc?.body?.textContent || '').slice(0, 4000);
 
     if (checkRateLimitAnomaly(doc, bodyText)) return;
-    if (!isLoopActive || isNavigating || resumeTimer) return;
+    // Until the lock is acquired there is nothing to lose: a busy lock is reported
+    // by initLoopSession as TAB_BUSY, not as a lost lock.
+    if (!isLoopActive || isNavigating || resumeTimer || !instanceLeaseVerified) return;
     if (touchInstanceLock(TAB_ID) !== 'OWNED') return haltForLostInstanceLock();
 
     if (checkHang(Date.now())) return;
@@ -3105,6 +3107,22 @@ function formatTime(dOrTs = new Date()) {
     RATE_LIMITED: 'Слишком частые запросы (Rate Limit)',
     SKIP_RATE_ALERT: 'Аномально много пропусков вакансий',
     WATCHDOG_GIVEUP: 'Зависание при обработке вакансии',
+  };
+
+  const REPORT_HINT = 'Если ошибка повторяется, скопируйте отчёт и приложите его к issue на GitHub.';
+  const LETTER_HINT = 'Отклики продолжают отправляться, но без письма. ' + REPORT_HINT;
+  const ERROR_HINTS = {
+    CAPTCHA_DETECTED: 'Решите капчу на странице, затем нажмите кнопку Продолжить.',
+    RATE_LIMITED: 'Подождите 10-15 минут, затем нажмите кнопку Продолжить.',
+    TAB_BUSY: 'Остановите скрипт в другой вкладке или закройте её.',
+    TAB_LOCK_LOST: 'Проверьте, что скрипт не запущен в другой вкладке, затем нажмите кнопку Продолжить.',
+    STORAGE_BLOCKED: 'Разрешите сайту hh.ru сохранять данные (cookies и данные сайтов) и обновите страницу.',
+    WATCHDOG_GIVEUP: 'Обновите страницу и нажмите кнопку Продолжить. ' + REPORT_HINT,
+    DOM_SELECTOR_NOT_FOUND: 'Скорее всего, hh.ru поменял вёрстку. Скопируйте отчёт и приложите его к issue на GitHub.',
+    ATTACH_BTN_NOT_FOUND: LETTER_HINT,
+    LETTER_FORM_TIMEOUT: LETTER_HINT,
+    SUBMIT_BTN_NOT_FOUND: LETTER_HINT,
+    SKIP_RATE_ALERT: 'Проверьте фильтры поиска. Если вакансии пропускаются зря, скопируйте отчёт и приложите его к issue на GitHub.',
   };
 
   function parseErrorDetails(code, rawMessage) {
@@ -4057,17 +4075,6 @@ function formatTime(dOrTs = new Date()) {
         width var(--hha-motion-indicator-duration, 200ms) var(--hha-motion-indicator-easing, cubic-bezier(0.22, 1, 0.36, 1));
     }
 
-    .hha-tabs[data-active="settings"] .hha-tab-indicator,
-    .hha-tabs:not([data-active="queue"]) .hha-tab-indicator {
-      left: 3px;
-      width: 97px;
-    }
-
-    .hha-tabs[data-active="queue"] .hha-tab-indicator {
-      left: 102px;
-      width: 97px;
-    }
-
     .hha-footer-actions {
       display: inline-flex;
       align-items: center;
@@ -4715,7 +4722,7 @@ function formatTime(dOrTs = new Date()) {
       display: flex;
       flex-direction: column;
       align-items: flex-start;
-      gap: 8px;
+      gap: 6px;
       min-height: 0;
       flex: 1 1 auto;
       overflow-y: auto;
@@ -4760,6 +4767,15 @@ function formatTime(dOrTs = new Date()) {
       word-break: break-word;
       user-select: text;
       white-space: pre-wrap;
+    }
+
+    .hha-card-error-hint {
+      font-size: var(--md-sys-typescale-body-small-size);
+      font-weight: 600;
+      line-height: 1.45;
+      color: var(--md-sys-color-on-error-container);
+      word-break: break-word;
+      user-select: text;
     }
 
     .hha-card-error-code {
@@ -5157,12 +5173,28 @@ function formatTime(dOrTs = new Date()) {
       opacity: 1;
     }
 
-    .hha-cover-textarea:disabled,
-    .hha-cover-textarea.is-disabled {
-      opacity: 0.38;
-      background: var(--md-sys-color-surface-container-high);
+    .hha-cover-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 28px;
+      padding: 0 12px;
+      border-top: 1px solid var(--md-sys-color-outline-variant);
+      font-size: var(--md-sys-typescale-label-small-size);
+      line-height: 16px;
       color: var(--md-sys-color-outline);
-      cursor: not-allowed;
+      flex-shrink: 0;
+    }
+
+    .hha-cover-status.is-error,
+    .hha-cover-counter.is-near-limit {
+      color: var(--md-sys-color-error);
+    }
+
+    .hha-cover-counter {
+      margin-left: auto;
+      font-variant-numeric: tabular-nums;
     }
 
     /* Accessibility: Motion Reduction (opacity only, <= 100ms, no transforms or growth) */
@@ -5219,6 +5251,7 @@ function formatTime(dOrTs = new Date()) {
       this._dragRafId = null;
       this._justDragged = false;
       this._coverDebounceTimer = null;
+      this._coverStatusTimer = null;
       this._animTimer = null;
       this._domEventsBound = false;
       this._onDocClick = null;
@@ -5339,6 +5372,7 @@ function formatTime(dOrTs = new Date()) {
         document.removeEventListener('keydown', this._onDocKeyDown);
       }
       if (this._coverDebounceTimer) { clearTimeout(this._coverDebounceTimer); this._coverDebounceTimer = null; }
+      if (this._coverStatusTimer) { clearTimeout(this._coverStatusTimer); this._coverStatusTimer = null; }
       if (this._animTimer) { clearTimeout(this._animTimer); this._animTimer = null; }
       if (this._queueConfirmTimer) { clearTimeout(this._queueConfirmTimer); this._queueConfirmTimer = null; }
     }
@@ -5605,13 +5639,11 @@ function formatTime(dOrTs = new Date()) {
 
       tabs.dataset.active = this._activeTab;
 
-      const isQueue = this._activeTab === 'queue';
-      const left = isQueue ? 102 : 3;
-      const width = 97;
-
-      indicator.style.left = `${left}px`;
-      indicator.style.width = `${width}px`;
-      indicator.style.transform = 'none';
+      // Measured, not hardcoded: the queue tab gets wider when its badge appears.
+      const activeTab = tabs.querySelector(`.hha-tab-btn[data-tab="${this._activeTab}"]`);
+      if (!activeTab || !activeTab.offsetWidth) return;
+      indicator.style.left = `${activeTab.offsetLeft}px`;
+      indicator.style.width = `${activeTab.offsetWidth}px`;
     }
 
     _resetClearQueueBtn() {
@@ -5683,20 +5715,11 @@ function formatTime(dOrTs = new Date()) {
 
     // --- DOM Assembly ---
 
+    // The error card is filled in by _syncErrorCard().
     _render() {
-      const hasError = Boolean(this._lastErrorPayload);
-      const parsedErr = hasError ? parseErrorDetails(this._lastErrorPayload.code, this._lastErrorPayload.message) : { title: '', desc: '' };
-      const errorTitleText = escapeHtml(parsedErr.title);
-      const errorDescText = escapeHtml(parsedErr.desc);
-      const errCode = this._lastErrorPayload?.code || '';
-      let errorCodeText = hasError ? (errCode ? `Код: ${escapeHtml(errCode)}` : 'Код: ERROR') : '';
-      if (hasError && this._lastErrorPayload?.details?.vid) {
-        errorCodeText += ` [вакансия #${escapeHtml(this._lastErrorPayload.details.vid)}]`;
-      }
-
       this._shadow.innerHTML = `
         <style>${STYLES}</style>
-        <div class="hha-root${hasError ? ' has-error' : ''}" data-el="root" data-active-tab="${this._activeTab}">
+        <div class="hha-root" data-el="root" data-active-tab="${this._activeTab}">
           <div class="hha-pill" data-el="pill">
             <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и очередь" title="Отклики: отправлено / в очереди">
               <div class="hha-pill-progress-fill" data-el="pill-progress-fill"></div>
@@ -5726,7 +5749,7 @@ function formatTime(dOrTs = new Date()) {
             <div class="hha-panels">
               <!-- Tab 1: Settings / Cover (Письмо) -->
               <div class="hha-panel ${this._activeTab === 'settings' ? 'active' : ''}" data-panel="settings"${this._activeTab === 'settings' ? '' : ' aria-hidden="true" inert'}>
-                <div class="hha-card hha-card-cover" data-el="cover-card"${hasError ? ' style="display: none;"' : ''}>
+                <div class="hha-card hha-card-cover" data-el="cover-card">
                   <div class="hha-switch-row">
                     <label class="hha-switch-label" for="hha-use-cover-input">
                       <span class="hha-row-label">Отправлять сопроводительное письмо</span>
@@ -5739,17 +5762,22 @@ function formatTime(dOrTs = new Date()) {
                   <div class="hha-cover-container" data-el="setting-cover-container">
                     <textarea class="hha-cover-textarea" data-el="setting-cover-text" maxlength="${MAX_COVER_LENGTH}" placeholder="Текст сопроводительного письма..."></textarea>
                   </div>
+                  <div class="hha-cover-meta">
+                    <span class="hha-cover-status" data-el="cover-status" aria-live="polite"></span>
+                    <span class="hha-cover-counter" data-el="cover-counter"></span>
+                  </div>
                 </div>
 
-                <div class="hha-card hha-card-error" data-el="error-card"${hasError ? '' : ' style="display: none;"'}>
+                <div class="hha-card hha-card-error" data-el="error-card" style="display: none;">
                   <div class="hha-card-error-body" data-el="error-card-body">
-                    <div class="hha-card-error-title" data-el="error-card-title">${errorTitleText}</div>
-                    <div class="hha-card-error-desc" data-el="error-card-desc"${errorDescText ? '' : ' style="display: none;"'}>${errorDescText}</div>
-                    <div class="hha-card-error-code" data-el="error-card-code">${errorCodeText}</div>
+                    <div class="hha-card-error-title" data-el="error-card-title"></div>
+                    <div class="hha-card-error-desc" data-el="error-card-desc"></div>
+                    <div class="hha-card-error-hint" data-el="error-card-hint"></div>
+                    <div class="hha-card-error-code" data-el="error-card-code"></div>
                   </div>
                   <div class="hha-card-error-actions">
                     <button type="button" class="hha-btn-copy-error" data-action="copy-last-error" data-el="error-copy-btn" title="Скопировать детали ошибки">Скопировать</button>
-                    <button type="button" class="hha-btn-dismiss-error" data-action="dismiss-error" data-el="error-dismiss-btn">Понятно</button>
+                    <button type="button" class="hha-btn-dismiss-error" data-action="resolve-error" data-el="error-resolve-btn">Понятно</button>
                   </div>
                 </div>
               </div>
@@ -5785,7 +5813,7 @@ function formatTime(dOrTs = new Date()) {
                 </div>
               </div>
               <div class="hha-tabs" data-active="${this._activeTab}" role="tablist" aria-label="Разделы панели">
-                <div class="hha-tab-indicator" data-el="tab-indicator" style="left: ${this._activeTab === 'queue' ? 102 : 3}px; width: 97px;" aria-hidden="true"></div>
+                <div class="hha-tab-indicator" data-el="tab-indicator" aria-hidden="true"></div>
                 <button type="button" class="hha-tab-btn ${this._activeTab === 'settings' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'settings' ? 'true' : 'false'}" data-action="switch-tab" data-tab="settings"><span>Письмо</span></button>
                 <button type="button" class="hha-tab-btn ${this._activeTab === 'queue' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'queue' ? 'true' : 'false'}" data-action="switch-tab" data-tab="queue"><span>Очередь</span><span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
               </div>
@@ -5804,15 +5832,10 @@ function formatTime(dOrTs = new Date()) {
       const useCoverCb = this._shadow.querySelector('[data-el="setting-use-cover"]');
       const coverTextarea = this._shadow.querySelector('[data-el="setting-cover-text"]');
 
+      // The switch only decides whether the letter is sent; the text stays editable
+      // either way, so it can be prepared before sending is turned on.
       if (useCoverCb) {
-        useCoverCb.addEventListener('change', () => {
-          const checked = useCoverCb.checked;
-          if (coverTextarea) {
-            coverTextarea.disabled = !checked;
-            coverTextarea.classList.toggle('is-disabled', !checked);
-          }
-          this._applyConfig({ useCover: checked });
-        });
+        useCoverCb.addEventListener('change', () => this._applyConfig({ useCover: useCoverCb.checked }));
       }
 
       if (coverTextarea) {
@@ -5821,14 +5844,40 @@ function formatTime(dOrTs = new Date()) {
             clearTimeout(this._coverDebounceTimer);
             this._coverDebounceTimer = null;
           }
-          this._applyConfig({ coverText: coverTextarea.value });
+          if (coverTextarea.value === (this._config.coverText || '')) return;
+          const saved = this._applyConfig({ coverText: coverTextarea.value });
+          this._showCoverStatus(saved ? 'Сохранено' : 'Не удалось сохранить', !saved);
         };
         coverTextarea.addEventListener('input', () => {
+          this._updateCoverCounter(coverTextarea.value.length);
           if (this._coverDebounceTimer) clearTimeout(this._coverDebounceTimer);
           this._coverDebounceTimer = setTimeout(flushCoverText, 300);
         });
         coverTextarea.addEventListener('blur', flushCoverText);
         coverTextarea.addEventListener('change', flushCoverText);
+      }
+    }
+
+    _updateCoverCounter(length) {
+      const counter = this._shadow?.querySelector('[data-el="cover-counter"]');
+      if (!counter) return;
+      counter.textContent = `${length} / ${MAX_COVER_LENGTH}`;
+      counter.classList.toggle('is-near-limit', length >= MAX_COVER_LENGTH * 0.95);
+    }
+
+    _showCoverStatus(text, isError) {
+      const status = this._shadow?.querySelector('[data-el="cover-status"]');
+      if (!status) return;
+      if (this._coverStatusTimer) clearTimeout(this._coverStatusTimer);
+      this._coverStatusTimer = null;
+      status.textContent = text;
+      status.classList.toggle('is-error', isError);
+      // A save error stays until the next save; "saved" fades out.
+      if (!isError) {
+        this._coverStatusTimer = setTimeout(() => {
+          status.textContent = '';
+          this._coverStatusTimer = null;
+        }, 2000);
       }
     }
 
@@ -6057,62 +6106,58 @@ function formatTime(dOrTs = new Date()) {
 
     _showError(errPayload) {
       if (!errPayload) return;
-      const time = formatTime(errPayload.timestamp || Date.now());
-      const code = errPayload.code || (errPayload.level === 'ERR' ? 'ERROR' : 'INFO');
-      const message = String(errPayload.message || 'Произошла непредвиденная ошибка');
-      const details = errPayload.details || errPayload.context || {};
-      const url = details.url || (window.location ? window.location.href : (typeof location !== 'undefined' ? location.href : ''));
-
+      const code = errPayload.code || 'ERROR';
+      const details = errPayload.details || {};
       this._lastErrorPayload = {
-        time,
+        time: formatTime(),
         code,
-        message,
+        message: String(errPayload.message || 'Произошла непредвиденная ошибка'),
         details,
-        url
+        url: details.url || window.location.href
       };
 
-      // Switch active tab to settings so user sees error immediately
       this.setActiveTab('settings');
-
-      if (!this._shadow) return;
-
-      const parsedErr = parseErrorDetails(code, message);
-      let codeMsg = code ? `Код: ${code}` : 'Код: ERROR';
-      if (details && details.vid) {
-        codeMsg += ` [вакансия #${details.vid}]`;
-      }
-
-      // Show Error Card in Settings tab and hide Cover Card
-      const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
-      if (root) root.classList.add('has-error');
-      const coverCard = this._shadow.querySelector('[data-el="cover-card"]');
-      const errorCard = this._shadow.querySelector('[data-el="error-card"]');
-      const errorTitle = this._shadow.querySelector('[data-el="error-card-title"]');
-      const errorDesc = this._shadow.querySelector('[data-el="error-card-desc"]');
-      const errorCode = this._shadow.querySelector('[data-el="error-card-code"]');
-      const errorBody = this._shadow.querySelector('[data-el="error-card-body"]');
-
-      if (coverCard) coverCard.style.display = 'none';
-      if (errorCard) errorCard.style.display = 'flex';
-      if (errorTitle) errorTitle.textContent = parsedErr.title;
-      if (errorDesc) {
-        if (parsedErr.desc) {
-          errorDesc.textContent = parsedErr.desc;
-          errorDesc.style.display = '';
-        } else {
-          errorDesc.textContent = '';
-          errorDesc.style.display = 'none';
-        }
-      }
-      if (errorCode) errorCode.textContent = codeMsg;
+      this._syncErrorCard();
+      const errorBody = this._shadow?.querySelector('[data-el="error-card-body"]');
       if (errorBody) errorBody.scrollTop = 0;
       this._updatePosition();
+    }
 
-      // Mark status group with error state
-      const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
-      if (statusGroup) {
-        statusGroup.classList.add('has-error');
+    _syncErrorCard() {
+      if (!this._shadow) return;
+      const el = (name) => this._shadow.querySelector(`[data-el="${name}"]`);
+      const err = this._lastErrorPayload;
+
+      el('root')?.classList.toggle('has-error', Boolean(err));
+      el('pill-status-group')?.classList.toggle('has-error', Boolean(err));
+      el('cover-card').style.display = err ? 'none' : '';
+      el('error-card').style.display = err ? '' : 'none';
+      if (!err) return;
+
+      const { title, desc } = parseErrorDetails(err.code, err.message);
+      const hint = ERROR_HINTS[err.code] || REPORT_HINT;
+      el('error-card-title').textContent = title;
+      el('error-card-desc').textContent = desc;
+      el('error-card-desc').style.display = desc ? '' : 'none';
+      el('error-card-hint').textContent = hint;
+      el('error-card-code').textContent = `Код: ${err.code}` + (err.details?.vid ? ` [вакансия #${err.details.vid}]` : '');
+      // A stopped run is restarted from the card in one click; otherwise the card only closes.
+      el('error-resolve-btn').textContent = this._status.status === 'error' ? 'Продолжить' : 'Понятно';
+    }
+
+    _resolveError() {
+      if (this._status.status === 'error') {
+        this._resetAfterError({ restart: true });
+      } else {
+        this._dismissError();
       }
+    }
+
+    async _resetAfterError({ restart = false } = {}) {
+      this._dismissError();
+      if (!this._assistant) return;
+      await this._assistant.resetState();
+      if (restart) this._assistant.start();
     }
 
     _dismissError() {
@@ -6122,22 +6167,9 @@ function formatTime(dOrTs = new Date()) {
       }
       this._lastErrorPayload = null;
       if (!this._shadow) return;
-
-      // Hide error card, reveal cover card
-      const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
-      if (root) root.classList.remove('has-error');
-      const coverCard = this._shadow.querySelector('[data-el="cover-card"]');
-      const errorCard = this._shadow.querySelector('[data-el="error-card"]');
-      const errorDesc = this._shadow.querySelector('[data-el="error-card-desc"]');
-      if (errorCard) errorCard.style.display = 'none';
-      if (errorDesc) {
-        errorDesc.textContent = '';
-        errorDesc.style.display = 'none';
-      }
-      if (coverCard) coverCard.style.display = 'flex';
+      this._syncErrorCard();
       this._updatePosition();
 
-      // Reset copy button state
       const copyBtn = this._shadow.querySelector('[data-el="error-copy-btn"]');
       if (copyBtn) {
         copyBtn.classList.remove('is-copied');
@@ -6148,8 +6180,6 @@ function formatTime(dOrTs = new Date()) {
           copyBtn.textContent = 'Скопировать';
         }
       }
-      const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
-      if (statusGroup) statusGroup.classList.remove('has-error');
     }
 
     _handleClearQueueAction(target) {
@@ -6248,7 +6278,7 @@ function formatTime(dOrTs = new Date()) {
         'collapse-island': (_, ev) => { ev.stopPropagation(); this.toggleExpand(false); },
         'switch-tab': (tgt, ev) => { ev.stopPropagation(); this.setActiveTab(tgt.dataset.tab); },
         'copy-last-error': (tgt, ev) => { ev.stopPropagation(); this._copyLastErrorToClipboard(tgt); },
-        'dismiss-error': (_, ev) => { ev.stopPropagation(); this._dismissError(); },
+        'resolve-error': (_, ev) => { ev.stopPropagation(); this._resolveError(); },
         'clear-queue': (tgt, ev) => { ev.stopPropagation(); this._handleClearQueueAction(tgt); },
         'open-vacancy': (tgt, ev) => { this._handleOpenVacancyAction(tgt, ev); },
         'delete-queue-item': (tgt, ev) => { ev.stopPropagation(); this._handleDeleteQueueItemAction(tgt); }
@@ -6345,18 +6375,14 @@ function formatTime(dOrTs = new Date()) {
         const sent = this._progress ? this._progress.sent : 0;
         if (sent < lim) {
           this.updateStatus('idle', 'IDLE');
+          this._dismissError();
           if (typeof this._assistant.start === 'function') this._assistant.start();
         } else {
           this.open();
           this.setActiveTab('settings');
         }
       } else if (this._status.status === 'error') {
-        if (typeof this._assistant.resetState === 'function') {
-          this._assistant.resetState();
-        } else if (typeof this._assistant.setStatus === 'function') {
-          this._assistant.setStatus('idle', 'IDLE');
-        }
-        this.updateStatus('idle', 'IDLE');
+        this._resetAfterError();
       } else {
         const lim = MAX_DAILY_LIMIT;
         const sent = this._progress ? this._progress.sent : 0;
@@ -6364,6 +6390,7 @@ function formatTime(dOrTs = new Date()) {
           this.updateStatus('done', 'COMPLETED');
           return;
         }
+        this._dismissError();
         if (typeof this._assistant.start === 'function') this._assistant.start();
       }
     }
@@ -6374,10 +6401,9 @@ function formatTime(dOrTs = new Date()) {
       }
       this._config = { ...this._config, ...partial };
       this.updateProgress(this._progress ? this._progress.sent : 0);
-      if (this._assistant && typeof this._assistant.setConfig === 'function') {
-        this._assistant.setConfig(partial);
-      }
+      const saved = Boolean(this._assistant?.setConfig?.(partial));
       this._syncConfig();
+      return saved;
     }
 
     _showTooltip(target) {
@@ -6777,6 +6803,7 @@ function formatTime(dOrTs = new Date()) {
         });
         this._hasSyncedStatus = true;
       }
+      if (this._lastErrorPayload) this._syncErrorCard();
     }
 
     _syncProgress() {
@@ -6895,12 +6922,11 @@ function formatTime(dOrTs = new Date()) {
       const isCoverActive = Boolean(c.useCover);
       if (useCoverCb) useCoverCb.checked = isCoverActive;
       if (coverTextarea) {
-        coverTextarea.disabled = !isCoverActive;
-        coverTextarea.classList.toggle('is-disabled', !isCoverActive);
         const isFocused = this._shadow.activeElement === coverTextarea;
         if (!isFocused && coverTextarea.value !== (c.coverText || '')) {
           coverTextarea.value = c.coverText || '';
         }
+        this._updateCoverCounter(coverTextarea.value.length);
       }
     }
   }
