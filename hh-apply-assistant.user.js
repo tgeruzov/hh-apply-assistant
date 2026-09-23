@@ -1,18 +1,18 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.1.3
+// @version      0.1.4
 // @author       Timur Geruzov
-// @description  HH Apply Assistant - Автоматизация откликов на вакансии hh.ru с плавающим HUD интерфейсом
+// @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
 // @homepageURL  https://github.com/tgeruzov/hh-apply-assistant
 // @supportURL   https://github.com/tgeruzov/hh-apply-assistant/issues
 // @updateURL    https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tgeruzov/hh-apply-assistant/main/hh-apply-assistant.user.js
-// @match        *://*.hh.ru/search/vacancy*
-// @match        *://*.hh.ru/vacancy/*
-// @match        *://*.hh.ru/applicant/vacancy_response*
-// @match        *://*.hh.ru/article/*
+// @match        https://*.hh.ru/search/vacancy*
+// @match        https://*.hh.ru/vacancy/*
+// @match        https://*.hh.ru/applicant/vacancy_response*
+// @match        https://*.hh.ru/article/*
 // @noframes
 // @grant        none
 // @run-at       document-idle
@@ -60,7 +60,8 @@ function formatTime(dOrTs = new Date()) {
   'use strict';
 
   // --- 1. Constants, Selectors & Defaults ---
-  const VERSION = '0.1.3';
+  // GM_info is available to every userscript, including @grant none; 'dev' is for runs outside a manager.
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script?.version) || 'dev';
   const SELECTORS = {
     modal: '[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]',
     modalClose: '[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]',
@@ -1153,6 +1154,29 @@ function formatTime(dOrTs = new Date()) {
     }
   }
 
+  // The detectors read textContent of the same nodes many times per check and on every
+  // watchdog tick, often of the whole body. The text only changes with the DOM, so it
+  // is cached until the next mutation. The HUD lives in a shadow root, so its own
+  // updates do not reset the cache.
+  const textCache = new Map();
+  let textCacheObserver = null;
+
+  function textOf(node) {
+    if (!node) return '';
+    if (!textCacheObserver) {
+      const root = globalThis.document?.documentElement;
+      if (typeof MutationObserver === 'undefined' || !root) return node.textContent || '';
+      textCacheObserver = new MutationObserver(() => textCache.clear());
+      textCacheObserver.observe(root, { childList: true, subtree: true, characterData: true });
+    }
+    let text = textCache.get(node);
+    if (text === undefined) {
+      text = node.textContent || '';
+      textCache.set(node, text);
+    }
+    return text;
+  }
+
   function isVisible(el) {
     if (!el) return false;
     try {
@@ -1198,8 +1222,14 @@ function formatTime(dOrTs = new Date()) {
       if (confirmBtn && isVisible(confirmBtn)) return confirmBtn;
     }
 
+    // The text scan below reads innerText of every block on the page and is the most
+    // expensive check. innerText only adds line breaks and changes case, never letters,
+    // so without "стран" in the page text no element can match and the scan is skipped.
+    const scopeText = textOf(scope.nodeType === 9 ? scope.documentElement : scope);
     const title = q('[data-qa="relocation-warning-title"]', scope)
-      || findPatternElement(scope, 'h1, h2, h3, div, p, span', /откликаетесь\s+на\s+вакансию\s+в\s+другой\s+стране|в\s+другой\s+стране/i, 80);
+      || (/стран/i.test(scopeText)
+        ? findPatternElement(scope, 'h1, h2, h3, div, p, span', /откликаетесь\s+на\s+вакансию\s+в\s+другой\s+стране|в\s+другой\s+стране/i, 80)
+        : null);
     if (title && isVisible(title)) {
       const container = title.closest?.('[data-qa="magritte-alert"], [role="dialog"]') || title.parentElement;
       if (container && !isReviewOrFeedbackElement(container)) {
@@ -1700,7 +1730,7 @@ function formatTime(dOrTs = new Date()) {
     }
     const body = root.body || (root.nodeType === 9 ? root.body : root);
     if (!body) return false;
-    const bodyText = (body.textContent || '').slice(0, 4000);
+    const bodyText = textOf(body).slice(0, 4000);
     return INACCESSIBLE_VACANCY_REGEX.test(bodyText);
   }
 
@@ -1713,7 +1743,7 @@ function formatTime(dOrTs = new Date()) {
     if (q('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="captcha" i], iframe[src*="smartcaptcha" i], [data-qa*="captcha" i], .g-recaptcha, .h-captcha, .smart-captcha, [class*="captcha" i], [id*="captcha" i]', doc)) {
       return true;
     }
-    const bodyText = (text !== null ? text : (doc.body?.textContent || doc.documentElement?.textContent || '')).slice(0, 3000);
+    const bodyText = (text !== null ? text : (textOf(doc.body) || textOf(doc.documentElement))).slice(0, 3000);
     return /(?:подтвердите,?\s*что\s*вы\s*не\s*робот|введите\s*символы\s*с\s*картинки|вы\s+не\s+робот|not\s+a\s+robot|необычн\w*\s+активн|unusual\s+(?:activity|traffic))/i.test(bodyText);
   }
 
@@ -1739,7 +1769,7 @@ function formatTime(dOrTs = new Date()) {
     const candidates = qa(notificationSelectors, root);
     for (const el of candidates) {
       if (isVisible(el)) {
-        const text = (el.textContent || el.innerText || '').trim();
+        const text = (textOf(el) || el.innerText || '').trim();
         if (text && DAILY_LIMIT_REGEX.test(text)) {
           return true;
         }
@@ -1754,7 +1784,7 @@ function formatTime(dOrTs = new Date()) {
       for (let i = children.length - 1; i >= startIdx; i--) {
         const child = children[i];
         if (isVisible(child)) {
-          const txt = (child.textContent || '').trim();
+          const txt = textOf(child).trim();
           if (txt && DAILY_LIMIT_REGEX.test(txt)) {
             return true;
           }
@@ -1762,7 +1792,7 @@ function formatTime(dOrTs = new Date()) {
       }
 
       // Fallback check across root textContent
-      const fullText = (body.textContent || '').slice(0, 3000);
+      const fullText = textOf(body).slice(0, 3000);
       if (DAILY_LIMIT_REGEX.test(fullText)) {
         return true;
       }
@@ -1781,26 +1811,78 @@ function formatTime(dOrTs = new Date()) {
     if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]', doc)) {
       return true;
     }
-    const bodyText = (text !== null ? text : (doc.body?.textContent || doc.documentElement?.textContent || '')).slice(0, 3000);
+    const bodyText = (text !== null ? text : (textOf(doc.body) || textOf(doc.documentElement))).slice(0, 3000);
     return /(?:слишком\s*много\s*запросов|429\s*Too\s*Many\s*Requests|503\s*Service\s*Unavailable|доступ\s*(?:временно\s*)?ограничен|access\s*(?:temporarily\s*)?denied|error\s+429|error\s+503)/i.test(bodyText);
   }
+
+  // What the last text-based skip or queue decision relied on: the rule and a short
+  // fragment of the text it matched. Detectors set it when they match, decision points
+  // write it to the log. The regexes are broad, and this is the data to narrow them.
+  let lastEvidence = null;
+
+  function noteEvidence(rule, text, regex = null) {
+    const source = String(text || '');
+    const found = regex ? regex.exec(source) : null;
+    const start = found ? Math.max(0, found.index - 60) : 0;
+    lastEvidence = { rule, match: collapseSpaces(source.slice(start, start + 160)) };
+  }
+
+  function takeEvidence() {
+    const evidence = lastEvidence || { rule: 'unknown' };
+    lastEvidence = null;
+    return evidence;
+  }
+
+  function logDecision(vid, decision) {
+    hhaLog('info', 'decision', { vid: cleanVid(vid) || undefined, decision, ...takeEvidence() });
+  }
+
+  // A submit that was clicked but not confirmed. On a live run such a response had in
+  // fact gone through, so the page state is recorded to see what the check missed: the
+  // visible modal, the chat link, where a success phrase is on the page, and which
+  // element the text check took as "the modal".
+  function noteUnconfirmedSubmit() {
+    const doc = globalThis.document;
+    const modal = getVisibleModals()[0] || null;
+    const checkScope = q(SELECTORS.modal);
+    // Visible text: textContent would also find these phrases inside page scripts.
+    const bodyText = doc?.body?.innerText || '';
+    const success = /(?:отклик отправлен|вы откликнулись|резюме доставлено|резюме отправлено|вы уже откликались)/i.exec(bodyText);
+    const parts = [
+      `modal=${modal ? 'visible' : 'none'}`,
+      `chat_link=${queryExact('responseChat') ? 'yes' : 'no'}`,
+      `success_text_at=${success ? success.index : -1}`,
+      `check_scope=${checkScope ? `${checkScope.tagName.toLowerCase()}.${checkScope.getAttribute('class') || ''}[${isVisible(checkScope) ? 'visible' : 'hidden'}]` : 'none'}`,
+      success ? `near="${bodyText.slice(Math.max(0, success.index - 40), success.index + 80)}"` : '',
+      modal ? `modal_text="${textOf(modal).slice(0, 120)}"` : ''
+    ];
+    lastEvidence = { rule: 'submit_unconfirmed', match: collapseSpaces(parts.join(' ')) };
+  }
+
+  const describeElement = (el) => `<${el.tagName.toLowerCase()} data-qa="${el.getAttribute('data-qa') || ''}" class="${el.getAttribute('class') || ''}"> ${textOf(el)}`;
+
+  const TEST_PAGE_REGEX = /(?:необходимо\s+пройти\s+тест|ответьте\s+на\s+(?:следующие\s+)?вопрос|тестовое\s+задание\s*работодателя|анкета\s+работодателя|пройти\s+опрос)/i;
 
   const pageLooksLikeTest = () => {
     const doc = globalThis.document;
     if (!doc) return false;
-    if (q('[data-qa*="question" i], [data-qa*="test-task" i], [data-qa*="questionnaire" i], [class*="questionnaire" i], [class*="response-test" i]')) {
+    const marker = q('[data-qa*="question" i], [data-qa*="test-task" i], [data-qa*="questionnaire" i], [class*="questionnaire" i], [class*="response-test" i]');
+    if (marker) {
+      noteEvidence('page_test_selector', describeElement(marker));
       return true;
     }
     const form = q('[data-qa*="response-form" i], [data-qa*="vacancy-response" i], form');
-    const text = ((form || doc.body || doc.documentElement)?.textContent || '').slice(0, 4000);
-    return /(?:необходимо\s+пройти\s+тест|ответьте\s+на\s+(?:следующие\s+)?вопрос|тестовое\s+задание\s*работодателя|анкета\s+работодателя|пройти\s+опрос)/i.test(text);
+    const text = textOf(form || doc.body || doc.documentElement).slice(0, 4000);
+    if (!TEST_PAGE_REGEX.test(text)) return false;
+    noteEvidence('page_test_regex', text, TEST_PAGE_REGEX);
+    return true;
   };
 
   const detectAlreadyApplied = () => {
     const doc = globalThis.document;
     if (!doc) return false;
     if (queryExact('responseChat')) return true;
-    const bodyText = ((doc.body || doc.documentElement)?.textContent || '').slice(0, 3000);
+    const bodyText = textOf(doc.body || doc.documentElement).slice(0, 3000);
     return /(?:вы уже откликались|отклик уже отправлен|already applied)/i.test(bodyText);
   };
 
@@ -1809,9 +1891,11 @@ function formatTime(dOrTs = new Date()) {
     const scope = (root && root !== globalThis.document && root !== globalThis.document?.body) ? root : q(SELECTORS.modal + ', [role="alert"]');
     if (!scope) return false;
     const el = query('rejectWarning', scope);
-    return Boolean(el && isVisible(el));
+    if (!el || !isVisible(el)) return false;
+    noteEvidence(el.matches(SELECTORS.rejectWarning) ? 'reject_selector' : 'reject_heuristic', textOf(el), REJECT_REGEX);
+    return true;
   };
-  const hasResponseTextConfirmation = (root) => /(?:отклик отправлен|вы откликнулись|резюме доставлено|резюме отправлено|response sent|applied successfully)/i.test(((root || getResponseDetectionScope())?.textContent || '').slice(0, 4000));
+  const hasResponseTextConfirmation = (root) => /(?:отклик отправлен|вы откликнулись|резюме доставлено|резюме отправлено|response sent|applied successfully)/i.test(textOf(root || getResponseDetectionScope()).slice(0, 4000));
   const hasExactResponseConfirmation = (root) => {
     const scope = root || getResponseDetectionScope();
     return Boolean(scope && (queryExact('responseChat', scope) || (!config.useCover && queryExact('attachCoverBtn', scope))));
@@ -1823,18 +1907,33 @@ function formatTime(dOrTs = new Date()) {
     if (loc && (/\/success/i.test(loc.pathname) || /[?&]success\b/i.test(loc.search))) return true;
     if (detectAlreadyApplied()) return true;
     const doc = globalThis.document;
-    return Boolean((allowDocumentStrongText || Page.isVacancy()) && doc && /(?:отклик отправлен|вы уже откликались|вы откликнулись|резюме доставлено)/i.test((doc.body?.innerText || doc.body?.textContent || '').slice(0, 4000)));
+    return Boolean((allowDocumentStrongText || Page.isVacancy()) && doc && /(?:отклик отправлен|вы уже откликались|вы откликнулись|резюме доставлено)/i.test((doc.body?.innerText || textOf(doc.body)).slice(0, 4000)));
   }
 
   function detectModalBlockReason(modalScope = null) {
     const modal = modalScope || getVisibleModals()[0] || null;
     if (!modal) return null;
     if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
-    const text = (modal.textContent || modal.innerText || '').slice(0, 3000);
-    if (/резюме\s*скрыто|resume\s*is\s*hidden/i.test(text)) return 'RESUME_HIDDEN';
-    if (q(SELECTORS.rejectWarning, modal)) return 'REJECT_WARNING';
-    if (REJECT_REGEX.test(text)) return 'REJECT_REGEX';
-    if (/тестирование|анкета|вопросы|questionnaire|test/i.test(text)) return 'TEST_REQUIRED';
+    const text = (textOf(modal) || modal.innerText || '').slice(0, 3000);
+    const resumeHidden = /резюме\s*скрыто|resume\s*is\s*hidden/i;
+    if (resumeHidden.test(text)) {
+      noteEvidence('modal_resume_hidden', text, resumeHidden);
+      return 'RESUME_HIDDEN';
+    }
+    const warning = q(SELECTORS.rejectWarning, modal);
+    if (warning) {
+      noteEvidence('modal_reject_selector', textOf(warning));
+      return 'REJECT_WARNING';
+    }
+    if (REJECT_REGEX.test(text)) {
+      noteEvidence('modal_reject_regex', text, REJECT_REGEX);
+      return 'REJECT_REGEX';
+    }
+    const testRequired = /тестирование|анкета|вопросы|questionnaire|test/i;
+    if (testRequired.test(text)) {
+      noteEvidence('modal_test_regex', text, testRequired);
+      return 'TEST_REQUIRED';
+    }
     if (detectCaptcha() || /капч[аеы]|captcha|recaptcha|smartcaptcha/i.test(text)) return 'CAPTCHA';
     if (detectRateLimit() || /слишком\s*много\s*запросов|доступ\s*ограничен|rate\s*limit|blocked/i.test(text)) return 'RATE_LIMIT';
     return null;
@@ -1846,19 +1945,21 @@ function formatTime(dOrTs = new Date()) {
     return Boolean(btn && isVisible(btn) && !isReviewOrFeedbackElement(btn));
   }
 
+  // Checks scoped to one modal. The page-wide ones (daily limit, relocation, captcha,
+  // rate limit) are done by detectResponseOutcomeOnce, once per check and not per modal.
   function detectResponseOutcomeInRoot(root, includeExactSelectors) {
     if (!root || isReviewOrFeedbackElement(root)) return null;
-    if (detectDailyLimit(root) || detectDailyLimit()) return 'DAILY_LIMIT';
-    if (detectCaptcha()) return 'CAPTCHA';
-    if (detectRateLimit()) return 'RATE_LIMIT';
+    if (detectDailyLimit(root)) return 'DAILY_LIMIT';
     const warningEl = q(SELECTORS.rejectWarning, root);
-    if (warningEl && isVisible(warningEl)) return 'REJECT_WARNING';
+    if (warningEl && isVisible(warningEl)) {
+      noteEvidence('reject_selector', textOf(warningEl));
+      return 'REJECT_WARNING';
+    }
     if (hasReliableRejectWarning(root)) return 'REJECT_REGEX';
-    if (detectRelocationWarning()) return 'RELOCATION_WARNING';
 
     const isResumeModal = Boolean(
       q('input[type="radio"][name*="resume" i], [data-qa*="select-resume" i], [data-qa*="resume-item" i]', root) ||
-      /(?:выберите|выбор)\s+(?:подходящее\s+)?резюме|резюме\s+для\s+отклика/i.test(root.textContent || '')
+      /(?:выберите|выбор)\s+(?:подходящее\s+)?резюме|резюме\s+для\s+отклика/i.test(textOf(root))
     );
 
     if (includeExactSelectors && isAttachCoverAvailable(root)) {
@@ -1878,8 +1979,17 @@ function formatTime(dOrTs = new Date()) {
     if (detectRelocationWarning()) return 'RELOCATION_WARNING';
     if (isAttachCoverAvailable()) return 'ATTACH_COVER';
 
-    const modals = getVisibleModals();
-    for (const modal of modals) {
+    // The selector also matches nested blocks (.modal-header, .modal-content), so there
+    // are often several "modals". Captcha and rate limit are checked once, before the
+    // first one that is not a review widget, as the per-modal loop used to do.
+    let pageChecked = false;
+    for (const modal of getVisibleModals()) {
+      if (isReviewOrFeedbackElement(modal)) continue;
+      if (!pageChecked) {
+        pageChecked = true;
+        if (detectCaptcha()) return 'CAPTCHA';
+        if (detectRateLimit()) return 'RATE_LIMIT';
+      }
       const outcome = detectResponseOutcomeInRoot(modal, true);
       if (outcome) return outcome;
     }
@@ -2147,6 +2257,7 @@ function formatTime(dOrTs = new Date()) {
     const submitted = await submitCoverLetterForm(modal, runId);
     if (!submitted) {
       if (!isRunCurrent(runId)) return 'STOPPED';
+      noteEvidence('submit_not_clicked', '');
       return 'FAIL';
     }
 
@@ -2162,6 +2273,7 @@ function formatTime(dOrTs = new Date()) {
       haltForDailyLimit();
       return 'BLOCKED';
     }
+    if (!confirmed) noteUnconfirmedSubmit();
     return confirmed ? 'OK' : 'FAIL';
   }
 
@@ -2172,17 +2284,21 @@ function formatTime(dOrTs = new Date()) {
     if (res === 'OK' && vid) {
       commitSuccess(vid, runId);
     } else if ((res === 'SKIP' || res === 'SKIP_REJECT_WARNING' || res === 'SKIP_REJECT_REGEX') && vid) {
+      logDecision(vid, 'skip_reject');
       skipVacancy(vid, res === 'SKIP_REJECT_REGEX' ? 'skip_reject_regex' : 'skip_reject_warning', runId);
     } else if (res === 'TEST_REQUIRED') {
+      logDecision(vid, 'queue_test');
       if (vid) {
         saveCurrentForManual(vid, 'test_required', runId);
         markVacancyProcessed(vid, runId);
       }
       await closeModal(modal);
     } else if (res === 'RESUME_HIDDEN') {
+      logDecision(vid, 'skip_resume_hidden');
       if (vid) skipVacancy(vid, 'resume_hidden', runId);
       await closeModal(modal);
     } else if (res === 'FAIL') {
+      logDecision(vid, 'queue_submit_failed');
       if (vid) {
         saveCurrentForManual(vid, 'modal_submit_failed', runId);
         markVacancyProcessed(vid, runId);
@@ -2245,7 +2361,7 @@ function formatTime(dOrTs = new Date()) {
         if (!Page.isResponseForm() && !pageLooksLikeTest()) {
           commitSuccess(vid, runId);
         } else {
-          hhaLog('warn', 'commit_skipped', { vid, reason: Page.isResponseForm() ? 'response_form' : 'page_looks_like_test' });
+          hhaLog('warn', 'commit_skipped', { vid, ...(Page.isResponseForm() ? { reason: 'response_form' } : { reason: 'page_looks_like_test', ...takeEvidence() }) });
         }
       }
       return res;
@@ -2260,13 +2376,14 @@ function formatTime(dOrTs = new Date()) {
         if (!Page.isResponseForm() && !pageLooksLikeTest()) {
           commitSuccess(vid, runId);
         } else {
-          hhaLog('warn', 'commit_skipped', { vid, reason: Page.isResponseForm() ? 'response_form' : 'page_looks_like_test' });
+          hhaLog('warn', 'commit_skipped', { vid, ...(Page.isResponseForm() ? { reason: 'response_form' } : { reason: 'page_looks_like_test', ...takeEvidence() }) });
         }
       }
       return 'OK';
     }
 
     if (outcome === 'REJECT_WARNING' || outcome === 'REJECT_REGEX') {
+      logDecision(vid, 'skip_reject');
       await closeModal();
       if (vid) skipVacancy(vid, outcome === 'REJECT_REGEX' ? 'skip_reject_regex' : 'skip_reject_warning', runId);
       return 'SKIP';
@@ -2365,6 +2482,7 @@ function formatTime(dOrTs = new Date()) {
   }
 
   async function handleVacancyPage(vid, runId = currentRunId) {
+    lastEvidence = null;
     try {
       const pageUrl = globalThis.location?.href || '';
       if (detectInaccessibleVacancy()) {
@@ -2430,6 +2548,7 @@ function formatTime(dOrTs = new Date()) {
     handlingResponsePage = true;
     try {
       if (pageLooksLikeTest()) {
+        logDecision(vid, 'queue_test');
         revertCommittedApplied(lastCommittedVid || vid);
         saveCurrentForManual(vid, 'test-questionnaire', runId);
         return returnToList(vid, { markProcessed: true, runId });
@@ -2481,6 +2600,8 @@ function formatTime(dOrTs = new Date()) {
         return;
       }
       if (!confirmed) {
+        noteUnconfirmedSubmit();
+        logDecision(vid, 'retry_submit_unconfirmed');
         reportWarning(`Не удалось подтвердить отправку отклика #${vid}`, 'SUBMIT_UNCONFIRMED', { vid });
         return handleVacancyFailure(vid, 'unconfirmed', runId);
       }
@@ -2540,6 +2661,7 @@ function formatTime(dOrTs = new Date()) {
     hhaLog('info', 'start', { runId, limit: MAX_DAILY_LIMIT });
     setStatus('running', 'LOOP_STARTING');
 
+    setActivity('locking');
     const acquired = await acquireInstanceLock(TAB_ID);
     if (runId !== currentRunId || stopSignal || !isRunning()) {
       if (acquired) await releaseInstanceLock(TAB_ID);
@@ -2554,6 +2676,7 @@ function formatTime(dOrTs = new Date()) {
       const isBlocked = storage.isLocalBlocked();
       const code = isBlocked ? 'STORAGE_BLOCKED' : 'TAB_BUSY';
       const msg = isBlocked ? 'Доступ к хранилищу заблокирован.' : 'Другая вкладка уже выполняет отклики. Запуск в текущей вкладке отменен.';
+      setActivity(null);
       setStatus('idle', code, { message: msg });
       reportError(msg, code);
       return null;
@@ -2700,10 +2823,13 @@ function formatTime(dOrTs = new Date()) {
     }
 
     const processed = getProcessedIDs();
+    // The processed list lives in sessionStorage and starts empty in every new tab, so a
+    // vacancy already waiting in the manual queue would be opened again each session.
+    const queued = new Set(ManualQueue.get().map(item => cleanVid(item.vid)));
     const targets = [];
     for (const b of allBtns) {
       const vid = getVacancyID(b);
-      if (processed.has(vid) || isBlacklisted(vid)) continue;
+      if (processed.has(vid) || isBlacklisted(vid) || queued.has(cleanVid(vid))) continue;
       if (config.skipHidden && !isVisible(b)) {
         markVacancyProcessed(vid, runId);
         recordOutcome(vid, 'skipped', 'skip_hidden_employer');
@@ -2821,7 +2947,7 @@ function formatTime(dOrTs = new Date()) {
     if (detectDailyLimit()) return haltForDailyLimit();
 
     const doc = globalThis.document;
-    const bodyText = (doc?.body?.textContent || '').slice(0, 4000);
+    const bodyText = textOf(doc?.body).slice(0, 4000);
 
     if (checkRateLimitAnomaly(doc, bodyText)) return;
     // Until the lock is acquired there is nothing to lose: a busy lock is reported
@@ -3153,6 +3279,7 @@ function formatTime(dOrTs = new Date()) {
 
   const ACTIVITY_TEXT = {
     resuming: 'Продолжаю на новой странице',
+    locking: 'Проверяю, не запущен ли скрипт в другой вкладке',
     scanning: 'Ищу следующую вакансию в выдаче',
     pause_before_vacancy: 'Пауза перед вакансией',
     reading: 'Читаю вакансию',
@@ -3168,6 +3295,7 @@ function formatTime(dOrTs = new Date()) {
   // One-word versions for the collapsed pill; the full text is in its tooltip.
   const ACTIVITY_SHORT = {
     resuming: 'Загрузка',
+    locking: 'Запуск',
     scanning: 'Поиск',
     pause_before_vacancy: 'Пауза',
     reading: 'Читаю',
@@ -6481,6 +6609,7 @@ function formatTime(dOrTs = new Date()) {
         if (typeof this._assistant.stop === 'function') this._assistant.stop();
       } else if (this._status.status === 'done') {
         if (this._status.code === 'DAILY_LIMIT_REACHED') {
+          this.open();
           return;
         }
         const lim = MAX_DAILY_LIMIT;
@@ -6882,7 +7011,9 @@ function formatTime(dOrTs = new Date()) {
           const isDaily = this._status && this._status.code === 'DAILY_LIMIT_REACHED';
           targetClass = isDaily ? 'hha-btn-limit' : 'hha-btn-done';
           targetLabel = isDaily ? 'Лимит' : 'Готово';
-          targetTitle = isDaily ? `Достигнут суточный лимит HeadHunter (${MAX_DAILY_LIMIT} откликов за 24 часа)` : 'Лимит достигнут. Кликните для настройки';
+          targetTitle = isDaily
+            ? `Достигнут суточный лимит HeadHunter (${MAX_DAILY_LIMIT} откликов за 24 часа)`
+            : 'Вакансии в выдаче закончились. Нажмите, чтобы пройти выдачу ещё раз';
         } else if (status === 'error') {
           targetClass = 'hha-btn-error';
           targetLabel = 'Сброс';
@@ -6950,7 +7081,7 @@ function formatTime(dOrTs = new Date()) {
         if (secondsLeft > 0) text += `, ${secondsLeft} с`;
         return text;
       }
-      if (code === 'DAILY_LIMIT_REACHED') return 'Суточный лимит hh.ru исчерпан';
+      if (code === 'DAILY_LIMIT_REACHED') return `Лимит hh.ru: ${MAX_DAILY_LIMIT} откликов за 24 часа. Продолжить можно позже`;
       if (code === 'COMPLETED') return `Дневной лимит скрипта: ${MAX_DAILY_LIMIT} откликов`;
       if (status === 'done') return 'Вакансии в выдаче закончились';
       if (status === 'error') return 'Остановлено из-за ошибки';
