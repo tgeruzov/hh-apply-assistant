@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.1
+// @version      0.2.2
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -85,15 +85,15 @@ function formatTime(dOrTs = new Date()) {
   };
 
   const SELECTOR_METADATA = {
-    applyBtn: { name: 'Кнопка «Откликнуться» в поисковой выдаче' },
-    vacancyApply: { name: 'Кнопка «Откликнуться» на странице вакансии' },
-    attachCoverBtn: { name: 'Кнопка «Прикрепить сопроводительное» после отклика' },
+    applyBtn: { name: 'Кнопка "Откликнуться" в поисковой выдаче' },
+    vacancyApply: { name: 'Кнопка "Откликнуться" на странице вакансии' },
+    attachCoverBtn: { name: 'Кнопка "Прикрепить сопроводительное" после отклика' },
     attachCoverInModal: { name: 'Переключатель письма в модальном окне' },
     letterTextarea: { name: 'Поле ввода текста письма' },
     letterSubmit: { name: 'Кнопка отправки формы отклика' },
     relocationBtn: { name: 'Подтверждение предупреждения о релокации' },
     vacancyCard: { name: 'Карточка вакансии в выдаче' },
-    pagerNext: { name: 'Кнопка «Дальше» (пагинация поиска)' },
+    pagerNext: { name: 'Кнопка "Дальше" (пагинация поиска)' },
     rejectWarning: { name: 'Предупреждение о возможном отказе' },
     responseChat: { name: 'Ссылка на чат после отклика' },
     vacancyLink: { name: 'Ссылка на вакансию в выдаче' }
@@ -1024,6 +1024,11 @@ function formatTime(dOrTs = new Date()) {
   async function acquireInstanceLock(tabId) {
     await releaseWebLock();
     const now = Date.now();
+    // On search pages the acquisition sometimes takes up to a second. waitMs is the time
+    // until the browser granted the lock, totalMs until this code ran again: a long wait
+    // means another document held the lock, a short wait with a long total means the
+    // page's own scripts kept the main thread busy.
+    let grantedAt = null;
 
     // Web Locks acquisition (native browser mutual exclusion across tabs/workers)
     const nav = globalThis.navigator;
@@ -1046,6 +1051,7 @@ function formatTime(dOrTs = new Date()) {
               return;
             }
             webLockAcquired = true;
+            grantedAt = Date.now();
             hasActiveWebLock = true;
             webLockAbortController = lockController;
             lockResolver(true);
@@ -1096,7 +1102,12 @@ function formatTime(dOrTs = new Date()) {
 
     currentLeaseId = leaseId;
     instanceLeaseVerified = true;
-    hhaLog('info', 'lock_acquire', { tabId, leaseId });
+    hhaLog('info', 'lock_acquire', {
+      tabId,
+      leaseId,
+      waitMs: grantedAt !== null ? grantedAt - now : undefined,
+      totalMs: Date.now() - now
+    });
     return true;
   }
 
@@ -1308,7 +1319,7 @@ function formatTime(dOrTs = new Date()) {
   const applyBtnHeuristic = (r) => findPatternElement(r, 'button, a, [role="button"]', /откликнуться|отклик без резюме|перейти к отклику|apply|respond/i, 60);
   const coverBtnHeuristic = (r) => findPatternElement(r, 'button, a, [role="button"], span', /сопроводительное|письмо|cover letter|add cover/i, 60);
 
-  // vacancyApply has no text fallback on purpose: the first visible «Откликнуться»
+  // vacancyApply has no text fallback on purpose: the first visible "Откликнуться"
   // on a vacancy page may belong to the similar vacancies block.
   const HEURISTIC_RESOLVERS = {
     applyBtn: applyBtnHeuristic,
@@ -1327,7 +1338,7 @@ function formatTime(dOrTs = new Date()) {
       return findPatternElement(scope, 'div, p, span, section', TEXT_RULES.reject, 250);
     },
     // The last results page has no pager-next, so a loose match here would pick
-    // any link like «Читать дальше» or a vacancy titled «Next.js».
+    // any link like "Читать дальше" or a vacancy titled "Next.js".
     pagerNext: (r) => {
       const link = findPatternElement(r, 'a[href]', /^(?:дальше|впер[её]д|следующая|next)$/i, 20);
       return link && toSearchListUrl(link.href) ? link : null;
@@ -1865,7 +1876,7 @@ function formatTime(dOrTs = new Date()) {
     const loc = globalThis.location;
     if (!doc) return false;
     if (loc && /\/error|\/blocked|\/forbidden|\/denied|\/rate-limit/i.test(loc.pathname)) return true;
-    // The title holds the vacancy name, so a bare 429/503 would also match «смена 4290 ₽».
+    // The title holds the vacancy name, so a bare 429/503 would also match "смена 4290 ₽".
     if (doc.title && TEXT_RULES.rateLimitTitle.test(doc.title)) return true;
     if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]', doc)) {
       return true;
@@ -2620,7 +2631,7 @@ function formatTime(dOrTs = new Date()) {
       setActivity('applying', { vid });
       const applyBtn = await waitForCondition(() => query('vacancyApply'), 4000, activeAbortController?.signal);
       if (!applyBtn) {
-        reportWarning(`Кнопка «Откликнуться» не найдена на странице вакансии #${vid}`, 'NO_APPLY_BUTTON', describeSelectorFailure('vacancyApply', globalThis.document?.body, { vid, url: pageUrl }));
+        reportWarning(`Кнопка "Откликнуться" не найдена на странице вакансии #${vid}`, 'NO_APPLY_BUTTON', describeSelectorFailure('vacancyApply', globalThis.document?.body, { vid, url: pageUrl }));
         if (vid) saveCurrentForManual(vid, 'no-apply-button', runId);
         returnToList(vid, { markProcessed: true, runId });
         return 'FAIL';
@@ -3506,6 +3517,7 @@ function formatTime(dOrTs = new Date()) {
   // --- 2. SVG Icons ---
 
   const ICONS = {
+    close: (size) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`,
     check: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`,
     inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`
   };
@@ -6145,7 +6157,7 @@ function formatTime(dOrTs = new Date()) {
                 <span class="hha-header-grip"></span>
               </div>
               <div class="hha-status-line" data-el="status-line"></div>
-              <button type="button" class="hha-btn-collapse" data-action="collapse-island" aria-label="Свернуть панель" title="Свернуть">✕</button>
+              <button type="button" class="hha-btn-collapse" data-action="collapse-island" aria-label="Свернуть панель" title="Свернуть">${ICONS.close(18)}</button>
             </header>
 
             <!-- Floating Tooltip -->
@@ -7350,7 +7362,7 @@ function formatTime(dOrTs = new Date()) {
             </a>
             <div class="hha-queue-card-actions">
               <button type="button" class="hha-queue-applied-btn" data-action="applied-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Откликнулся: убрать и засчитать" aria-label="Откликнулся вручную">${ICONS.check}</button>
-              <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">✕</button>
+              <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">${ICONS.close(14)}</button>
             </div>
           </div>
           ${displayEmployer ? `
