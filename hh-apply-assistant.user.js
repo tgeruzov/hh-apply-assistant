@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.1.4
+// @version      0.2.0
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -21,6 +21,10 @@
 // --- Global Shared Configuration Constants ---
 const MAX_DAILY_LIMIT = 200;
 const MAX_COVER_LENGTH = 5000;
+
+// Set by the engine (part 1) and read by the HUD (part 2). The userscript manager wraps
+// the file in a function, so it is not visible to the page.
+let hhaEngine = null;
 
 // --- Global Shared Utilities ---
 function clamp(val, min, max) {
@@ -282,27 +286,15 @@ function formatTime(dOrTs = new Date()) {
     return parts.join(' ');
   }
 
-  let memLogBuffer = null;
+  // Entries of this tab that are not in storage yet. Several hh.ru tabs share one log
+  // (a run in one, vacancies from the queue in others), so a flush appends to what is
+  // stored instead of replacing it with this tab's copy.
+  let pendingLog = [];
   let logFlushTimer = null;
-  let logBufferDirty = false;
 
-  function readLogBuffer() {
-    if (memLogBuffer !== null) {
-      return memLogBuffer;
-    }
-    try {
-      const raw = storage.localGet(KEYS.logBuffer);
-      if (!raw) {
-        memLogBuffer = [];
-        return memLogBuffer;
-      }
-      const arr = parseJson(raw, []);
-      memLogBuffer = Array.isArray(arr) ? arr : [];
-      return memLogBuffer;
-    } catch (_) {
-      memLogBuffer = [];
-      return memLogBuffer;
-    }
+  function readStoredLog() {
+    const arr = parseJson(storage.localGet(KEYS.logBuffer), []);
+    return Array.isArray(arr) ? arr : [];
   }
 
   function flushLogBuffer() {
@@ -310,9 +302,13 @@ function formatTime(dOrTs = new Date()) {
       clearTimeout(logFlushTimer);
       logFlushTimer = null;
     }
-    if (!logBufferDirty || memLogBuffer === null) return;
-    writeLogBuffer(memLogBuffer);
-    logBufferDirty = false;
+    if (!pendingLog.length) return;
+    try {
+      const list = readStoredLog().concat(pendingLog).slice(-MAX_LOG_ENTRIES);
+      if (storage.localSet(KEYS.logBuffer, JSON.stringify(list))) pendingLog = [];
+    } catch (e) {
+      console.warn('[HHA] Failed to write log buffer:', e);
+    }
   }
 
   function scheduleLogFlush() {
@@ -324,43 +320,26 @@ function formatTime(dOrTs = new Date()) {
     }
   }
 
-  function writeLogBuffer(entries) {
-    try {
-      let list = Array.isArray(entries) ? entries : [];
-      if (list.length > MAX_LOG_ENTRIES) {
-        list = list.slice(-MAX_LOG_ENTRIES);
-      }
-      const json = JSON.stringify(list);
-      memLogBuffer = list;
-      logBufferDirty = false;
-      storage.localSet(KEYS.logBuffer, json);
-      return true;
-    } catch (e) {
-      console.warn('[HHA] Failed to write log buffer:', e);
-      return false;
-    }
-  }
-
   function appendLogEntry(entry) {
-    const list = readLogBuffer();
-    list.push(entry);
-    logBufferDirty = true;
+    pendingLog.push(entry);
+    if (pendingLog.length > MAX_LOG_ENTRIES) pendingLog = pendingLog.slice(-MAX_LOG_ENTRIES);
     scheduleLogFlush();
   }
 
   function hhaDumpLog() {
-    const entries = readLogBuffer();
+    flushLogBuffer();
+    // Entries of different tabs come in flush order, so they are put back in time order.
+    const entries = readStoredLog().concat(pendingLog).sort((a, b) => (a.ts || 0) - (b.ts || 0));
     return entries.map(e => JSON.stringify(e)).join('\n');
   }
 
   function hhaClearLog() {
-    memLogBuffer = [];
-    logBufferDirty = false;
+    pendingLog = [];
     if (logFlushTimer) {
       clearTimeout(logFlushTimer);
       logFlushTimer = null;
     }
-    writeLogBuffer([]);
+    storage.localSet(KEYS.logBuffer, JSON.stringify([]));
     console.info('[HHA] Log buffer cleared');
     return true;
   }
@@ -1820,11 +1799,12 @@ function formatTime(dOrTs = new Date()) {
   // write it to the log. The regexes are broad, and this is the data to narrow them.
   let lastEvidence = null;
 
-  function noteEvidence(rule, text, regex = null) {
+  function noteEvidence(rule, text, regex = null, element = null) {
     const source = String(text || '');
     const found = regex ? regex.exec(source) : null;
     const start = found ? Math.max(0, found.index - 60) : 0;
     lastEvidence = { rule, match: collapseSpaces(source.slice(start, start + 160)) };
+    if (element) lastEvidence.element = element;
   }
 
   function takeEvidence() {
@@ -1859,7 +1839,13 @@ function formatTime(dOrTs = new Date()) {
     lastEvidence = { rule: 'submit_unconfirmed', match: collapseSpaces(parts.join(' ')) };
   }
 
-  const describeElement = (el) => `<${el.tagName.toLowerCase()} data-qa="${el.getAttribute('data-qa') || ''}" class="${el.getAttribute('class') || ''}"> ${textOf(el)}`;
+  // The matched element as a selector, e.g. div[data-qa="task-question"].g-user-content,
+  // so the log shows which part of the broad selector list fired.
+  const describeElement = (el) => {
+    const qa = el.getAttribute('data-qa');
+    const classes = collapseSpaces(el.getAttribute('class') || '').split(' ').filter(Boolean).map(c => '.' + c).join('');
+    return el.tagName.toLowerCase() + (qa ? `[data-qa="${qa}"]` : '') + classes;
+  };
 
   const TEST_PAGE_REGEX = /(?:необходимо\s+пройти\s+тест|ответьте\s+на\s+(?:следующие\s+)?вопрос|тестовое\s+задание\s*работодателя|анкета\s+работодателя|пройти\s+опрос)/i;
 
@@ -1868,7 +1854,7 @@ function formatTime(dOrTs = new Date()) {
     if (!doc) return false;
     const marker = q('[data-qa*="question" i], [data-qa*="test-task" i], [data-qa*="questionnaire" i], [class*="questionnaire" i], [class*="response-test" i]');
     if (marker) {
-      noteEvidence('page_test_selector', describeElement(marker));
+      noteEvidence('page_test_selector', textOf(marker), null, describeElement(marker));
       return true;
     }
     const form = q('[data-qa*="response-form" i], [data-qa*="vacancy-response" i], form');
@@ -2040,6 +2026,56 @@ function formatTime(dOrTs = new Date()) {
       return true;
     }
     return false;
+  }
+
+  // A queued vacancy the user applied to by hand. It leaves the queue and counts toward
+  // today's responses: hh.ru counts it toward the same daily limit.
+  function markManualApplied(vid, source) {
+    const clean = cleanVid(vid);
+    if (!clean || !ManualQueue.has(clean)) return false;
+    ManualQueue.remove(clean);
+    const counters = getDailyCounters();
+    counters.applied++;
+    saveDailyCounters(counters);
+    hhaLog('info', 'manual_applied', { vid: clean, source });
+    const cur = getSentCount();
+    events.emit('progress', {
+      sent: cur,
+      percentage: Math.min(100, Math.round((cur / MAX_DAILY_LIMIT) * 100))
+    });
+    return true;
+  }
+
+  // The page shows that a response to this vacancy exists: the chat link, the offer to
+  // attach a cover letter, or a success message in a visible modal.
+  const isManualResponseDone = () => detectAlreadyApplied() ||
+    Boolean(queryExact('attachCoverBtn')) ||
+    getVisibleModals().some(modal => hasResponseTextConfirmation(modal));
+
+  // A vacancy opened from the queue in its own tab. The user often answers the questions
+  // in a modal, and then the page does not reload, so the page is checked for a while.
+  const MANUAL_WATCH_MS = 10 * 60 * 1000;
+  let manualWatchId = null;
+
+  function stopManualWatch() {
+    if (manualWatchId !== null) {
+      clearInterval(manualWatchId);
+      manualWatchId = null;
+    }
+  }
+
+  function watchManualResponse(vid) {
+    stopManualWatch();
+    const startedAt = Date.now();
+    const check = () => {
+      if (isRunning() || !ManualQueue.has(vid) || Date.now() - startedAt > MANUAL_WATCH_MS) return stopManualWatch();
+      if (isManualResponseDone()) {
+        markManualApplied(vid, 'page');
+        stopManualWatch();
+      }
+    };
+    manualWatchId = setInterval(check, 1500);
+    check();
   }
 
   function skipVacancy(vid, reason = 'skip_reject_warning', runId = currentRunId) {
@@ -2656,9 +2692,12 @@ function formatTime(dOrTs = new Date()) {
     const runId = currentRunId;
     activeAbortController = new AbortController();
 
+    // The run flag is still set when a page of an ongoing run loads, so this is a
+    // resume of the same run, not a new start.
+    const isResume = isRunning();
     setRunning(true);
     markProgress();
-    hhaLog('info', 'start', { runId, limit: MAX_DAILY_LIMIT });
+    hhaLog('info', isResume ? 'resume' : 'start', { runId, limit: MAX_DAILY_LIMIT });
     setStatus('running', 'LOOP_STARTING');
 
     setActivity('locking');
@@ -2976,28 +3015,14 @@ function formatTime(dOrTs = new Date()) {
     }
   }
   let watchdogIntervalId = null;
-  const globalListeners = [];
 
   function addGlobalListener(target, type, handler, options) {
     if (!target?.addEventListener) return;
     try {
       target.addEventListener(type, handler, options);
-      globalListeners.push({ target, type, handler, options });
     } catch (e) {
       hhaLog('warn', 'add_global_listener_failed', { type, error: String(e && e.message || e) });
     }
-  }
-
-  function teardownRuntime() {
-    if (watchdogIntervalId !== null) {
-      clearInterval(watchdogIntervalId);
-      watchdogIntervalId = null;
-    }
-    for (const l of globalListeners.splice(0)) {
-      try { l.target.removeEventListener(l.type, l.handler, l.options); } catch (_) {}
-    }
-    terminateRun('RUNTIME_TEARDOWN', '', {}, false);
-    events.removeAllListeners();
   }
 
   function resetSessionCounters() {
@@ -3006,8 +3031,11 @@ function formatTime(dOrTs = new Date()) {
     storage.sessionRemove(KEYS.skipAlertShown);
   }
 
-  // --- 16. Public API ---
-  const HHApplyAssistant = {
+  // --- 16. Engine API ---
+  // The full interface is for the HUD only and stays inside the script. Page scripts of
+  // hh.ru share the window with this one (@grant none), so the global object below gets
+  // only what is needed from the console.
+  const engine = {
     start: () => startLoop(),
     stop: (code = 'STOPPED_BY_USER', reason = '') => terminateRun(code, reason || (code === 'STOPPED_BY_USER' ? 'Automation stopped by user' : code), {}, false),
     getState: () => ({
@@ -3048,21 +3076,25 @@ function formatTime(dOrTs = new Date()) {
       flushStorageCaches();
       return true;
     },
-    setStatus(statusKey, code, details) {
-      setStatus(statusKey, code, details);
-      return true;
-    },
     getManualQueue: () => ManualQueue.get(),
     markManualItemViewed: (vid, viewed) => ManualQueue.markViewed(vid, viewed),
+    markManualApplied: (vid) => markManualApplied(vid, 'button'),
     removeManualItem: (vid) => ManualQueue.remove(vid),
     clearManualQueue: () => ManualQueue.clear(),
     on: (evt, fn) => events.on(evt, fn),
-    off: (evt, fn) => events.off(evt, fn),
-    destroy: () => teardownRuntime(),
-    revertCommittedApplied: (vid) => revertCommittedApplied(vid),
+    off: (evt, fn) => events.off(evt, fn)
+  };
+
+  const publicApi = Object.freeze({
+    start: () => engine.start(),
+    stop: () => engine.stop(),
+    getState: () => engine.getState(),
+    getManualQueue: () => engine.getManualQueue(),
+    on: (evt, fn) => engine.on(evt, fn),
+    off: (evt, fn) => engine.off(evt, fn),
     hhaDumpLog: () => hhaDumpLog(),
     hhaClearLog: () => hhaClearLog()
-  };
+  });
 
   // --- 17. Bootstrap & Global Binding ---
   function bootstrap() {
@@ -3108,14 +3140,13 @@ function formatTime(dOrTs = new Date()) {
     }
     if (!Page.isResponseForm()) clearTrapLock();
 
-    // Cross-tab auto-detection: if viewing an item from manual queue, mark viewed (or remove if applied)
+    // A vacancy from the manual queue: mark it viewed, and take it off the queue once
+    // the page shows a response. A run in this tab skips queued vacancies by itself.
     if (Page.isVacancy() || Page.isResponseForm()) {
       const currentVid = getStableVacancyId() || getLastAttemptID();
       if (currentVid && ManualQueue.has(currentVid)) {
         ManualQueue.markViewed(currentVid, true);
-        if (detectAlreadyApplied()) {
-          ManualQueue.remove(currentVid);
-        }
+        if (!isRunning()) watchManualResponse(currentVid);
       }
     }
 
@@ -3198,9 +3229,23 @@ function formatTime(dOrTs = new Date()) {
     addGlobalListener(win, 'beforeunload', () => {
       if (!isRunning()) releaseInstanceLock(TAB_ID);
     });
+    // The queue and the counters are shared by all hh.ru tabs: a vacancy answered in
+    // another tab updates the HUD here without a reload.
+    addGlobalListener(win, 'storage', (e) => {
+      if (e.key === KEYS.manualList) {
+        events.emit('manualQueue', { action: 'sync', queue: ManualQueue.get() });
+      } else if (e.key === KEYS.dailyCounters) {
+        const cur = getSentCount();
+        events.emit('progress', {
+          sent: cur,
+          percentage: Math.min(100, Math.round((cur / MAX_DAILY_LIMIT) * 100))
+        });
+      }
+    });
   }
 
-  globalThis.HHApplyAssistant = HHApplyAssistant;
+  hhaEngine = engine;
+  globalThis.HHApplyAssistant = publicApi;
 })();
 
 /**
@@ -3378,6 +3423,7 @@ function formatTime(dOrTs = new Date()) {
   // --- 2. SVG Icons ---
 
   const ICONS = {
+    check: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`,
     inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`
   };
 
@@ -4427,6 +4473,11 @@ function formatTime(dOrTs = new Date()) {
       box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary);
     }
 
+    .hha-queue-applied-btn:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary);
+    }
+
     .hha-log-item-delete:focus-visible,
     .hha-btn-clear-all:focus-visible,
     .hha-btn-copy-error:focus-visible,
@@ -4873,6 +4924,38 @@ function formatTime(dOrTs = new Date()) {
       text-overflow: ellipsis;
       min-width: 0;
       flex-shrink: 1;
+    }
+
+    .hha-queue-card-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+
+    .hha-queue-applied-btn {
+      width: 20px;
+      height: 20px;
+      min-width: 20px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      border-radius: var(--md-sys-shape-corner-full);
+      color: var(--md-sys-color-on-surface-variant);
+      cursor: pointer;
+      transition: color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-queue-applied-btn:hover {
+      color: var(--md-sys-color-on-primary-container);
+      background: var(--md-sys-color-primary-container);
+    }
+
+    .hha-queue-applied-btn:active {
+      transform: scale(0.92);
     }
 
     /* Delete item button with Icon Button state layers */
@@ -5443,12 +5526,17 @@ function formatTime(dOrTs = new Date()) {
   // --- 4. Web Component Implementation (Closed Shadow DOM) ---
 
   class HhaHudElement extends HTMLElement {
+    // Private, so page scripts cannot reach the engine or the closed shadow root through
+    // the <hha-hud> element.
+    #shadow = null;
+    #assistant = null;
+
     constructor() {
       super();
-      this._shadow = (typeof this.attachShadow === 'function')
+      this.#shadow = (typeof this.attachShadow === 'function')
         ? this.attachShadow({ mode: 'closed' })
         : null;
-      this._assistant = null;
+      this.#assistant = null;
       this._unsubscribers = [];
 
       this._isExpanded = false;
@@ -5538,13 +5626,13 @@ function formatTime(dOrTs = new Date()) {
       this._bindDomEvents();
 
       // Apply restored tab and expansion state to DOM
-      if (this._shadow) {
+      if (this.#shadow) {
         if (this._activeTab !== 'settings') {
           this.setActiveTab(this._activeTab);
         }
         if (this._isExpanded) {
-          const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
-          const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
+          const root = this.#shadow.querySelector('[data-el="root"]') || this.#shadow.querySelector('.hha-root');
+          const statusGroup = this.#shadow.querySelector('[data-el="pill-status-group"]');
           if (root) root.classList.add('is-expanded');
           if (statusGroup) {
             statusGroup.setAttribute('aria-expanded', 'true');
@@ -5564,10 +5652,8 @@ function formatTime(dOrTs = new Date()) {
       }
       this._resizeRemover = this._addWindowListener('resize', this._onResize, { passive: true });
 
-      // Auto-bind to global assistant if present
-      const globalAssistant = globalThis.HHApplyAssistant || (globalThis.window && globalThis.window.HHApplyAssistant);
-      if (globalAssistant && !this._assistant) {
-        this.bindAssistant(globalAssistant);
+      if (hhaEngine && !this.#assistant) {
+        this.bindAssistant(hhaEngine);
       }
     }
 
@@ -5609,9 +5695,9 @@ function formatTime(dOrTs = new Date()) {
     // --- Public API ---
 
     bindAssistant(assistant) {
-      if (!assistant || this._assistant === assistant) return;
+      if (!assistant || this.#assistant === assistant) return;
       this.unbindAssistant();
-      this._assistant = assistant;
+      this.#assistant = assistant;
 
       if (typeof assistant.getState === 'function') {
         const s = assistant.getState();
@@ -5668,7 +5754,7 @@ function formatTime(dOrTs = new Date()) {
         try { if (typeof unsub === 'function') unsub(); } catch (_) {}
       }
       this._unsubscribers = [];
-      this._assistant = null;
+      this.#assistant = null;
 
       if (this._copyErrorTimer) {
         clearTimeout(this._copyErrorTimer);
@@ -5721,11 +5807,11 @@ function formatTime(dOrTs = new Date()) {
 
       this._hideTooltip();
 
-      if (this._shadow) {
-        const flyout = this._shadow.querySelector('.hha-flyout');
-        const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
-        const pill = this._shadow.querySelector('[data-el="pill"]');
-        const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
+      if (this.#shadow) {
+        const flyout = this.#shadow.querySelector('.hha-flyout');
+        const root = this.#shadow.querySelector('[data-el="root"]') || this.#shadow.querySelector('.hha-root');
+        const pill = this.#shadow.querySelector('[data-el="pill"]');
+        const statusGroup = this.#shadow.querySelector('[data-el="pill-status-group"]');
         if (statusGroup) {
           statusGroup.setAttribute('aria-expanded', String(this._isExpanded));
           statusGroup.setAttribute('aria-label', this._isExpanded ? 'Свернуть панель управления' : 'Открыть настройки и журнал');
@@ -5753,7 +5839,7 @@ function formatTime(dOrTs = new Date()) {
 
         if (this._animTimer) clearTimeout(this._animTimer);
         if (this._isExpanded && this._activeTab === 'queue') {
-          const stream = this._shadow.querySelector('[data-el="queue-stream"]');
+          const stream = this.#shadow.querySelector('[data-el="queue-stream"]');
           if (!stream || !stream.children.length) {
             this._syncQueue();
           }
@@ -5769,8 +5855,8 @@ function formatTime(dOrTs = new Date()) {
               this._updateOverlayScrollbar();
             }
           }
-          if (!this._isExpanded && this._shadow) {
-            const pillEl = this._shadow.querySelector('[data-el="pill"]');
+          if (!this._isExpanded && this.#shadow) {
+            const pillEl = this.#shadow.querySelector('[data-el="pill"]');
             if (pillEl && typeof pillEl.offsetWidth === 'number' && pillEl.offsetWidth > 0 && pillEl.offsetWidth < 300) {
               this._collapsedPillWidth = pillEl.offsetWidth;
               if (root && typeof root.style.setProperty === 'function') {
@@ -5806,9 +5892,9 @@ function formatTime(dOrTs = new Date()) {
         localStorage.setItem('hha_hud_active_tab_v2', this._activeTab);
       } catch (_) {}
 
-      if (!this._shadow) return;
+      if (!this.#shadow) return;
 
-      const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
+      const root = this.#shadow.querySelector('[data-el="root"]') || this.#shadow.querySelector('.hha-root');
       if (root) {
         root.dataset.activeTab = tabName;
       }
@@ -5817,20 +5903,20 @@ function formatTime(dOrTs = new Date()) {
       const tabOrder = { settings: 0, queue: 1 };
       const prevIdx = tabOrder[prevTab] !== undefined ? tabOrder[prevTab] : 0;
       const nextIdx = tabOrder[tabName] !== undefined ? tabOrder[tabName] : 0;
-      const panelsContainer = this._shadow.querySelector('.hha-panels');
+      const panelsContainer = this.#shadow.querySelector('.hha-panels');
       if (panelsContainer) {
         panelsContainer.classList.toggle('slide-forward', nextIdx >= prevIdx);
         panelsContainer.classList.toggle('slide-backward', nextIdx < prevIdx);
       }
 
-      const tabs = this._shadow.querySelectorAll('.hha-tab-btn');
+      const tabs = this.#shadow.querySelectorAll('.hha-tab-btn');
       tabs.forEach(t => {
         const isActive = t.dataset.tab === tabName;
         t.classList.toggle('active', isActive);
         t.setAttribute('aria-selected', isActive ? 'true' : 'false');
       });
 
-      const panels = this._shadow.querySelectorAll('.hha-panel');
+      const panels = this.#shadow.querySelectorAll('.hha-panel');
       panels.forEach(p => {
         const isActive = p.dataset.panel === tabName;
         p.classList.toggle('active', isActive);
@@ -5845,7 +5931,7 @@ function formatTime(dOrTs = new Date()) {
         }
       });
 
-      const tabsContainer = this._shadow.querySelector('.hha-tabs');
+      const tabsContainer = this.#shadow.querySelector('.hha-tabs');
       if (tabsContainer) {
         tabsContainer.dataset.active = tabName;
       }
@@ -5859,7 +5945,7 @@ function formatTime(dOrTs = new Date()) {
       }
       this._syncQueueActions();
       if (this._isExpanded && tabName === 'queue') {
-        const stream = this._shadow.querySelector('[data-el="queue-stream"]');
+        const stream = this.#shadow.querySelector('[data-el="queue-stream"]');
         if (!stream || !stream.children.length) {
           this._syncQueue();
         }
@@ -5867,9 +5953,9 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _updateTabIndicator() {
-      if (!this._shadow) return;
-      const indicator = this._shadow.querySelector('[data-el="tab-indicator"]');
-      const tabs = this._shadow.querySelector('.hha-tabs');
+      if (!this.#shadow) return;
+      const indicator = this.#shadow.querySelector('[data-el="tab-indicator"]');
+      const tabs = this.#shadow.querySelector('.hha-tabs');
       if (!indicator || !tabs) return;
 
       tabs.dataset.active = this._activeTab;
@@ -5886,8 +5972,8 @@ function formatTime(dOrTs = new Date()) {
         clearTimeout(this._queueConfirmTimer);
         this._queueConfirmTimer = null;
       }
-      if (!this._shadow) return;
-      const btn = this._shadow.querySelector('[data-action="clear-queue"]') || this._shadow.querySelector('[data-el="clear-queue-btn"]');
+      if (!this.#shadow) return;
+      const btn = this.#shadow.querySelector('[data-action="clear-queue"]') || this.#shadow.querySelector('[data-el="clear-queue-btn"]');
       if (btn) {
         btn.classList.remove('is-confirming');
         btn.innerHTML = `<span class="hha-btn-clear-all-text">Очистить всё</span>`;
@@ -5895,13 +5981,13 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _syncQueueActions() {
-      if (!this._shadow) return;
+      if (!this.#shadow) return;
       const count = this._queue ? this._queue.length : 0;
       if (count === 0) {
         this._resetClearQueueBtn();
       }
 
-      const clearBtn = this._shadow.querySelector('[data-action="clear-queue"]') || this._shadow.querySelector('[data-el="clear-queue-btn"]');
+      const clearBtn = this.#shadow.querySelector('[data-action="clear-queue"]') || this.#shadow.querySelector('[data-el="clear-queue-btn"]');
       if (clearBtn) {
         if (count > 0) {
           clearBtn.removeAttribute('disabled');
@@ -5916,8 +6002,8 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _getPillWidth() {
-      if (!this._isExpanded && !this._isAnimating && this._shadow) {
-        const pill = this._shadow.querySelector('[data-el="pill"]');
+      if (!this._isExpanded && !this._isAnimating && this.#shadow) {
+        const pill = this.#shadow.querySelector('[data-el="pill"]');
         if (pill && typeof pill.offsetWidth === 'number' && pill.offsetWidth > 0 && pill.offsetWidth < 300) {
           this._collapsedPillWidth = pill.offsetWidth;
           return pill.offsetWidth;
@@ -5952,7 +6038,7 @@ function formatTime(dOrTs = new Date()) {
 
     // The error card is filled in by _syncErrorCard().
     _render() {
-      this._shadow.innerHTML = `
+      this.#shadow.innerHTML = `
         <style>${STYLES}</style>
         <div class="hha-root" data-el="root" data-active-tab="${this._activeTab}">
           <div class="hha-pill" data-el="pill">
@@ -6066,8 +6152,8 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _bindFormEvents() {
-      const useCoverCb = this._shadow.querySelector('[data-el="setting-use-cover"]');
-      const coverTextarea = this._shadow.querySelector('[data-el="setting-cover-text"]');
+      const useCoverCb = this.#shadow.querySelector('[data-el="setting-use-cover"]');
+      const coverTextarea = this.#shadow.querySelector('[data-el="setting-cover-text"]');
 
       // The switch only decides whether the letter is sent; the text stays editable
       // either way, so it can be prepared before sending is turned on.
@@ -6096,14 +6182,14 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _updateCoverCounter(length) {
-      const counter = this._shadow?.querySelector('[data-el="cover-counter"]');
+      const counter = this.#shadow?.querySelector('[data-el="cover-counter"]');
       if (!counter) return;
       counter.textContent = `${length} / ${MAX_COVER_LENGTH}`;
       counter.classList.toggle('is-near-limit', length >= MAX_COVER_LENGTH * 0.95);
     }
 
     _showCoverStatus(text, isError) {
-      const status = this._shadow?.querySelector('[data-el="cover-status"]');
+      const status = this.#shadow?.querySelector('[data-el="cover-status"]');
       if (!status) return;
       if (this._coverStatusTimer) clearTimeout(this._coverStatusTimer);
       this._coverStatusTimer = null;
@@ -6142,12 +6228,12 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _bindDomEvents() {
-      if (!this._shadow || this._domEventsBound) return;
+      if (!this.#shadow || this._domEventsBound) return;
       this._domEventsBound = true;
 
-      const root = this._shadow.querySelector('[data-el="root"]');
-      const pill = this._shadow.querySelector('[data-el="pill"]');
-      const header = this._shadow.querySelector('[data-el="island-header"]');
+      const root = this.#shadow.querySelector('[data-el="root"]');
+      const pill = this.#shadow.querySelector('[data-el="pill"]');
+      const header = this.#shadow.querySelector('[data-el="island-header"]');
       if (!root || !pill) return;
 
       pill.addEventListener('pointerdown', (e) => this._onPointerDown(e));
@@ -6185,7 +6271,7 @@ function formatTime(dOrTs = new Date()) {
         }
       });
 
-      const statusGroup = this._shadow.querySelector('[data-el="pill-status-group"]');
+      const statusGroup = this.#shadow.querySelector('[data-el="pill-status-group"]');
       if (statusGroup) {
         statusGroup.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
@@ -6262,9 +6348,9 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _attachOverlayScrollbar(streamSel, scrollbarSel, thumbSel) {
-      const stream = this._shadow.querySelector(streamSel);
-      const scrollbar = this._shadow.querySelector(scrollbarSel);
-      const thumb = this._shadow.querySelector(thumbSel);
+      const stream = this.#shadow.querySelector(streamSel);
+      const scrollbar = this.#shadow.querySelector(scrollbarSel);
+      const thumb = this.#shadow.querySelector(thumbSel);
       const logCard = stream ? stream.closest('.hha-log-card') : null;
       if (!stream || !logCard || !scrollbar || !thumb) return;
 
@@ -6315,11 +6401,11 @@ function formatTime(dOrTs = new Date()) {
       this._updateTabIndicator();
     }
     _updateOverlayScrollbar() {
-      if (!this._shadow) return;
+      if (!this.#shadow) return;
       const update = (streamSel, scrollbarSel, thumbSel) => {
-        const stream = this._shadow.querySelector(streamSel);
-        const scrollbar = this._shadow.querySelector(scrollbarSel);
-        const thumb = this._shadow.querySelector(thumbSel);
+        const stream = this.#shadow.querySelector(streamSel);
+        const scrollbar = this.#shadow.querySelector(scrollbarSel);
+        const thumb = this.#shadow.querySelector(thumbSel);
         if (!stream || !scrollbar || !thumb) return;
 
         const scrollH = stream.scrollHeight;
@@ -6358,14 +6444,14 @@ function formatTime(dOrTs = new Date()) {
 
       this.setActiveTab('settings');
       this._syncErrorCard();
-      const errorBody = this._shadow?.querySelector('[data-el="error-card-body"]');
+      const errorBody = this.#shadow?.querySelector('[data-el="error-card-body"]');
       if (errorBody) errorBody.scrollTop = 0;
       this._updatePosition();
     }
 
     _syncErrorCard() {
-      if (!this._shadow) return;
-      const el = (name) => this._shadow.querySelector(`[data-el="${name}"]`);
+      if (!this.#shadow) return;
+      const el = (name) => this.#shadow.querySelector(`[data-el="${name}"]`);
       const err = this._lastErrorPayload;
 
       el('root')?.classList.toggle('has-error', Boolean(err));
@@ -6395,9 +6481,9 @@ function formatTime(dOrTs = new Date()) {
 
     async _resetAfterError({ restart = false } = {}) {
       this._dismissError();
-      if (!this._assistant) return;
-      await this._assistant.resetState();
-      if (restart) this._assistant.start();
+      if (!this.#assistant) return;
+      await this.#assistant.resetState();
+      if (restart) this.#assistant.start();
     }
 
     _dismissError() {
@@ -6406,11 +6492,11 @@ function formatTime(dOrTs = new Date()) {
         this._copyErrorTimer = null;
       }
       this._lastErrorPayload = null;
-      if (!this._shadow) return;
+      if (!this.#shadow) return;
       this._syncErrorCard();
       this._updatePosition();
 
-      const copyBtn = this._shadow.querySelector('[data-el="error-copy-btn"]');
+      const copyBtn = this.#shadow.querySelector('[data-el="error-copy-btn"]');
       if (copyBtn) {
         copyBtn.classList.remove('is-copied');
         if (copyBtn.dataset && copyBtn.dataset.origText) {
@@ -6430,8 +6516,8 @@ function formatTime(dOrTs = new Date()) {
         clearTimeout(this._queueConfirmTimer);
         this._queueConfirmTimer = null;
         this._resetClearQueueBtn();
-        if (this._assistant && typeof this._assistant.clearManualQueue === 'function') {
-          this._assistant.clearManualQueue();
+        if (this.#assistant && typeof this.#assistant.clearManualQueue === 'function') {
+          this.#assistant.clearManualQueue();
         } else {
           this._queue = [];
           this._syncQueue();
@@ -6455,8 +6541,8 @@ function formatTime(dOrTs = new Date()) {
         try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (_) {}
       }
       if (cVid) {
-        if (this._assistant && typeof this._assistant.markManualItemViewed === 'function') {
-          this._assistant.markManualItemViewed(cVid, true);
+        if (this.#assistant && typeof this.#assistant.markManualItemViewed === 'function') {
+          this.#assistant.markManualItemViewed(cVid, true);
         } else {
           const item = (this._queue || []).find(it => cleanVid(it.vid) === cVid);
           if (item) {
@@ -6468,14 +6554,17 @@ function formatTime(dOrTs = new Date()) {
       }
     }
 
-    _handleDeleteQueueItemAction(target) {
+    // mode 'applied': the user applied by hand, so the engine also counts the response.
+    _handleDeleteQueueItemAction(target, mode = 'delete') {
       const vid = target.dataset.vid || target.dataset.cleanVid;
       const cVid = cleanVid(target.dataset.cleanVid || vid);
       if (!vid) return;
       const card = target.closest('.hha-queue-card');
       const executeRemove = () => {
-        if (this._assistant && typeof this._assistant.removeManualItem === 'function') {
-          this._assistant.removeManualItem(vid);
+        if (mode === 'applied' && typeof this.#assistant?.markManualApplied === 'function') {
+          this.#assistant.markManualApplied(vid);
+        } else if (this.#assistant && typeof this.#assistant.removeManualItem === 'function') {
+          this.#assistant.removeManualItem(vid);
         } else {
           this._queue = this._queue.filter(it => cleanVid(it.vid) !== cVid);
           this._syncQueue();
@@ -6521,7 +6610,8 @@ function formatTime(dOrTs = new Date()) {
         'resolve-error': (_, ev) => { ev.stopPropagation(); this._resolveError(); },
         'clear-queue': (tgt, ev) => { ev.stopPropagation(); this._handleClearQueueAction(tgt); },
         'open-vacancy': (tgt, ev) => { this._handleOpenVacancyAction(tgt, ev); },
-        'delete-queue-item': (tgt, ev) => { ev.stopPropagation(); this._handleDeleteQueueItemAction(tgt); }
+        'delete-queue-item': (tgt, ev) => { ev.stopPropagation(); this._handleDeleteQueueItemAction(tgt); },
+        'applied-queue-item': (tgt, ev) => { ev.stopPropagation(); this._handleDeleteQueueItemAction(tgt, 'applied'); }
       };
 
       const handler = actionMap[action];
@@ -6600,13 +6690,13 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _handleToggleAutomation() {
-      if (!this._assistant) return;
+      if (!this.#assistant) return;
       const now = Date.now();
       if (this._lastToggleTime && (now - this._lastToggleTime) < 250) return;
       this._lastToggleTime = now;
 
       if (this._status.status === 'running') {
-        if (typeof this._assistant.stop === 'function') this._assistant.stop();
+        if (typeof this.#assistant.stop === 'function') this.#assistant.stop();
       } else if (this._status.status === 'done') {
         if (this._status.code === 'DAILY_LIMIT_REACHED') {
           this.open();
@@ -6617,7 +6707,7 @@ function formatTime(dOrTs = new Date()) {
         if (sent < lim) {
           this.updateStatus('idle', 'IDLE');
           this._dismissError();
-          if (typeof this._assistant.start === 'function') this._assistant.start();
+          if (typeof this.#assistant.start === 'function') this.#assistant.start();
         } else {
           this.open();
           this.setActiveTab('settings');
@@ -6632,7 +6722,7 @@ function formatTime(dOrTs = new Date()) {
           return;
         }
         this._dismissError();
-        if (typeof this._assistant.start === 'function') this._assistant.start();
+        if (typeof this.#assistant.start === 'function') this.#assistant.start();
       }
     }
 
@@ -6642,17 +6732,17 @@ function formatTime(dOrTs = new Date()) {
       }
       this._config = { ...this._config, ...partial };
       this.updateProgress(this._progress ? this._progress.sent : 0);
-      const saved = Boolean(this._assistant?.setConfig?.(partial));
+      const saved = Boolean(this.#assistant?.setConfig?.(partial));
       this._syncConfig();
       return saved;
     }
 
     _showTooltip(target) {
-      if (!this._shadow || !target || !this._isExpanded) return;
+      if (!this.#shadow || !target || !this._isExpanded) return;
       const text = target.getAttribute('data-tooltip');
       if (!text) return;
-      const tooltip = this._shadow.querySelector('[data-el="tooltip"]');
-      const flyout = this._shadow.querySelector('[data-el="flyout"]');
+      const tooltip = this.#shadow.querySelector('[data-el="tooltip"]');
+      const flyout = this.#shadow.querySelector('[data-el="flyout"]');
       if (!tooltip || !flyout) return;
 
       tooltip.textContent = text;
@@ -6683,8 +6773,8 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _hideTooltip() {
-      if (!this._shadow) return;
-      const tooltip = this._shadow.querySelector('[data-el="tooltip"]');
+      if (!this.#shadow) return;
+      const tooltip = this.#shadow.querySelector('[data-el="tooltip"]');
       if (tooltip) {
         tooltip.classList.remove('is-visible');
       }
@@ -6711,7 +6801,7 @@ function formatTime(dOrTs = new Date()) {
         }
       }
 
-      const root = this._shadow ? (this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root')) : null;
+      const root = this.#shadow ? (this.#shadow.querySelector('[data-el="root"]') || this.#shadow.querySelector('.hha-root')) : null;
       if (root) {
         root.classList.add('is-dragging');
       }
@@ -6838,7 +6928,7 @@ function formatTime(dOrTs = new Date()) {
         }
       } catch (_) {}
 
-      const root = this._shadow ? (this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root')) : null;
+      const root = this.#shadow ? (this.#shadow.querySelector('[data-el="root"]') || this.#shadow.querySelector('.hha-root')) : null;
       if (root) root.classList.remove('is-dragging');
 
       const wasDragging = this._dragMoved;
@@ -6864,10 +6954,10 @@ function formatTime(dOrTs = new Date()) {
         this._justDragged = false;
         this._dragMoved = false;
       };
-      if (this._shadow && typeof this._shadow.addEventListener === 'function') {
-        this._shadow.addEventListener('click', suppress, { capture: true, once: true });
+      if (this.#shadow && typeof this.#shadow.addEventListener === 'function') {
+        this.#shadow.addEventListener('click', suppress, { capture: true, once: true });
         setTimeout(() => {
-          try { this._shadow.removeEventListener('click', suppress, { capture: true }); } catch (_) {}
+          try { this.#shadow.removeEventListener('click', suppress, { capture: true }); } catch (_) {}
           this._justDragged = false;
           this._dragMoved = false;
         }, 120);
@@ -6888,8 +6978,8 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _updatePosition() {
-      if (!this._shadow) return;
-      const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
+      if (!this.#shadow) return;
+      const root = this.#shadow.querySelector('[data-el="root"]') || this.#shadow.querySelector('.hha-root');
       if (!root) return;
 
       const winW = window.innerWidth || 1024;
@@ -6927,7 +7017,7 @@ function formatTime(dOrTs = new Date()) {
         root.style.setProperty('--flyout-height', `${finalH}px`);
       }
 
-      const flyout = this._shadow.querySelector('.hha-flyout');
+      const flyout = this.#shadow.querySelector('.hha-flyout');
       if (flyout) {
         flyout.style.maxHeight = '';
         flyout.style.height = '';
@@ -6985,11 +7075,11 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _syncStatus() {
-      if (!this._shadow) return;
+      if (!this.#shadow) return;
       const { status = 'idle' } = this._status || {};
       const isRunning = status === 'running';
 
-      const root = this._shadow.querySelector('[data-el="root"]') || this._shadow.querySelector('.hha-root');
+      const root = this.#shadow.querySelector('[data-el="root"]') || this.#shadow.querySelector('.hha-root');
       if (root && root.classList.contains('is-running') !== isRunning) {
         root.classList.toggle('is-running', isRunning);
         // The step segment appears only while running, so the pill changes width.
@@ -6997,7 +7087,7 @@ function formatTime(dOrTs = new Date()) {
       }
       this._syncPillBar();
 
-      const quickBtns = this._shadow.querySelectorAll('.hha-btn-quick');
+      const quickBtns = this.#shadow.querySelectorAll('.hha-btn-quick');
       if (quickBtns.length > 0) {
         let targetClass = 'hha-btn-start';
         let targetLabel = 'Старт';
@@ -7054,11 +7144,11 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _syncProgress() {
-      if (!this._shadow) return;
+      if (!this.#shadow) return;
       const { sent = 0, displayCurrent } = this._progress || {};
       const cur = displayCurrent !== undefined ? displayCurrent : Math.max(0, sent);
 
-      const currentEls = this._shadow.querySelectorAll('.hha-current-count');
+      const currentEls = this.#shadow.querySelectorAll('.hha-current-count');
       currentEls.forEach(el => { el.textContent = String(cur); });
       this._syncStatusLine();
     }
@@ -7099,7 +7189,7 @@ function formatTime(dOrTs = new Date()) {
     // A width transition does not run when `auto` changes with the text, so the
     // new width is measured and the element moves between two pixel values.
     _setPillStepText(text) {
-      const step = this._shadow?.querySelector('[data-el="pill-step"]');
+      const step = this.#shadow?.querySelector('[data-el="pill-step"]');
       if (!step || step.textContent === text) return;
       const from = step.offsetWidth;
       step.textContent = text;
@@ -7114,7 +7204,7 @@ function formatTime(dOrTs = new Date()) {
     // The bar under the pill fills up over a timed pause. One CSS transition per
     // pause is enough; the second-by-second countdown lives in the text.
     _syncPillBar() {
-      const bar = this._shadow?.querySelector('[data-el="pill-step-bar"]');
+      const bar = this.#shadow?.querySelector('[data-el="pill-step-bar"]');
       if (!bar) return;
       const a = this._status.status === 'running' ? this._activity : null;
       const remaining = a?.until ? a.until - Date.now() : 0;
@@ -7136,16 +7226,16 @@ function formatTime(dOrTs = new Date()) {
         clearTimeout(this._statusLineTimer);
         this._statusLineTimer = null;
       }
-      if (!this._shadow) return;
+      if (!this.#shadow) return;
       const text = this._statusLineText();
       const summary = this._summaryText();
-      const line = this._shadow.querySelector('[data-el="status-line"]');
+      const line = this.#shadow.querySelector('[data-el="status-line"]');
       if (line) {
         line.textContent = text;
         line.title = text;
       }
       const hover = text === summary ? summary : `${summary}\n${text}`;
-      this._shadow.querySelectorAll('[data-summary-title]').forEach(el => { el.title = hover; });
+      this.#shadow.querySelectorAll('[data-summary-title]').forEach(el => { el.title = hover; });
 
       this._setPillStepText(this._pillStepText());
 
@@ -7175,7 +7265,10 @@ function formatTime(dOrTs = new Date()) {
             <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="${escapeHtml(displayTitle)}">
               <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
             </a>
-            <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">✕</button>
+            <div class="hha-queue-card-actions">
+              <button type="button" class="hha-queue-applied-btn" data-action="applied-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Откликнулся: убрать и засчитать" aria-label="Откликнулся вручную">${ICONS.check}</button>
+              <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">✕</button>
+            </div>
           </div>
           ${displayEmployer ? `
           <div class="hha-queue-card-mid">
@@ -7191,20 +7284,20 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _syncQueue() {
-      if (!this._shadow) return;
+      if (!this.#shadow) return;
       this._hideTooltip();
       this._syncQueueActions();
       const count = this._queue ? this._queue.length : 0;
 
-      const queueCountEls = this._shadow.querySelectorAll('.hha-queue-count');
+      const queueCountEls = this.#shadow.querySelectorAll('.hha-queue-count');
       queueCountEls.forEach(el => { el.textContent = String(count); });
 
-      const toolbarTitle = this._shadow.querySelector('[data-el="queue-toolbar-title"]');
+      const toolbarTitle = this.#shadow.querySelector('[data-el="queue-toolbar-title"]');
       if (toolbarTitle) {
         toolbarTitle.textContent = count > 0 ? `Ручной отклик (${count})` : 'Ручной отклик';
       }
 
-      const queueTabCount = this._shadow.querySelector('[data-el="queue-tab-count"]');
+      const queueTabCount = this.#shadow.querySelector('[data-el="queue-tab-count"]');
       if (queueTabCount) {
         if (count > 0) {
           queueTabCount.textContent = String(count);
@@ -7220,7 +7313,7 @@ function formatTime(dOrTs = new Date()) {
         this._updateTabIndicator();
       }
 
-      const queueStream = this._shadow.querySelector('[data-el="queue-stream"]');
+      const queueStream = this.#shadow.querySelector('[data-el="queue-stream"]');
       if (queueStream) {
         if (this._queue && this._queue.length > 0) {
           const sorted = [...this._queue].sort((a, b) => {
@@ -7248,16 +7341,16 @@ function formatTime(dOrTs = new Date()) {
     }
 
     _syncConfig() {
-      if (!this._shadow) return;
+      if (!this.#shadow) return;
       const c = this._config || {};
 
-      const useCoverCb = this._shadow.querySelector('[data-el="setting-use-cover"]');
-      const coverTextarea = this._shadow.querySelector('[data-el="setting-cover-text"]');
+      const useCoverCb = this.#shadow.querySelector('[data-el="setting-use-cover"]');
+      const coverTextarea = this.#shadow.querySelector('[data-el="setting-cover-text"]');
 
       const isCoverActive = Boolean(c.useCover);
       if (useCoverCb) useCoverCb.checked = isCoverActive;
       if (coverTextarea) {
-        const isFocused = this._shadow.activeElement === coverTextarea;
+        const isFocused = this.#shadow.activeElement === coverTextarea;
         if (!isFocused && coverTextarea.value !== (c.coverText || '')) {
           coverTextarea.value = c.coverText || '';
         }
@@ -7272,16 +7365,15 @@ function formatTime(dOrTs = new Date()) {
     customElements.define('hha-hud', HhaHudElement);
   }
 
-  function mountHud(assistant = null) {
+  function mountHud() {
     if (!document.body) return null;
     let hud = document.querySelector('hha-hud');
     if (!hud) {
       hud = document.createElement('hha-hud');
       document.body.appendChild(hud);
     }
-    const targetAssistant = assistant || globalThis.HHApplyAssistant || (globalThis.window && globalThis.window.HHApplyAssistant);
-    if (targetAssistant && typeof hud.bindAssistant === 'function') {
-      hud.bindAssistant(targetAssistant);
+    if (hhaEngine && typeof hud.bindAssistant === 'function') {
+      hud.bindAssistant(hhaEngine);
     }
     return hud;
   }
@@ -7294,6 +7386,4 @@ function formatTime(dOrTs = new Date()) {
       document.addEventListener('DOMContentLoaded', () => mountHud(), { once: true });
     }
   }
-
-  globalThis.HhaHud = { mountHud };
 })();
