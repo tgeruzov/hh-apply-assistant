@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.0
+// @version      0.2.1
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -112,6 +112,7 @@ function formatTime(dOrTs = new Date()) {
     tabId: STORAGE_PREFIX + 'tab_id',
     pendingVacancyMeta: STORAGE_PREFIX + 'pending_vacancy_meta',
     blacklist: STORAGE_PREFIX + 'blacklist_v1',
+    appliedHistory: STORAGE_PREFIX + 'applied_v1',
     attempts: STORAGE_PREFIX + 'attempts_v1',
     dailyCounters: STORAGE_PREFIX + 'daily_counters',
     lastCommittedVid: STORAGE_PREFIX + 'last_committed_vid',
@@ -129,7 +130,40 @@ function formatTime(dOrTs = new Date()) {
   const WATCHDOG_STALL_TIMEOUT = 60000; // 60 seconds stall timeout
   const SKIP_ALERT_RATIO = 0.7; // 70% threshold for skip rate alert
   const MAX_LOG_ENTRIES = 600;
-  const REJECT_REGEX = /(?:не\s*соответствует(?:\s*требованиям)?|не\s*подходит|(?:^|[\s.,!?:;«»'"()—–-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;«»'"()—–-]|$)|reject|warning)/i;
+
+  // Text rules of the detectors, in one place so they can be narrowed by the decision log.
+  // Several of them look alike on purpose: each one is tuned to where it is applied.
+  const TEXT_RULES = Object.freeze({
+    // Access and page state.
+    inaccessible: /(?:вам\s+недоступна\s+эта\s+вакансия|войдите\s+как\s+пользователь[,\s]+у\s+которого\s+есть\s+доступ|вакансия\s+(?:закрыта|в\s+архиве|удалена|не\s+найдена)|эта\s+вакансия\s+была\s+удалена|похоже[,\s]+этой\s+вакансии\s+больше\s+нет)/i,
+    captcha: /(?:подтвердите,?\s*что\s*вы\s*не\s*робот|введите\s*символы\s*с\s*картинки|вы\s+не\s+робот|not\s+a\s+robot|необычн\w*\s+активн|unusual\s+(?:activity|traffic))/i,
+    dailyLimit: /(?:исчерпали\s+лимит\s+откликов|не\s+более\s+200\s+откликов|в\s+течение\s+24\s+часов\s+можно\s+совершить\s+не\s+более|лимит\s+откликов[,\s]+попробуйте\s+отправить\s+отклик\s+позднее|лимит\s+откликов.*попробуйте|24\s+часов?\s+можно\s+совершить\s+не\s+более|вы\s+исчерпали\s+лимит|daily\s+application\s+limit|reached\s+(?:the\s+)?limit\s+of\s+(?:200\s+)?applications)/i,
+    // Document title; a bare 429/503 would also match a salary like "смена 4290".
+    rateLimitTitle: /(?:^\s*(?:429|503)\b|(?:error|ошибка)\s*(?:429|503)\b|доступ\s+ограничен|too\s+many\s+requests|service\s+(?:temporarily\s+)?unavailable)/i,
+    rateLimitPage: /(?:слишком\s*много\s*запросов|429\s*Too\s*Many\s*Requests|503\s*Service\s*Unavailable|доступ\s*(?:временно\s*)?ограничен|access\s*(?:temporarily\s*)?denied|error\s+429|error\s+503)/i,
+
+    // Reasons to skip or queue a vacancy.
+    reject: /(?:не\s*соответствует(?:\s*требованиям)?|не\s*подходит|(?:^|[\s.,!?:;«»'"()—–-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;«»'"()—–-]|$)|reject|warning)/i,
+    testPage: /(?:необходимо\s+пройти\s+тест|ответьте\s+на\s+(?:следующие\s+)?вопрос|тестовое\s+задание\s*работодателя|анкета\s+работодателя|пройти\s+опрос)/i,
+    resumeHidden: /резюме\s*скрыто|resume\s*is\s*hidden/i,
+    modalTest: /тестирование|анкета|вопросы|questionnaire|test/i,
+    modalCaptcha: /капч[аеы]|captcha|recaptcha|smartcaptcha/i,
+    modalRateLimit: /слишком\s*много\s*запросов|доступ\s*ограничен|rate\s*limit|blocked/i,
+    resumeChoice: /(?:выберите|выбор)\s+(?:подходящее\s+)?резюме|резюме\s+для\s+отклика/i,
+
+    // Relocation warning: its text and the confirm buttons.
+    relocationText: /откликаетесь\s+на\s+вакансию\s+в\s+другой\s+стране|в\s+другой\s+стране/i,
+    relocationConfirm: /^вс[её]\s*равно(?:\s*откликнуться)?$/i,
+    relocationConfirmPlain: /^(?:откликнуться|подтвердить)$/i,
+
+    // A response exists. The sets differ by scope: the page text, a modal, the vacancy
+    // page, a search card, and the visible text logged for an unconfirmed submit.
+    alreadyApplied: /(?:вы уже откликались|отклик уже отправлен|already applied)/i,
+    sentInModal: /(?:отклик отправлен|вы откликнулись|резюме доставлено|резюме отправлено|response sent|applied successfully)/i,
+    sentOnPage: /(?:отклик отправлен|вы уже откликались|вы откликнулись|резюме доставлено)/i,
+    serpCardApplied: /(?:вы откликнулись|резюме доставлено|отклик отправлен)/i,
+    sentAnyVisible: /(?:отклик отправлен|вы откликнулись|резюме доставлено|резюме отправлено|вы уже откликались)/i
+  });
 
   const ACTION_TIMINGS = { delay: [3500, 6500], action: [250, 500] };
 
@@ -793,6 +827,51 @@ function formatTime(dOrTs = new Date()) {
     memBlacklistDirty = true;
   }
 
+  // Vacancies with a response, kept across tabs and sessions. Some search cards keep the
+  // apply button after a response (a pinned card at the top of the list), and the session
+  // list of processed ids starts empty in every tab, so without this such a vacancy is
+  // opened on every run only to find the response already there. Written at once, since
+  // a queued vacancy can be answered in another tab.
+  const APPLIED_HISTORY_TTL = 30 * 24 * 60 * 60 * 1000;
+  const APPLIED_HISTORY_MAX = 2000;
+
+  function readAppliedHistory() {
+    const map = parseJson(storage.localGet(KEYS.appliedHistory), {});
+    return map && typeof map === 'object' && !Array.isArray(map) ? map : {};
+  }
+
+  function writeAppliedHistory(map) {
+    const now = Date.now();
+    const kept = Object.entries(map)
+      .filter(([, ts]) => now - Number(ts) < APPLIED_HISTORY_TTL)
+      .sort((a, b) => Number(b[1]) - Number(a[1]))
+      .slice(0, APPLIED_HISTORY_MAX);
+    storage.localSet(KEYS.appliedHistory, JSON.stringify(Object.fromEntries(kept)));
+  }
+
+  function rememberApplied(vid) {
+    const clean = cleanVid(vid);
+    if (!clean) return;
+    const map = readAppliedHistory();
+    map[clean] = Date.now();
+    writeAppliedHistory(map);
+  }
+
+  function forgetApplied(vid) {
+    const clean = cleanVid(vid);
+    const map = readAppliedHistory();
+    if (!clean || !(clean in map)) return;
+    delete map[clean];
+    writeAppliedHistory(map);
+  }
+
+  function getAppliedHistorySet() {
+    const now = Date.now();
+    return new Set(Object.entries(readAppliedHistory())
+      .filter(([, ts]) => now - Number(ts) < APPLIED_HISTORY_TTL)
+      .map(([vid]) => vid));
+  }
+
   function flushStorageCaches() {
     flushProcessedIDs();
     flushVacancyAttempts();
@@ -951,6 +1030,9 @@ function formatTime(dOrTs = new Date()) {
     if (nav?.locks?.request) {
       let webLockAcquired = false;
       const lockController = new AbortController();
+      // Set before the grant, so a stop while the request still waits aborts it instead
+      // of waiting for the lock and taking it after the stop.
+      webLockAbortController = lockController;
       try {
         let lockResolver;
         const lockPromise = new Promise(res => { lockResolver = res; });
@@ -1020,13 +1102,15 @@ function formatTime(dOrTs = new Date()) {
 
   async function releaseInstanceLock(tabId) {
     const cur = readInstanceLock();
-    if (cur && cur.tabId === tabId) {
+    const ownsStoredLock = Boolean(cur && cur.tabId === tabId);
+    const held = ownsStoredLock || hasActiveWebLock || Boolean(webLockPendingPromise);
+    if (ownsStoredLock) {
       storage.localRemove(KEYS.instanceLock);
     }
     currentLeaseId = null;
     instanceLeaseVerified = false;
     await releaseWebLock();
-    hhaLog('info', 'lock_release', { tabId });
+    if (held) hhaLog('info', 'lock_release', { tabId });
     return true;
   }
 
@@ -1197,7 +1281,7 @@ function formatTime(dOrTs = new Date()) {
     const alert = q('[data-qa="magritte-alert"], [role="dialog"]', scope);
     if (alert && isVisible(alert) && !isReviewOrFeedbackElement(alert)) {
       const confirmBtn = q(SELECTORS.relocationBtn, alert)
-        || findPatternElement(alert, 'button, [role="button"]', /^вс[её]\s*равно(?:\s*откликнуться)?$/i, 35);
+        || findPatternElement(alert, 'button, [role="button"]', TEXT_RULES.relocationConfirm, 35);
       if (confirmBtn && isVisible(confirmBtn)) return confirmBtn;
     }
 
@@ -1207,14 +1291,14 @@ function formatTime(dOrTs = new Date()) {
     const scopeText = textOf(scope.nodeType === 9 ? scope.documentElement : scope);
     const title = q('[data-qa="relocation-warning-title"]', scope)
       || (/стран/i.test(scopeText)
-        ? findPatternElement(scope, 'h1, h2, h3, div, p, span', /откликаетесь\s+на\s+вакансию\s+в\s+другой\s+стране|в\s+другой\s+стране/i, 80)
+        ? findPatternElement(scope, 'h1, h2, h3, div, p, span', TEXT_RULES.relocationText, 80)
         : null);
     if (title && isVisible(title)) {
       const container = title.closest?.('[data-qa="magritte-alert"], [role="dialog"]') || title.parentElement;
       if (container && !isReviewOrFeedbackElement(container)) {
         const confirmBtn = q(SELECTORS.relocationBtn, container)
-          || findPatternElement(container, 'button, [role="button"]', /^вс[её]\s*равно(?:\s*откликнуться)?$/i, 35)
-          || findPatternElement(container, 'button, [role="button"]', /^(?:откликнуться|подтвердить)$/i, 35);
+          || findPatternElement(container, 'button, [role="button"]', TEXT_RULES.relocationConfirm, 35)
+          || findPatternElement(container, 'button, [role="button"]', TEXT_RULES.relocationConfirmPlain, 35);
         if (confirmBtn && isVisible(confirmBtn)) return confirmBtn;
       }
     }
@@ -1240,7 +1324,7 @@ function formatTime(dOrTs = new Date()) {
     rejectWarning: (r) => {
       const scope = (r && r !== globalThis.document && r !== globalThis.document?.body) ? r : q(SELECTORS.modal + ', [role="alert"]');
       if (!scope) return null;
-      return findPatternElement(scope, 'div, p, span, section', REJECT_REGEX, 250);
+      return findPatternElement(scope, 'div, p, span, section', TEXT_RULES.reject, 250);
     },
     // The last results page has no pager-next, so a loose match here would pick
     // any link like «Читать дальше» or a vacancy titled «Next.js».
@@ -1700,17 +1784,15 @@ function formatTime(dOrTs = new Date()) {
     return link ? collapseSpaces(link.innerText || link.textContent) : '';
   }
 
-  const INACCESSIBLE_VACANCY_REGEX = /(?:вам\s+недоступна\s+эта\s+вакансия|войдите\s+как\s+пользователь[,\s]+у\s+которого\s+есть\s+доступ|вакансия\s+(?:закрыта|в\s+архиве|удалена|не\s+найдена)|эта\s+вакансия\s+была\s+удалена|похоже[,\s]+этой\s+вакансии\s+больше\s+нет)/i;
-
   function detectInaccessibleVacancy(root = globalThis.document, text = null) {
     if (!root || Page.isSearch()) return false;
     if (text !== null) {
-      return INACCESSIBLE_VACANCY_REGEX.test(text.slice(0, 4000));
+      return TEXT_RULES.inaccessible.test(text.slice(0, 4000));
     }
     const body = root.body || (root.nodeType === 9 ? root.body : root);
     if (!body) return false;
     const bodyText = textOf(body).slice(0, 4000);
-    return INACCESSIBLE_VACANCY_REGEX.test(bodyText);
+    return TEXT_RULES.inaccessible.test(bodyText);
   }
 
   function detectCaptcha(root = globalThis.document, text = null) {
@@ -1723,10 +1805,8 @@ function formatTime(dOrTs = new Date()) {
       return true;
     }
     const bodyText = (text !== null ? text : (textOf(doc.body) || textOf(doc.documentElement))).slice(0, 3000);
-    return /(?:подтвердите,?\s*что\s*вы\s*не\s*робот|введите\s*символы\s*с\s*картинки|вы\s+не\s+робот|not\s+a\s+robot|необычн\w*\s+активн|unusual\s+(?:activity|traffic))/i.test(bodyText);
+    return TEXT_RULES.captcha.test(bodyText);
   }
-
-  const DAILY_LIMIT_REGEX = /(?:исчерпали\s+лимит\s+откликов|не\s+более\s+200\s+откликов|в\s+течение\s+24\s+часов\s+можно\s+совершить\s+не\s+более|лимит\s+откликов[,\s]+попробуйте\s+отправить\s+отклик\s+позднее|лимит\s+откликов.*попробуйте|24\s+часов?\s+можно\s+совершить\s+не\s+более|вы\s+исчерпали\s+лимит|daily\s+application\s+limit|reached\s+(?:the\s+)?limit\s+of\s+(?:200\s+)?applications)/i;
 
   function detectDailyLimit(root = globalThis.document) {
     if (!root) return false;
@@ -1749,7 +1829,7 @@ function formatTime(dOrTs = new Date()) {
     for (const el of candidates) {
       if (isVisible(el)) {
         const text = (textOf(el) || el.innerText || '').trim();
-        if (text && DAILY_LIMIT_REGEX.test(text)) {
+        if (text && TEXT_RULES.dailyLimit.test(text)) {
           return true;
         }
       }
@@ -1764,7 +1844,7 @@ function formatTime(dOrTs = new Date()) {
         const child = children[i];
         if (isVisible(child)) {
           const txt = textOf(child).trim();
-          if (txt && DAILY_LIMIT_REGEX.test(txt)) {
+          if (txt && TEXT_RULES.dailyLimit.test(txt)) {
             return true;
           }
         }
@@ -1772,7 +1852,7 @@ function formatTime(dOrTs = new Date()) {
 
       // Fallback check across root textContent
       const fullText = textOf(body).slice(0, 3000);
-      if (DAILY_LIMIT_REGEX.test(fullText)) {
+      if (TEXT_RULES.dailyLimit.test(fullText)) {
         return true;
       }
     }
@@ -1786,12 +1866,12 @@ function formatTime(dOrTs = new Date()) {
     if (!doc) return false;
     if (loc && /\/error|\/blocked|\/forbidden|\/denied|\/rate-limit/i.test(loc.pathname)) return true;
     // The title holds the vacancy name, so a bare 429/503 would also match «смена 4290 ₽».
-    if (doc.title && /(?:^\s*(?:429|503)\b|(?:error|ошибка)\s*(?:429|503)\b|доступ\s+ограничен|too\s+many\s+requests|service\s+(?:temporarily\s+)?unavailable)/i.test(doc.title)) return true;
+    if (doc.title && TEXT_RULES.rateLimitTitle.test(doc.title)) return true;
     if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]', doc)) {
       return true;
     }
     const bodyText = (text !== null ? text : (textOf(doc.body) || textOf(doc.documentElement))).slice(0, 3000);
-    return /(?:слишком\s*много\s*запросов|429\s*Too\s*Many\s*Requests|503\s*Service\s*Unavailable|доступ\s*(?:временно\s*)?ограничен|access\s*(?:temporarily\s*)?denied|error\s+429|error\s+503)/i.test(bodyText);
+    return TEXT_RULES.rateLimitPage.test(bodyText);
   }
 
   // What the last text-based skip or queue decision relied on: the rule and a short
@@ -1827,7 +1907,7 @@ function formatTime(dOrTs = new Date()) {
     const checkScope = q(SELECTORS.modal);
     // Visible text: textContent would also find these phrases inside page scripts.
     const bodyText = doc?.body?.innerText || '';
-    const success = /(?:отклик отправлен|вы откликнулись|резюме доставлено|резюме отправлено|вы уже откликались)/i.exec(bodyText);
+    const success = TEXT_RULES.sentAnyVisible.exec(bodyText);
     const parts = [
       `modal=${modal ? 'visible' : 'none'}`,
       `chat_link=${queryExact('responseChat') ? 'yes' : 'no'}`,
@@ -1847,8 +1927,6 @@ function formatTime(dOrTs = new Date()) {
     return el.tagName.toLowerCase() + (qa ? `[data-qa="${qa}"]` : '') + classes;
   };
 
-  const TEST_PAGE_REGEX = /(?:необходимо\s+пройти\s+тест|ответьте\s+на\s+(?:следующие\s+)?вопрос|тестовое\s+задание\s*работодателя|анкета\s+работодателя|пройти\s+опрос)/i;
-
   const pageLooksLikeTest = () => {
     const doc = globalThis.document;
     if (!doc) return false;
@@ -1859,8 +1937,8 @@ function formatTime(dOrTs = new Date()) {
     }
     const form = q('[data-qa*="response-form" i], [data-qa*="vacancy-response" i], form');
     const text = textOf(form || doc.body || doc.documentElement).slice(0, 4000);
-    if (!TEST_PAGE_REGEX.test(text)) return false;
-    noteEvidence('page_test_regex', text, TEST_PAGE_REGEX);
+    if (!TEXT_RULES.testPage.test(text)) return false;
+    noteEvidence('page_test_regex', text, TEXT_RULES.testPage);
     return true;
   };
 
@@ -1869,7 +1947,7 @@ function formatTime(dOrTs = new Date()) {
     if (!doc) return false;
     if (queryExact('responseChat')) return true;
     const bodyText = textOf(doc.body || doc.documentElement).slice(0, 3000);
-    return /(?:вы уже откликались|отклик уже отправлен|already applied)/i.test(bodyText);
+    return TEXT_RULES.alreadyApplied.test(bodyText);
   };
 
   const getResponseDetectionScope = () => q(SELECTORS.modal) || globalThis.document?.body || globalThis.document?.documentElement;
@@ -1878,10 +1956,10 @@ function formatTime(dOrTs = new Date()) {
     if (!scope) return false;
     const el = query('rejectWarning', scope);
     if (!el || !isVisible(el)) return false;
-    noteEvidence(el.matches(SELECTORS.rejectWarning) ? 'reject_selector' : 'reject_heuristic', textOf(el), REJECT_REGEX);
+    noteEvidence(el.matches(SELECTORS.rejectWarning) ? 'reject_selector' : 'reject_heuristic', textOf(el), TEXT_RULES.reject);
     return true;
   };
-  const hasResponseTextConfirmation = (root) => /(?:отклик отправлен|вы откликнулись|резюме доставлено|резюме отправлено|response sent|applied successfully)/i.test(textOf(root || getResponseDetectionScope()).slice(0, 4000));
+  const hasResponseTextConfirmation = (root) => TEXT_RULES.sentInModal.test(textOf(root || getResponseDetectionScope()).slice(0, 4000));
   const hasExactResponseConfirmation = (root) => {
     const scope = root || getResponseDetectionScope();
     return Boolean(scope && (queryExact('responseChat', scope) || (!config.useCover && queryExact('attachCoverBtn', scope))));
@@ -1893,7 +1971,7 @@ function formatTime(dOrTs = new Date()) {
     if (loc && (/\/success/i.test(loc.pathname) || /[?&]success\b/i.test(loc.search))) return true;
     if (detectAlreadyApplied()) return true;
     const doc = globalThis.document;
-    return Boolean((allowDocumentStrongText || Page.isVacancy()) && doc && /(?:отклик отправлен|вы уже откликались|вы откликнулись|резюме доставлено)/i.test((doc.body?.innerText || textOf(doc.body)).slice(0, 4000)));
+    return Boolean((allowDocumentStrongText || Page.isVacancy()) && doc && TEXT_RULES.sentOnPage.test((doc.body?.innerText || textOf(doc.body)).slice(0, 4000)));
   }
 
   function detectModalBlockReason(modalScope = null) {
@@ -1901,9 +1979,8 @@ function formatTime(dOrTs = new Date()) {
     if (!modal) return null;
     if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
     const text = (textOf(modal) || modal.innerText || '').slice(0, 3000);
-    const resumeHidden = /резюме\s*скрыто|resume\s*is\s*hidden/i;
-    if (resumeHidden.test(text)) {
-      noteEvidence('modal_resume_hidden', text, resumeHidden);
+    if (TEXT_RULES.resumeHidden.test(text)) {
+      noteEvidence('modal_resume_hidden', text, TEXT_RULES.resumeHidden);
       return 'RESUME_HIDDEN';
     }
     const warning = q(SELECTORS.rejectWarning, modal);
@@ -1911,17 +1988,16 @@ function formatTime(dOrTs = new Date()) {
       noteEvidence('modal_reject_selector', textOf(warning));
       return 'REJECT_WARNING';
     }
-    if (REJECT_REGEX.test(text)) {
-      noteEvidence('modal_reject_regex', text, REJECT_REGEX);
+    if (TEXT_RULES.reject.test(text)) {
+      noteEvidence('modal_reject_regex', text, TEXT_RULES.reject);
       return 'REJECT_REGEX';
     }
-    const testRequired = /тестирование|анкета|вопросы|questionnaire|test/i;
-    if (testRequired.test(text)) {
-      noteEvidence('modal_test_regex', text, testRequired);
+    if (TEXT_RULES.modalTest.test(text)) {
+      noteEvidence('modal_test_regex', text, TEXT_RULES.modalTest);
       return 'TEST_REQUIRED';
     }
-    if (detectCaptcha() || /капч[аеы]|captcha|recaptcha|smartcaptcha/i.test(text)) return 'CAPTCHA';
-    if (detectRateLimit() || /слишком\s*много\s*запросов|доступ\s*ограничен|rate\s*limit|blocked/i.test(text)) return 'RATE_LIMIT';
+    if (detectCaptcha() || TEXT_RULES.modalCaptcha.test(text)) return 'CAPTCHA';
+    if (detectRateLimit() || TEXT_RULES.modalRateLimit.test(text)) return 'RATE_LIMIT';
     return null;
   }
 
@@ -1945,7 +2021,7 @@ function formatTime(dOrTs = new Date()) {
 
     const isResumeModal = Boolean(
       q('input[type="radio"][name*="resume" i], [data-qa*="select-resume" i], [data-qa*="resume-item" i]', root) ||
-      /(?:выберите|выбор)\s+(?:подходящее\s+)?резюме|резюме\s+для\s+отклика/i.test(textOf(root))
+      TEXT_RULES.resumeChoice.test(textOf(root))
     );
 
     if (includeExactSelectors && isAttachCoverAvailable(root)) {
@@ -1994,6 +2070,7 @@ function formatTime(dOrTs = new Date()) {
   function commitSuccess(vid, runId = currentRunId) {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
     markVacancyProcessed(vid, runId);
+    rememberApplied(vid);
     if (vid) {
       lastCommittedVid = cleanVid(vid);
       storage.sessionSet(KEYS.lastCommittedVid, lastCommittedVid);
@@ -2021,6 +2098,7 @@ function formatTime(dOrTs = new Date()) {
           percentage: Math.min(100, Math.round((cur / MAX_DAILY_LIMIT) * 100))
         });
       }
+      forgetApplied(cleanTarget);
       lastCommittedVid = null;
       storage.sessionRemove(KEYS.lastCommittedVid);
       return true;
@@ -2034,6 +2112,7 @@ function formatTime(dOrTs = new Date()) {
     const clean = cleanVid(vid);
     if (!clean || !ManualQueue.has(clean)) return false;
     ManualQueue.remove(clean);
+    rememberApplied(clean);
     const counters = getDailyCounters();
     counters.applied++;
     saveDailyCounters(counters);
@@ -2528,7 +2607,10 @@ function formatTime(dOrTs = new Date()) {
       }
       if (detectDailyLimit()) { haltForDailyLimit(); return 'BLOCKED'; }
       if (detectAlreadyApplied()) {
-        if (vid) skipVacancy(vid, 'already_applied', runId);
+        if (vid) {
+          rememberApplied(vid);
+          skipVacancy(vid, 'already_applied', runId);
+        }
         returnToList(vid, { markProcessed: true, runId });
         return 'OK';
       }
@@ -2849,7 +2931,7 @@ function formatTime(dOrTs = new Date()) {
     if (!allBtns.length) {
       const cards = qa(SELECTORS.vacancyCard);
       if (cards.length > 0) {
-        const anyAlreadyApplied = cards.some(c => /(?:вы откликнулись|резюме доставлено|отклик отправлен)/i.test(c.textContent || ''));
+        const anyAlreadyApplied = cards.some(c => TEXT_RULES.serpCardApplied.test(c.textContent || ''));
         const nextBtn = query('pagerNext');
         if (anyAlreadyApplied && nextBtn) {
           await navigateToNextSearchPage(nextBtn, runId);
@@ -2865,10 +2947,11 @@ function formatTime(dOrTs = new Date()) {
     // The processed list lives in sessionStorage and starts empty in every new tab, so a
     // vacancy already waiting in the manual queue would be opened again each session.
     const queued = new Set(ManualQueue.get().map(item => cleanVid(item.vid)));
+    const applied = getAppliedHistorySet();
     const targets = [];
     for (const b of allBtns) {
       const vid = getVacancyID(b);
-      if (processed.has(vid) || isBlacklisted(vid) || queued.has(cleanVid(vid))) continue;
+      if (processed.has(vid) || isBlacklisted(vid) || queued.has(cleanVid(vid)) || applied.has(cleanVid(vid))) continue;
       if (config.skipHidden && !isVisible(b)) {
         markVacancyProcessed(vid, runId);
         recordOutcome(vid, 'skipped', 'skip_hidden_employer');
