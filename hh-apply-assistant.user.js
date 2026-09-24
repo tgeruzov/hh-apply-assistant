@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.2
+// @version      0.2.3
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -46,6 +46,15 @@ const formatCleanSalary = (raw) => {
 
 function cleanVid(vid) {
   return vid ? String(vid).trim().replace(/^v_/i, '') : '';
+}
+
+// Russian plural: pluralRu(5, 'отклик', 'отклика', 'откликов') gives 'откликов'.
+function pluralRu(n, one, few, many) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
 }
 
 function formatTime(dOrTs = new Date()) {
@@ -121,7 +130,9 @@ function formatTime(dOrTs = new Date()) {
     watchdogStallVid: 'hha:watchdog_stall_vid',
     skipAlertShown: 'hha:skip_alert_shown',
     sessionProcessedTotal: 'hha:session_processed_total',
-    sessionAnomalousSkips: 'hha:session_anomalous_skips'
+    sessionAnomalousSkips: 'hha:session_anomalous_skips',
+    runStats: 'hha:run_stats',
+    lastRun: 'hha:last_run'
   };
 
   const MAX_VACANCY_ATTEMPTS = 3;
@@ -532,6 +543,35 @@ function formatTime(dOrTs = new Date()) {
     }
   }
 
+  // Outcomes of the current run, for the summary shown after it stops. The daily
+  // counters span all runs of the day; these start from zero on every start. They live
+  // in sessionStorage, since a run goes through many page loads of the same tab.
+  function readRunStats() {
+    return parseJson(storage.sessionGet(KEYS.runStats), null);
+  }
+
+  function startRunStats() {
+    storage.sessionSet(KEYS.runStats, JSON.stringify({ startedAt: Date.now(), applied: 0, queued: 0, skipped: 0, error: 0 }));
+    storage.sessionRemove(KEYS.lastRun);
+    events.emit('runSummary', null);
+  }
+
+  function bumpRunStats(outcome) {
+    const stats = readRunStats();
+    if (!stats || !(outcome in stats)) return;
+    stats[outcome] = (Number(stats[outcome]) || 0) + 1;
+    storage.sessionSet(KEYS.runStats, JSON.stringify(stats));
+  }
+
+  function closeRunStats(code) {
+    const stats = readRunStats();
+    if (!stats) return;
+    storage.sessionRemove(KEYS.runStats);
+    const summary = { ...stats, endedAt: Date.now(), code };
+    storage.sessionSet(KEYS.lastRun, JSON.stringify(summary));
+    events.emit('runSummary', summary);
+  }
+
   function recordOutcome(vid, outcome, reason, details = null) {
     const clean = cleanVid(vid);
     const validOutcomes = ['applied', 'queued', 'skipped', 'error'];
@@ -560,6 +600,7 @@ function formatTime(dOrTs = new Date()) {
     hhaLog(logLevel, 'outcome', logData);
 
     checkSkipRateAnomaly(finalReason);
+    if (isRunning()) bumpRunStats(finalOutcome);
 
     events.emit('outcome', {
       vid: clean,
@@ -1179,6 +1220,7 @@ function formatTime(dOrTs = new Date()) {
     setActivity(null);
     releaseInstanceLock(TAB_ID);
     const statusKey = (code === 'DAILY_LIMIT_REACHED' || code === 'DONE') ? 'done' : (isError ? 'error' : (code === 'STOPPED_BY_USER' ? 'stopped' : code.toLowerCase()));
+    closeRunStats(code);
     setStatus(statusKey, code, details);
     hhaLog(isError ? 'error' : 'info', 'stop', { code, logMsg: logMsg || undefined, isError });
     if (logMsg && isError) reportError(logMsg, code, details);
@@ -2788,6 +2830,7 @@ function formatTime(dOrTs = new Date()) {
     // The run flag is still set when a page of an ongoing run loads, so this is a
     // resume of the same run, not a new start.
     const isResume = isRunning();
+    if (!isResume || !readRunStats()) startRunStats();
     setRunning(true);
     markProgress();
     hhaLog('info', isResume ? 'resume' : 'start', { runId, limit: MAX_DAILY_LIMIT });
@@ -3144,6 +3187,7 @@ function formatTime(dOrTs = new Date()) {
       sentCount: getSentCount(),
       hasInstanceLock: instanceLeaseVerified,
       hasTrapLock: Boolean(getActiveTrapLock()),
+      lastRun: parseJson(storage.sessionGet(KEYS.lastRun), null),
       lastAttemptId: getLastAttemptID(),
       returnUrl: getReturnUrl()
     }),
@@ -3172,11 +3216,11 @@ function formatTime(dOrTs = new Date()) {
     },
     getManualQueue: () => ManualQueue.get(),
     markManualItemViewed: (vid, viewed) => ManualQueue.markViewed(vid, viewed),
-    markManualApplied: (vid) => markManualApplied(vid, 'button'),
     removeManualItem: (vid) => ManualQueue.remove(vid),
     clearManualQueue: () => ManualQueue.clear(),
     on: (evt, fn) => events.on(evt, fn),
-    off: (evt, fn) => events.off(evt, fn)
+    off: (evt, fn) => events.off(evt, fn),
+    dumpLog: () => hhaDumpLog()
   };
 
   const publicApi = Object.freeze({
@@ -3518,7 +3562,11 @@ function formatTime(dOrTs = new Date()) {
 
   const ICONS = {
     close: (size) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`,
-    check: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`,
+    // The counter icons are drawn on a 14x14 pixel grid: at 100% scale every stroke is
+    // exactly two device pixels, so they stay sharp on a Full HD monitor.
+    send: `<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M1 1.5 13.5 7 1 12.5 3 7z"/></svg>`,
+    list: `<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" shape-rendering="crispEdges" aria-hidden="true"><rect x="1" y="2" width="2" height="2"/><rect x="5" y="2" width="8" height="2"/><rect x="1" y="6" width="2" height="2"/><rect x="5" y="6" width="8" height="2"/><rect x="1" y="10" width="2" height="2"/><rect x="5" y="10" width="8" height="2"/></svg>`,
+    copy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>`,
     inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`
   };
 
@@ -3853,12 +3901,26 @@ function formatTime(dOrTs = new Date()) {
       transition: color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard);
     }
 
-    .hha-pill-divider {
-      margin: 0 4px;
-      font-weight: 400;
-      opacity: 0.45;
+    .hha-count-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .hha-count-item + .hha-count-item {
+      margin-left: 8px;
+    }
+
+    .hha-count-item svg {
+      flex-shrink: 0;
+    }
+
+    .hha-count-item.is-sent {
+      color: var(--md-sys-color-primary);
+    }
+
+    .hha-count-item.is-queue {
       color: var(--md-sys-color-on-surface-variant);
-      user-select: none;
     }
 
     .hha-queue-count {
@@ -3867,7 +3929,8 @@ function formatTime(dOrTs = new Date()) {
       transition: color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard);
     }
 
-    .hha-pill-status-group.has-error .hha-current-count {
+    .hha-pill-status-group.has-error .hha-current-count,
+    .hha-pill-status-group.has-error .hha-count-item.is-sent {
       color: var(--md-sys-color-error);
     }
 
@@ -4165,7 +4228,8 @@ function formatTime(dOrTs = new Date()) {
       transition: opacity 350ms ease-out 80ms, transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 80ms;
     }
 
-    .hha-flyout .hha-panels {
+    .hha-flyout .hha-panels,
+    .hha-flyout .hha-log-row {
       opacity: 0;
       transform: translate3d(0, 10px, 0) scale(0.94);
       transition:
@@ -4173,7 +4237,8 @@ function formatTime(dOrTs = new Date()) {
         transform var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1));
     }
 
-    .hha-root.is-expanded .hha-panels {
+    .hha-root.is-expanded .hha-panels,
+    .hha-root.is-expanded .hha-log-row {
       opacity: 1;
       transform: translate3d(0, 0, 0) scale(1);
       transition: opacity 350ms ease-out 100ms, transform 480ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 100ms;
@@ -4200,7 +4265,9 @@ function formatTime(dOrTs = new Date()) {
       justify-content: flex-end;
       height: 42px;
       min-height: 42px;
-      padding: 6px 12px 0 16px;
+      /* 7px on top leaves 34px above the bottom border, so the 28px close button is
+         centred on a whole pixel and does not shimmer while the panel resizes. */
+      padding: 7px 12px 0 16px;
       background: var(--md-sys-color-surface-container-low);
       border-bottom: 1px solid var(--md-sys-color-outline-variant);
       border-radius: var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0;
@@ -4291,6 +4358,62 @@ function formatTime(dOrTs = new Date()) {
     }
 
     /* 6. Bottom Navigation & Action Dock */
+    .hha-log-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      /* 1px border plus 32px of content: the 26px button and its 14px icon are then
+         centred on whole pixels. At 32px they sat half a pixel off and jumped by one
+         pixel while the panel height animated on a tab switch. */
+      min-height: 33px;
+      padding: 0 8px 0 16px;
+      border-top: 1px solid var(--md-sys-color-outline-variant);
+      flex-shrink: 0;
+      box-sizing: border-box;
+      font-size: var(--md-sys-typescale-body-small-size);
+      color: var(--md-sys-color-on-surface-variant);
+    }
+
+    .hha-log-row-text {
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .hha-btn-copy-log {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 26px;
+      padding: 0 8px;
+      border: none;
+      border-radius: var(--md-sys-shape-corner-full);
+      background: transparent;
+      color: var(--md-sys-color-primary);
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-label-medium-size);
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-btn-copy-log:hover {
+      background: color-mix(in srgb, var(--md-sys-color-primary) 8%, transparent);
+    }
+
+    .hha-btn-copy-log:active {
+      background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent);
+    }
+
+    .hha-btn-copy-log:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary);
+    }
+
     .hha-island-footer {
       display: flex;
       align-items: center;
@@ -4322,7 +4445,7 @@ function formatTime(dOrTs = new Date()) {
       min-width: auto;
       max-width: none;
       flex: 0 0 auto;
-      padding: 0 8px;
+      padding: 0 6px;
       background: transparent;
       border: none;
       box-sizing: border-box;
@@ -4393,10 +4516,11 @@ function formatTime(dOrTs = new Date()) {
       gap: 2px;
       min-height: auto;
       width: 204px;
-      min-width: 204px;
+      min-width: 176px;
       max-width: 204px;
       box-sizing: border-box;
-      flex: 0 0 204px;
+      /* Shrinks when the counter on the left grows, e.g. 200 sent and 31 queued. */
+      flex: 0 1 204px;
       position: relative;
       opacity: 0;
       transform: scale(0.85);
@@ -4564,11 +4688,6 @@ function formatTime(dOrTs = new Date()) {
     .hha-tab-btn:focus-visible,
     .hha-btn-quick:focus-visible,
     .hha-queue-title-link:focus-visible {
-      outline: none;
-      box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary);
-    }
-
-    .hha-queue-applied-btn:focus-visible {
       outline: none;
       box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary);
     }
@@ -5019,38 +5138,6 @@ function formatTime(dOrTs = new Date()) {
       text-overflow: ellipsis;
       min-width: 0;
       flex-shrink: 1;
-    }
-
-    .hha-queue-card-actions {
-      display: inline-flex;
-      align-items: center;
-      gap: 2px;
-      flex-shrink: 0;
-    }
-
-    .hha-queue-applied-btn {
-      width: 20px;
-      height: 20px;
-      min-width: 20px;
-      padding: 0;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      background: transparent;
-      border: none;
-      border-radius: var(--md-sys-shape-corner-full);
-      color: var(--md-sys-color-on-surface-variant);
-      cursor: pointer;
-      transition: color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
-    }
-
-    .hha-queue-applied-btn:hover {
-      color: var(--md-sys-color-on-primary-container);
-      background: var(--md-sys-color-primary-container);
-    }
-
-    .hha-queue-applied-btn:active {
-      transform: scale(0.92);
     }
 
     /* Delete item button with Icon Button state layers */
@@ -5620,6 +5707,9 @@ function formatTime(dOrTs = new Date()) {
 
   // --- 4. Web Component Implementation (Closed Shadow DOM) ---
 
+  // Panel height per tab: header, content, the log row and the footer.
+  const FLYOUT_HEIGHT = { settings: 352, queue: 552 };
+
   class HhaHudElement extends HTMLElement {
     // Private, so page scripts cannot reach the engine or the closed shadow root through
     // the <hha-hud> element.
@@ -5651,6 +5741,7 @@ function formatTime(dOrTs = new Date()) {
       this._status = { status: 'idle', code: 'IDLE' };
       this._progress = { sent: 0, percentage: 0 };
       this._activity = null;
+      this._lastRun = null;
       this._statusLineTimer = null;
 
       this._isPointerDown = false;
@@ -5799,6 +5890,7 @@ function formatTime(dOrTs = new Date()) {
         if (s) {
           const sent = s.sentCount !== undefined ? s.sentCount : 0;
           this._activity = s.activity || null;
+          this._lastRun = s.lastRun || null;
           this.updateStatus(s.status, s.statusCode || s.code);
           this.updateProgress(sent);
         }
@@ -5837,6 +5929,10 @@ function formatTime(dOrTs = new Date()) {
           assistant.on('config', (payload) => {
             const current = payload?.current || payload;
             this.updateConfig(current);
+          }),
+          assistant.on('runSummary', (summary) => {
+            this._lastRun = summary || null;
+            this._syncStatusLine();
           })
         );
       }
@@ -5895,6 +5991,7 @@ function formatTime(dOrTs = new Date()) {
       if (this._isExpanded === next) return;
       this._isExpanded = next;
       this._isAnimating = true;
+      if (next) this._syncLogRow();
 
       try {
         localStorage.setItem('hha_hud_expanded_v2', String(this._isExpanded));
@@ -6114,7 +6211,7 @@ function formatTime(dOrTs = new Date()) {
       const minX = padding + halfW;
       const maxX = Math.max(minX, winW - padding - halfW);
 
-      const baseH = this._activeTab === 'queue' ? 520 : 320;
+      const baseH = FLYOUT_HEIGHT[this._activeTab] || FLYOUT_HEIGHT.settings;
       const gap = 8;
       const pillH = 36;
       const maxFlyoutH = Math.max(120, winH - 100);
@@ -6139,7 +6236,7 @@ function formatTime(dOrTs = new Date()) {
           <div class="hha-pill" data-el="pill">
             <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и очередь" data-summary-title>
               <div class="hha-pill-status">
-                <span class="hha-pill-progress" data-el="pill-progress"><span class="hha-current-count" data-el="pill-current-count">0</span><span class="hha-pill-divider" aria-hidden="true">/</span><span class="hha-queue-count" data-el="pill-queue-count">0</span></span>
+                <span class="hha-pill-progress" data-el="pill-progress"><span class="hha-count-item is-sent">${ICONS.send}<span class="hha-current-count" data-el="pill-current-count">0</span></span><span class="hha-count-item is-queue">${ICONS.list}<span class="hha-queue-count" data-el="pill-queue-count">0</span></span></span>
               </div>
             </div>
             <div class="hha-pill-step" data-el="pill-step" aria-hidden="true"></div>
@@ -6149,7 +6246,7 @@ function formatTime(dOrTs = new Date()) {
             <div class="hha-pill-step-bar" data-el="pill-step-bar"></div>
           </div>
 
-          <!-- Flyout Overlay (390px wide, max 320px/520px height) -->
+          <!-- Flyout Overlay (390px wide, max 352px/552px height) -->
           <div class="hha-flyout" data-el="flyout" role="dialog" aria-modal="false" aria-label="Панель управления откликами">
             <!-- Top Header: Drag Handle & Collapse Button -->
             <header class="hha-island-header" data-el="island-header">
@@ -6223,11 +6320,16 @@ function formatTime(dOrTs = new Date()) {
               </div>
             </div>
 
+            <div class="hha-log-row" data-el="log-row">
+              <span class="hha-log-row-text" data-el="log-row-text">Лог работы, без текста письма</span>
+              <button type="button" class="hha-btn-copy-log" data-action="copy-log" data-el="copy-log-btn">${ICONS.copy}<span data-el="copy-log-label">Скопировать лог</span></button>
+            </div>
+
             <!-- Bottom Dock: Counter on the Left + Tabs in Center + Quick Action Button on the Right -->
             <footer class="hha-island-footer">
               <div class="hha-footer-status-group" data-action="toggle-expand" data-el="footer-status-group" tabindex="0" role="button" aria-expanded="true" aria-label="Свернуть панель" data-summary-title>
                 <div class="hha-footer-status">
-                  <span class="hha-footer-progress" data-el="footer-progress"><span class="hha-current-count" data-el="footer-current-count">0</span><span class="hha-pill-divider" aria-hidden="true">/</span><span class="hha-queue-count" data-el="footer-queue-count">0</span></span>
+                  <span class="hha-footer-progress" data-el="footer-progress"><span class="hha-count-item is-sent">${ICONS.send}<span class="hha-current-count" data-el="footer-current-count">0</span></span><span class="hha-count-item is-queue">${ICONS.list}<span class="hha-queue-count" data-el="footer-queue-count">0</span></span></span>
                 </div>
               </div>
               <div class="hha-tabs" data-active="${this._activeTab}" role="tablist" aria-label="Разделы панели">
@@ -6649,16 +6751,13 @@ function formatTime(dOrTs = new Date()) {
       }
     }
 
-    // mode 'applied': the user applied by hand, so the engine also counts the response.
-    _handleDeleteQueueItemAction(target, mode = 'delete') {
+    _handleDeleteQueueItemAction(target) {
       const vid = target.dataset.vid || target.dataset.cleanVid;
       const cVid = cleanVid(target.dataset.cleanVid || vid);
       if (!vid) return;
       const card = target.closest('.hha-queue-card');
       const executeRemove = () => {
-        if (mode === 'applied' && typeof this.#assistant?.markManualApplied === 'function') {
-          this.#assistant.markManualApplied(vid);
-        } else if (this.#assistant && typeof this.#assistant.removeManualItem === 'function') {
+        if (this.#assistant && typeof this.#assistant.removeManualItem === 'function') {
           this.#assistant.removeManualItem(vid);
         } else {
           this._queue = this._queue.filter(it => cleanVid(it.vid) !== cVid);
@@ -6706,7 +6805,7 @@ function formatTime(dOrTs = new Date()) {
         'clear-queue': (tgt, ev) => { ev.stopPropagation(); this._handleClearQueueAction(tgt); },
         'open-vacancy': (tgt, ev) => { this._handleOpenVacancyAction(tgt, ev); },
         'delete-queue-item': (tgt, ev) => { ev.stopPropagation(); this._handleDeleteQueueItemAction(tgt); },
-        'applied-queue-item': (tgt, ev) => { ev.stopPropagation(); this._handleDeleteQueueItemAction(tgt, 'applied'); }
+        'copy-log': (tgt, ev) => { ev.stopPropagation(); this._copyLog(tgt); }
       };
 
       const handler = actionMap[action];
@@ -6782,6 +6881,37 @@ function formatTime(dOrTs = new Date()) {
           this._copyErrorTimer = null;
         }, 1800);
       }
+    }
+
+    // The entry count is read when the panel opens, not on every log write.
+    _syncLogRow() {
+      const textEl = this.#shadow?.querySelector('[data-el="log-row-text"]');
+      if (!textEl || typeof this.#assistant?.dumpLog !== 'function') return;
+      const count = this.#assistant.dumpLog().split('\n').filter(Boolean).length;
+      textEl.textContent = `Лог: ${count} ${pluralRu(count, 'запись', 'записи', 'записей')}, без текста письма`;
+    }
+
+    _copyLog(btnEl) {
+      if (typeof this.#assistant?.dumpLog !== 'function') return;
+      const text = this.#assistant.dumpLog();
+      const label = btnEl?.querySelector('[data-el="copy-log-label"]');
+      const show = (msg) => {
+        if (!label) return;
+        if (this._copyLogTimer) clearTimeout(this._copyLogTimer);
+        label.textContent = msg;
+        this._copyLogTimer = setTimeout(() => {
+          label.textContent = 'Скопировать лог';
+          this._copyLogTimer = null;
+        }, 2000);
+      };
+      this._copyText(text).then((ok) => {
+        if (ok === false) {
+          console.info(text);
+          show('Не вышло, лог в консоли');
+        } else {
+          show('Скопировано');
+        }
+      });
     }
 
     _handleToggleAutomation() {
@@ -7105,8 +7235,7 @@ function formatTime(dOrTs = new Date()) {
       if (!this._isPointerDown && typeof root.style.setProperty === 'function') {
         const pillWidth = this._getPillWidth();
         root.style.setProperty('--pill-width', `${pillWidth}px`);
-        const isQueue = this._activeTab === 'queue';
-        const baseH = isQueue ? 520 : 320;
+        const baseH = FLYOUT_HEIGHT[this._activeTab] || FLYOUT_HEIGHT.settings;
         const maxFlyoutH = Math.max(120, winH - 100);
         const finalH = Math.min(baseH, maxFlyoutH);
         root.style.setProperty('--flyout-height', `${finalH}px`);
@@ -7167,6 +7296,7 @@ function formatTime(dOrTs = new Date()) {
       this._syncProgress();
       this._syncConfig();
       this._syncQueue();
+      this._syncLogRow();
     }
 
     _syncStatus() {
@@ -7268,9 +7398,34 @@ function formatTime(dOrTs = new Date()) {
       }
       if (code === 'DAILY_LIMIT_REACHED') return `Лимит hh.ru: ${MAX_DAILY_LIMIT} откликов за 24 часа. Продолжить можно позже`;
       if (code === 'COMPLETED') return `Дневной лимит скрипта: ${MAX_DAILY_LIMIT} откликов`;
-      if (status === 'done') return 'Вакансии в выдаче закончились';
       if (status === 'error') return 'Остановлено из-за ошибки';
+      const run = this._runSummaryText();
+      if (run) return run;
+      if (status === 'done') return 'Вакансии в выдаче закончились';
       return this._summaryText();
+    }
+
+    // What the last run did, e.g. "За 12 мин: 27 откликов, 9 в очередь, 1 пропуск".
+    // The header fits about 50 characters, so the reason it stopped goes to the
+    // tooltip; the button label (Старт, Готово) shows it as well.
+    _runSummaryText() {
+      const r = this._lastRun;
+      if (!r || !r.startedAt || !r.endedAt) return '';
+      const n = (v) => Math.max(0, Number(v) || 0);
+      const durationMs = r.endedAt - r.startedAt;
+      const when = durationMs < 60000 ? 'Меньше минуты' : `За ${Math.round(durationMs / 60000)} мин`;
+      const parts = [`${n(r.applied)} ${pluralRu(n(r.applied), 'отклик', 'отклика', 'откликов')}`];
+      if (n(r.queued)) parts.push(`${n(r.queued)} в очередь`);
+      if (n(r.skipped)) parts.push(`${n(r.skipped)} ${pluralRu(n(r.skipped), 'пропуск', 'пропуска', 'пропусков')}`);
+      if (n(r.error)) parts.push(`${n(r.error)} ${pluralRu(n(r.error), 'ошибка', 'ошибки', 'ошибок')}`);
+      return `${when}: ${parts.join(', ')}`;
+    }
+
+    _runStopReason() {
+      const code = this._lastRun?.code;
+      if (code === 'STOPPED_BY_USER') return 'Остановлено вручную';
+      if (code === 'DONE') return 'Вакансии в выдаче закончились';
+      return 'Запуск завершен';
     }
 
     _pillStepText() {
@@ -7327,7 +7482,7 @@ function formatTime(dOrTs = new Date()) {
       const line = this.#shadow.querySelector('[data-el="status-line"]');
       if (line) {
         line.textContent = text;
-        line.title = text;
+        line.title = text === this._runSummaryText() ? `${this._runStopReason()}. ${text}` : text;
       }
       const hover = text === summary ? summary : `${summary}\n${text}`;
       this.#shadow.querySelectorAll('[data-summary-title]').forEach(el => { el.title = hover; });
@@ -7360,10 +7515,7 @@ function formatTime(dOrTs = new Date()) {
             <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="${escapeHtml(displayTitle)}">
               <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
             </a>
-            <div class="hha-queue-card-actions">
-              <button type="button" class="hha-queue-applied-btn" data-action="applied-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Откликнулся: убрать и засчитать" aria-label="Откликнулся вручную">${ICONS.check}</button>
-              <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">${ICONS.close(14)}</button>
-            </div>
+            <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">${ICONS.close(14)}</button>
           </div>
           ${displayEmployer ? `
           <div class="hha-queue-card-mid">
@@ -7386,11 +7538,6 @@ function formatTime(dOrTs = new Date()) {
 
       const queueCountEls = this.#shadow.querySelectorAll('.hha-queue-count');
       queueCountEls.forEach(el => { el.textContent = String(count); });
-
-      const toolbarTitle = this.#shadow.querySelector('[data-el="queue-toolbar-title"]');
-      if (toolbarTitle) {
-        toolbarTitle.textContent = count > 0 ? `Ручной отклик (${count})` : 'Ручной отклик';
-      }
 
       const queueTabCount = this.#shadow.querySelector('[data-el="queue-tab-count"]');
       if (queueTabCount) {
