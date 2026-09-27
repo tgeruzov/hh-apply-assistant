@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.4
+// @version      0.2.5
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -4578,36 +4578,6 @@ function formatTime(dOrTs = new Date()) {
         opacity 320ms ease-out 80ms;
     }
 
-    /* Segmented Tab Badges */
-    .hha-tab-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 18px;
-      height: 18px;
-      padding: 0 5px 1px 5px;
-      border-radius: var(--md-sys-shape-corner-full);
-      font-size: var(--md-sys-typescale-label-small-size);
-      font-weight: 700;
-      line-height: 1;
-      box-sizing: border-box;
-      background: var(--md-sys-color-surface-container-highest);
-      color: var(--md-sys-color-on-surface-variant);
-      border: none;
-      transition: background-color var(--hha-motion-indicator-duration, 200ms) var(--hha-motion-indicator-easing, cubic-bezier(0.22, 1, 0.36, 1)),
-                  color var(--hha-motion-indicator-duration, 200ms) var(--hha-motion-indicator-easing, cubic-bezier(0.22, 1, 0.36, 1));
-    }
-
-    .hha-tab-badge.is-queue {
-      background: var(--md-sys-color-surface-container-highest);
-      color: var(--md-sys-color-on-surface-variant);
-    }
-
-    .hha-tab-btn:hover .hha-tab-badge.is-queue {
-      background: var(--md-sys-color-outline-variant);
-      color: var(--md-sys-color-on-surface);
-    }
-
     .hha-tab-btn {
       flex: 1 1 50%;
       width: 50%;
@@ -4661,13 +4631,6 @@ function formatTime(dOrTs = new Date()) {
 
     .hha-tab-btn.active:active {
       transform: scale(0.98);
-    }
-
-    .hha-tab-btn.active .hha-tab-badge,
-    .hha-tab-btn.active .hha-tab-badge.is-queue {
-      background: var(--md-sys-color-primary);
-      color: var(--md-sys-color-on-primary);
-      border: none;
     }
 
     /* Focus Rings (Dual Focus Indicators) */
@@ -6137,7 +6100,7 @@ function formatTime(dOrTs = new Date()) {
 
       tabs.dataset.active = this._activeTab;
 
-      // Measured, not hardcoded: the queue tab gets wider when its badge appears.
+      // Measured, not hardcoded: the tab widths follow the footer layout.
       const activeTab = tabs.querySelector(`.hha-tab-btn[data-tab="${this._activeTab}"]`);
       if (!activeTab || !activeTab.offsetWidth) return;
       indicator.style.left = `${activeTab.offsetLeft}px`;
@@ -6319,7 +6282,7 @@ function formatTime(dOrTs = new Date()) {
               <div class="hha-tabs" data-active="${this._activeTab}" role="tablist" aria-label="Разделы панели">
                 <div class="hha-tab-indicator" data-el="tab-indicator" aria-hidden="true"></div>
                 <button type="button" class="hha-tab-btn ${this._activeTab === 'settings' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'settings' ? 'true' : 'false'}" data-action="switch-tab" data-tab="settings"><span>Письмо</span></button>
-                <button type="button" class="hha-tab-btn ${this._activeTab === 'queue' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'queue' ? 'true' : 'false'}" data-action="switch-tab" data-tab="queue"><span>Очередь</span><span class="hha-tab-badge is-queue" data-el="queue-tab-count" style="display: none;">0</span></button>
+                <button type="button" class="hha-tab-btn ${this._activeTab === 'queue' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'queue' ? 'true' : 'false'}" data-action="switch-tab" data-tab="queue"><span>Очередь</span></button>
               </div>
               <div class="hha-footer-actions">
                 <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="footer-quick-btn">
@@ -7501,22 +7464,6 @@ function formatTime(dOrTs = new Date()) {
 
       const queueCountEls = this.#shadow.querySelectorAll('.hha-queue-count');
       queueCountEls.forEach(el => { el.textContent = String(count); });
-
-      const queueTabCount = this.#shadow.querySelector('[data-el="queue-tab-count"]');
-      if (queueTabCount) {
-        if (count > 0) {
-          queueTabCount.textContent = String(count);
-          queueTabCount.setAttribute('title', `В очереди: ${count}`);
-          queueTabCount.setAttribute('aria-label', `В очереди: ${count}`);
-          queueTabCount.style.display = 'inline-flex';
-        } else {
-          queueTabCount.textContent = '';
-          queueTabCount.removeAttribute('title');
-          queueTabCount.removeAttribute('aria-label');
-          queueTabCount.style.display = 'none';
-        }
-        this._updateTabIndicator();
-      }
 
       const queueStream = this.#shadow.querySelector('[data-el="queue-stream"]');
       if (queueStream) {
