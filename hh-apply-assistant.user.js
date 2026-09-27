@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.10
+// @version      0.2.11
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -5136,6 +5136,7 @@ function formatTime(dOrTs = new Date()) {
       margin: 0;
     }
 
+    /* Block, not inline-flex: a flex container clips its text without the ellipsis. */
     .hha-queue-employer {
       font-size: var(--md-sys-typescale-body-small-size);
       font-weight: 400;
@@ -5145,8 +5146,8 @@ function formatTime(dOrTs = new Date()) {
       text-overflow: ellipsis;
       height: 16px;
       line-height: 16px;
-      display: inline-flex;
-      align-items: center;
+      display: block;
+      min-width: 0;
     }
 
     .hha-queue-card.is-viewed .hha-queue-employer {
@@ -5206,8 +5207,7 @@ function formatTime(dOrTs = new Date()) {
     }
 
     .hha-queue-salary {
-      display: inline-flex;
-      align-items: center;
+      display: block;
       height: 18px;
       line-height: 18px;
       font-size: var(--md-sys-typescale-label-small-size);
@@ -7515,7 +7515,8 @@ function formatTime(dOrTs = new Date()) {
         if (secondsLeft > 0) text += `, ${formatSeconds(secondsLeft)}`;
         return text;
       }
-      if (code === 'DAILY_LIMIT_REACHED') return `Лимит hh.ru: ${MAX_DAILY_LIMIT} откликов за 24 часа. Продолжить можно позже`;
+      // The full limit, 200 in 24 hours, is in the button tooltip; here the line must fit.
+      if (code === 'DAILY_LIMIT_REACHED') return 'Лимит hh.ru исчерпан, продолжить можно позже';
       if (code === 'COMPLETED') return `Дневной лимит скрипта: ${MAX_DAILY_LIMIT} откликов`;
       if (status === 'error') return 'Остановлено из-за ошибки';
       const run = this._runSummaryText();
