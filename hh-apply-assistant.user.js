@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.5
+// @version      0.2.6
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -158,10 +158,12 @@ function formatTime(dOrTs = new Date()) {
     rateLimitPage: /(?:слишком\s*много\s*запросов|429\s*Too\s*Many\s*Requests|503\s*Service\s*Unavailable|доступ\s*(?:временно\s*)?ограничен|access\s*(?:temporarily\s*)?denied|error\s+429|error\s+503)/i,
 
     // Reasons to skip or queue a vacancy.
-    reject: /(?:не\s*соответствует(?:\s*требованиям)?|не\s*подходит|(?:^|[\s.,!?:;«»'"()—–-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;«»'"()—–-]|$)|reject|warning)/i,
+    reject: /(?:не\s*соответствует(?:\s*требованиям)?|не\s*подходит|(?:^|[\s.,!?:;\u00ab\u00bb'"()\u2014\u2013-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;\u00ab\u00bb'"()\u2014\u2013-]|$)|reject|warning)/i,
     testPage: /(?:необходимо\s+пройти\s+тест|ответьте\s+на\s+(?:следующие\s+)?вопрос|тестовое\s+задание\s*работодателя|анкета\s+работодателя|пройти\s+опрос)/i,
     resumeHidden: /резюме\s*скрыто|resume\s*is\s*hidden/i,
-    modalTest: /тестирование|анкета|вопросы|questionnaire|test/i,
+    // Only a request to take a test counts: a bare "test" or "тестирование" also matched the
+    // vacancy and resume titles the modal shows, like "QA Test Engineer".
+    modalTest: /анкета|вопросы|questionnaire|(?:пройти|пройдите)\s+тест|take\s+(?:a|the)\s+test/i,
     modalCaptcha: /капч[аеы]|captcha|recaptcha|smartcaptcha/i,
     modalRateLimit: /слишком\s*много\s*запросов|доступ\s*ограничен|rate\s*limit|blocked/i,
     resumeChoice: /(?:выберите|выбор)\s+(?:подходящее\s+)?резюме|резюме\s+для\s+отклика/i,
@@ -1801,7 +1803,7 @@ function formatTime(dOrTs = new Date()) {
 
     const docTitle = collapseSpaces(globalThis.document?.title);
     if (docTitle && !isGenericVacancyTitle(docTitle)) {
-      const cleanDoc = docTitle.replace(/\s*—\s*hh\.ru.*$/i, '').replace(/\s*-\s*hh\.ru.*$/i, '').trim();
+      const cleanDoc = docTitle.replace(/\s*\u2014\s*hh\.ru.*$/i, '').replace(/\s*-\s*hh\.ru.*$/i, '').trim();
       if (cleanDoc && !isGenericVacancyTitle(cleanDoc)) return cleanDoc;
     }
 
@@ -1971,9 +1973,21 @@ function formatTime(dOrTs = new Date()) {
       `success_text_at=${success ? success.index : -1}`,
       `check_scope=${checkScope ? `${checkScope.tagName.toLowerCase()}.${checkScope.getAttribute('class') || ''}[${isVisible(checkScope) ? 'visible' : 'hidden'}]` : 'none'}`,
       success ? `near="${bodyText.slice(Math.max(0, success.index - 40), success.index + 80)}"` : '',
-      modal ? `modal_text="${textOf(modal).slice(0, 120)}"` : ''
+      modal ? `modal_text="${modalTextWithoutLetter(modal).slice(0, 120)}"` : ''
     ];
     lastEvidence = { rule: 'submit_unconfirmed', match: collapseSpaces(parts.join(' ')) };
+  }
+
+  // The modal text for the log, without the letter: fillTextarea also copies it into the
+  // autosize mirror, a pre next to the textarea, and textContent would pick it up there.
+  function modalTextWithoutLetter(modal) {
+    const copy = modal.cloneNode(true);
+    for (const ta of copy.querySelectorAll('textarea')) {
+      const wrapper = ta.closest(SELECTORS.nativeWrapper) || ta.parentElement;
+      if (wrapper) wrapper.querySelectorAll('pre').forEach(pre => pre.remove());
+      ta.remove();
+    }
+    return copy.textContent || '';
   }
 
   // The matched element as a selector, e.g. div[data-qa="task-question"].g-user-content,
@@ -2988,13 +3002,10 @@ function formatTime(dOrTs = new Date()) {
 
     if (!allBtns.length) {
       const cards = qa(SELECTORS.vacancyCard);
-      if (cards.length > 0) {
-        const anyAlreadyApplied = cards.some(c => TEXT_RULES.serpCardApplied.test(c.textContent || ''));
-        const nextBtn = query('pagerNext');
-        if (anyAlreadyApplied && nextBtn) {
-          await navigateToNextSearchPage(nextBtn, runId);
-          return;
-        }
+      // Cards that already have a response show no apply button. Then the code below finds
+      // nothing to open and goes to the next page, or finishes the run on the last one.
+      const anyAlreadyApplied = cards.some(c => TEXT_RULES.serpCardApplied.test(c.textContent || ''));
+      if (cards.length > 0 && !anyAlreadyApplied) {
         recordOutcome(null, 'error', 'error_selector_missing');
         if (runId !== currentRunId) return;
         return haltEngine('DOM_SELECTOR_NOT_FOUND', 'В выдаче не нашлась кнопка отклика, автоматизация остановлена.', describeSelectorFailure('applyBtn', cards[0], { cardsCount: cards.length }));
@@ -3086,13 +3097,16 @@ function formatTime(dOrTs = new Date()) {
   function checkHang(now) {
     if ((now - lastProgressTs) > WATCHDOG_STALL_TIMEOUT) {
       const currentVid = cleanVid(resolveCurrentVid() || '');
-      const storedVid = cleanVid(storage.sessionGet(KEYS.watchdogStallVid) || '');
-      let stallCount = (storedVid === currentVid && currentVid) ? toNum(storage.sessionGet(KEYS.watchdogStallCount), 0) : 0;
+      // With no vacancy in flight (a search page) the count is kept per page address,
+      // otherwise it starts over after every reload and the run never gives up.
+      const stallKey = currentVid || `page:${globalThis.location?.pathname || ''}${globalThis.location?.search || ''}`;
+      const storedKey = cleanVid(storage.sessionGet(KEYS.watchdogStallVid) || '');
+      let stallCount = storedKey === stallKey ? toNum(storage.sessionGet(KEYS.watchdogStallCount), 0) : 0;
       const elapsedMs = now - lastProgressTs;
 
       if (stallCount < 2) {
         stallCount++;
-        storage.sessionSet(KEYS.watchdogStallVid, currentVid);
+        storage.sessionSet(KEYS.watchdogStallVid, stallKey);
         storage.sessionSet(KEYS.watchdogStallCount, String(stallCount));
         lastProgressTs = now;
         hhaLog('warn', 'watchdog_stall', { vid: currentVid || undefined, stallCount, elapsedMs });
@@ -3105,7 +3119,7 @@ function formatTime(dOrTs = new Date()) {
         storage.sessionRemove(KEYS.watchdogStallCount);
         hhaLog('error', 'watchdog_giveup', { vid: currentVid || undefined, stallCount, elapsedMs });
         recordOutcome(currentVid, 'error', 'error_timeout');
-        terminateRun('WATCHDOG_GIVEUP', 'Страница не отвечала и после двух перезагрузок, автоматизация остановлена.', { vid: currentVid }, true);
+        terminateRun('WATCHDOG_GIVEUP', 'Страница не отвечала и после двух перезагрузок, автоматизация остановлена.', { vid: currentVid || undefined }, true);
         return true;
       }
     }
@@ -3513,7 +3527,7 @@ function formatTime(dOrTs = new Date()) {
     }
 
     if (cleanMsg.toLowerCase().startsWith(defaultTitle.toLowerCase())) {
-      desc = cleanMsg.slice(defaultTitle.length).replace(/^[\s:–—-]+/, '').trim();
+      desc = cleanMsg.slice(defaultTitle.length).replace(/^[\s:\u2013\u2014-]+/, '').trim();
     } else {
       desc = cleanMsg;
     }
@@ -5954,7 +5968,7 @@ function formatTime(dOrTs = new Date()) {
         const statusGroup = this.#shadow.querySelector('[data-el="pill-status-group"]');
         if (statusGroup) {
           statusGroup.setAttribute('aria-expanded', String(this._isExpanded));
-          statusGroup.setAttribute('aria-label', this._isExpanded ? 'Свернуть панель управления' : 'Открыть настройки и журнал');
+          statusGroup.setAttribute('aria-label', this._isExpanded ? 'Свернуть панель управления' : 'Открыть настройки и очередь');
         }
         if (pill && typeof pill.offsetWidth === 'number' && pill.offsetWidth > 0 && pill.offsetWidth < 300) {
           this._collapsedPillWidth = pill.offsetWidth;
@@ -6037,6 +6051,13 @@ function formatTime(dOrTs = new Date()) {
       const root = this.#shadow.querySelector('[data-el="root"]') || this.#shadow.querySelector('.hha-root');
       if (root) {
         root.dataset.activeTab = tabName;
+      }
+      // The queue flyout is taller: the pill moves down if that flyout would leave the window.
+      const pos = this._clampPillCoordinates(this._pillPos.x, this._pillPos.y, window.innerWidth || 1024, window.innerHeight || 768);
+      if (pos.x !== this._pillPos.x || pos.y !== this._pillPos.y) {
+        this._pillPos = pos;
+        this._persistPosition();
+        if (root) this._animateSnap(root);
       }
       this._updatePosition();
 
@@ -7041,7 +7062,7 @@ function formatTime(dOrTs = new Date()) {
       const flyoutMaxW = 390;
       const halfW = flyoutMaxW / 2;
       const padding = 16;
-      const flyoutH = 520;
+      const flyoutH = FLYOUT_HEIGHT[this._activeTab] || FLYOUT_HEIGHT.settings;
       const gap = 8;
       const pillH = 36;
       const maxFlyoutH = Math.max(120, winH - 100);
@@ -7071,15 +7092,17 @@ function formatTime(dOrTs = new Date()) {
 
       if (didSnap) {
         this._pillPos = this._clampPillCoordinates(snappedX, snappedY, winW, winH);
-        if (root) {
-          root.classList.add('is-snapping');
-          if (this._snapTimer) clearTimeout(this._snapTimer);
-          this._snapTimer = setTimeout(() => {
-            if (root) root.classList.remove('is-snapping');
-            this._snapTimer = null;
-          }, 260);
-        }
+        if (root) this._animateSnap(root);
       }
+    }
+
+    _animateSnap(root) {
+      root.classList.add('is-snapping');
+      if (this._snapTimer) clearTimeout(this._snapTimer);
+      this._snapTimer = setTimeout(() => {
+        root.classList.remove('is-snapping');
+        this._snapTimer = null;
+      }, 260);
     }
 
     _onPointerUp(e) {
@@ -7278,7 +7301,7 @@ function formatTime(dOrTs = new Date()) {
         } else if (status === 'error') {
           targetClass = 'hha-btn-error';
           targetLabel = 'Сброс';
-          targetTitle = 'Ошибка. Кликните для перезапуска';
+          targetTitle = 'Ошибка. Нажмите, чтобы сбросить';
         }
 
         const labelChanged = this._lastBtnLabel !== targetLabel;
