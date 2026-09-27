@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.3
+// @version      0.2.4
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -56,6 +56,10 @@ function pluralRu(n, one, few, many) {
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
   return many;
 }
+
+// "4 с" with a narrow no-break space: the unit stays next to the number and never
+// wraps to the next line on its own.
+const formatSeconds = (n) => `${n}\u202Fс`;
 
 function formatTime(dOrTs = new Date()) {
   const d = dOrTs instanceof Date ? dOrTs : (dOrTs ? new Date(dOrTs) : new Date());
@@ -3847,23 +3851,6 @@ function formatTime(dOrTs = new Date()) {
       display: inline-block;
     }
 
-    .hha-pill-step-bar {
-      position: absolute;
-      left: 0;
-      bottom: 0;
-      width: 100%;
-      height: 2px;
-      transform: scaleX(0);
-      transform-origin: left center;
-      background: var(--md-sys-color-primary);
-      opacity: 0;
-      pointer-events: none;
-    }
-
-    .hha-root.is-running .hha-pill-step-bar.is-active {
-      opacity: 1;
-    }
-
     .hha-pill-status {
       position: relative;
       display: inline-flex;
@@ -5680,8 +5667,7 @@ function formatTime(dOrTs = new Date()) {
 
     /* Accessibility: Motion Reduction (opacity only, <= 100ms, no transforms or growth) */
     @media (prefers-reduced-motion: reduce) {
-      /* The pause bar is excluded: it shows how long the pause lasts, it is not decoration. */
-      *:not(.hha-pill-step-bar),
+      *,
       *::before,
       *::after {
         transition-duration: 100ms !important;
@@ -5919,7 +5905,6 @@ function formatTime(dOrTs = new Date()) {
           assistant.on('activity', (activity) => {
             this._activity = activity || null;
             this._syncStatusLine();
-            this._syncPillBar();
           }),
           assistant.on('error', (payload) => this._showError(payload)),
           assistant.on('manualQueue', (payload) => {
@@ -6243,7 +6228,6 @@ function formatTime(dOrTs = new Date()) {
             <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="pill-quick-btn">
               <span class="hha-btn-label" data-el="pill-quick-label">Старт</span>
             </button>
-            <div class="hha-pill-step-bar" data-el="pill-step-bar"></div>
           </div>
 
           <!-- Flyout Overlay (390px wide, max 352px/552px height) -->
@@ -7310,7 +7294,6 @@ function formatTime(dOrTs = new Date()) {
         // The step segment appears only while running, so the pill changes width.
         this._updatePosition();
       }
-      this._syncPillBar();
 
       const quickBtns = this.#shadow.querySelectorAll('.hha-btn-quick');
       if (quickBtns.length > 0) {
@@ -7393,7 +7376,7 @@ function formatTime(dOrTs = new Date()) {
         // Cards without a link get a hash instead of an id; it means nothing to the user.
         if (a.vid && /^\d+$/.test(a.vid)) text += ` #${a.vid}`;
         const secondsLeft = a.until ? Math.ceil((a.until - Date.now()) / 1000) : 0;
-        if (secondsLeft > 0) text += `, ${secondsLeft} с`;
+        if (secondsLeft > 0) text += `, ${formatSeconds(secondsLeft)}`;
         return text;
       }
       if (code === 'DAILY_LIMIT_REACHED') return `Лимит hh.ru: ${MAX_DAILY_LIMIT} откликов за 24 часа. Продолжить можно позже`;
@@ -7433,7 +7416,7 @@ function formatTime(dOrTs = new Date()) {
       const a = this._activity;
       if (!a) return 'Работаю';
       const secondsLeft = a.until ? Math.ceil((a.until - Date.now()) / 1000) : 0;
-      return (ACTIVITY_SHORT[a.code] || 'Работаю') + (secondsLeft > 0 ? ` ${secondsLeft} с` : '');
+      return (ACTIVITY_SHORT[a.code] || 'Работаю') + (secondsLeft > 0 ? ` ${formatSeconds(secondsLeft)}` : '');
     }
 
     // A width transition does not run when `auto` changes with the text, so the
@@ -7449,26 +7432,6 @@ function formatTime(dOrTs = new Date()) {
       step.style.width = `${from}px`;
       void step.offsetWidth;
       step.style.width = `${to}px`;
-    }
-
-    // The bar under the pill fills up over a timed pause. One CSS transition per
-    // pause is enough; the second-by-second countdown lives in the text.
-    _syncPillBar() {
-      const bar = this.#shadow?.querySelector('[data-el="pill-step-bar"]');
-      if (!bar) return;
-      const a = this._status.status === 'running' ? this._activity : null;
-      const remaining = a?.until ? a.until - Date.now() : 0;
-      bar.style.transition = 'none';
-      if (!a?.durationMs || remaining <= 0) {
-        bar.classList.remove('is-active');
-        bar.style.transform = 'scaleX(0)';
-        return;
-      }
-      bar.style.transform = `scaleX(${Math.min(1, Math.max(0, 1 - remaining / a.durationMs))})`;
-      bar.classList.add('is-active');
-      void bar.offsetWidth;
-      bar.style.transition = `transform ${Math.round(remaining)}ms linear`;
-      bar.style.transform = 'scaleX(1)';
     }
 
     _syncStatusLine() {
