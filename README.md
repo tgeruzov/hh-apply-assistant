@@ -4,7 +4,7 @@
 
 **Userscript для автоматизации откликов на [hh.ru](https://hh.ru)**
 
-![Version](https://img.shields.io/badge/version-0.2.7-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.2.8-blue?style=flat-square)
 [![License: GPL-3.0-only](https://img.shields.io/badge/License-GPL--3.0--only-blue?style=flat-square)](./LICENSE)
 
 </div>

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.7
+// @version      0.2.8
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -398,6 +398,9 @@ function formatTime(dOrTs = new Date()) {
   function hhaLog(level, event, data = null) {
     const ts = Date.now();
     const cleanData = sanitizeLogData(data);
+    // Ids come with a v_ prefix from some pages and without it from others; one form in
+    // the log lets a vacancy be followed from navigate_vacancy to its outcome.
+    if (typeof cleanData.vid === 'string') cleanData.vid = cleanVid(cleanData.vid);
     const entry = {
       ts,
       level: level || 'info',
@@ -3465,7 +3468,7 @@ function formatTime(dOrTs = new Date()) {
     CAPTCHA_DETECTED: 'Обнаружена капча: решите её вручную',
     RATE_LIMITED: 'Слишком частые запросы (Rate Limit)',
     SKIP_RATE_ALERT: 'Аномально много пропусков вакансий',
-    WATCHDOG_GIVEUP: 'Зависание при обработке вакансии',
+    WATCHDOG_GIVEUP: 'Страница перестала отвечать',
   };
 
   const REPORT_HINT = 'Если ошибка повторяется, скопируйте отчёт и приложите его к issue на GitHub.';
