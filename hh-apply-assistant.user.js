@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.6
+// @version      0.2.7
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -3238,7 +3238,13 @@ function formatTime(dOrTs = new Date()) {
     clearManualQueue: () => ManualQueue.clear(),
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
-    dumpLog: () => hhaDumpLog()
+    dumpLog: () => hhaDumpLog(),
+    // The first entry after a clear says so, or a log sent later would seem cut off.
+    clearLog: () => {
+      hhaClearLog();
+      hhaLog('info', 'log_cleared', { version: VERSION });
+      return true;
+    }
   };
 
   const publicApi = Object.freeze({
@@ -3585,6 +3591,7 @@ function formatTime(dOrTs = new Date()) {
     send: `<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M1 1.5 13.5 7 1 12.5 3 7z"/></svg>`,
     list: `<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" shape-rendering="crispEdges" aria-hidden="true"><rect x="1" y="2" width="2" height="2"/><rect x="5" y="2" width="8" height="2"/><rect x="1" y="6" width="2" height="2"/><rect x="5" y="6" width="8" height="2"/><rect x="1" y="10" width="2" height="2"/><rect x="5" y="10" width="8" height="2"/></svg>`,
     copy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>`,
+    trash: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5-1-1h-5l-1 1H5v2h14V4z"/></svg>`,
     inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`
   };
 
@@ -4413,6 +4420,37 @@ function formatTime(dOrTs = new Date()) {
     .hha-btn-copy-log:focus-visible {
       outline: none;
       box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary);
+    }
+
+    .hha-log-row-actions {
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .hha-btn-clear-log {
+      color: var(--md-sys-color-error);
+    }
+
+    .hha-btn-clear-log[hidden] {
+      display: none;
+    }
+
+    .hha-btn-clear-log:hover,
+    .hha-btn-clear-log.is-confirming {
+      background: var(--md-sys-color-error-container);
+    }
+
+    .hha-btn-clear-log:active {
+      background: color-mix(in srgb, var(--md-sys-color-error-container) 85%, var(--md-sys-color-error));
+    }
+
+    .hha-btn-clear-log.is-confirming svg {
+      display: none;
+    }
+
+    .hha-btn-clear-log:focus-visible {
+      box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-error);
     }
 
     .hha-island-footer {
@@ -6289,8 +6327,11 @@ function formatTime(dOrTs = new Date()) {
             </div>
 
             <div class="hha-log-row" data-el="log-row">
-              <span class="hha-log-row-text" data-el="log-row-text">Лог работы, без текста письма</span>
-              <button type="button" class="hha-btn-copy-log" data-action="copy-log" data-el="copy-log-btn">${ICONS.copy}<span data-el="copy-log-label">Скопировать лог</span></button>
+              <span class="hha-log-row-text" data-el="log-row-text" data-tooltip="Текст письма в лог не попадает">Лог</span>
+              <span class="hha-log-row-actions">
+                <button type="button" class="hha-btn-copy-log" data-action="copy-log" data-el="copy-log-btn">${ICONS.copy}<span data-el="copy-log-label">Скопировать</span></button>
+                <button type="button" class="hha-btn-copy-log hha-btn-clear-log" data-action="clear-log" data-el="clear-log-btn">${ICONS.trash}<span data-el="clear-log-label">Очистить</span></button>
+              </span>
             </div>
 
             <!-- Bottom Dock: Counter on the Left + Tabs in Center + Quick Action Button on the Right -->
@@ -6773,7 +6814,8 @@ function formatTime(dOrTs = new Date()) {
         'clear-queue': (tgt, ev) => { ev.stopPropagation(); this._handleClearQueueAction(tgt); },
         'open-vacancy': (tgt, ev) => { this._handleOpenVacancyAction(tgt, ev); },
         'delete-queue-item': (tgt, ev) => { ev.stopPropagation(); this._handleDeleteQueueItemAction(tgt); },
-        'copy-log': (tgt, ev) => { ev.stopPropagation(); this._copyLog(tgt); }
+        'copy-log': (tgt, ev) => { ev.stopPropagation(); this._copyLog(tgt); },
+        'clear-log': (tgt, ev) => { ev.stopPropagation(); this._handleClearLogAction(tgt); }
       };
 
       const handler = actionMap[action];
@@ -6855,8 +6897,39 @@ function formatTime(dOrTs = new Date()) {
     _syncLogRow() {
       const textEl = this.#shadow?.querySelector('[data-el="log-row-text"]');
       if (!textEl || typeof this.#assistant?.dumpLog !== 'function') return;
-      const count = this.#assistant.dumpLog().split('\n').filter(Boolean).length;
-      textEl.textContent = `Лог: ${count} ${pluralRu(count, 'запись', 'записи', 'записей')}, без текста письма`;
+      const lines = this.#assistant.dumpLog().split('\n').filter(Boolean);
+      const count = lines.length;
+      textEl.textContent = `Лог: ${count} ${pluralRu(count, 'запись', 'записи', 'записей')}`;
+      // Nothing to clear when the log holds only the mark of the last clear.
+      const clearBtn = this.#shadow.querySelector('[data-el="clear-log-btn"]');
+      if (clearBtn) clearBtn.hidden = !lines.some(l => !l.includes('"event":"log_cleared"'));
+    }
+
+    _resetClearLogBtn() {
+      if (this._logConfirmTimer) {
+        clearTimeout(this._logConfirmTimer);
+        this._logConfirmTimer = null;
+      }
+      const btn = this.#shadow?.querySelector('[data-el="clear-log-btn"]');
+      if (!btn) return;
+      btn.classList.remove('is-confirming');
+      const label = btn.querySelector('[data-el="clear-log-label"]');
+      if (label) label.textContent = 'Очистить';
+    }
+
+    // Two clicks, like "Очистить всё" in the queue: the first asks, the second clears.
+    _handleClearLogAction(btn) {
+      if (typeof this.#assistant?.clearLog !== 'function') return;
+      if (this._logConfirmTimer) {
+        this._resetClearLogBtn();
+        this.#assistant.clearLog();
+        this._syncLogRow();
+        return;
+      }
+      btn.classList.add('is-confirming');
+      const label = btn.querySelector('[data-el="clear-log-label"]');
+      if (label) label.textContent = 'Точно очистить?';
+      this._logConfirmTimer = setTimeout(() => this._resetClearLogBtn(), 3000);
     }
 
     _copyLog(btnEl) {
@@ -6868,7 +6941,7 @@ function formatTime(dOrTs = new Date()) {
         if (this._copyLogTimer) clearTimeout(this._copyLogTimer);
         label.textContent = msg;
         this._copyLogTimer = setTimeout(() => {
-          label.textContent = 'Скопировать лог';
+          label.textContent = 'Скопировать';
           this._copyLogTimer = null;
         }, 2000);
       };
@@ -7359,8 +7432,6 @@ function formatTime(dOrTs = new Date()) {
         const a = this._activity;
         if (!a) return 'Работаю';
         let text = ACTIVITY_TEXT[a.code] || 'Работаю';
-        // Cards without a link get a hash instead of an id; it means nothing to the user.
-        if (a.vid && /^\d+$/.test(a.vid)) text += ` #${a.vid}`;
         const secondsLeft = a.until ? Math.ceil((a.until - Date.now()) / 1000) : 0;
         if (secondsLeft > 0) text += `, ${formatSeconds(secondsLeft)}`;
         return text;
