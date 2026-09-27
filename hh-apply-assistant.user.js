@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.9
+// @version      0.2.10
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -126,6 +126,7 @@ function formatTime(dOrTs = new Date()) {
     pendingVacancyMeta: STORAGE_PREFIX + 'pending_vacancy_meta',
     blacklist: STORAGE_PREFIX + 'blacklist_v1',
     appliedHistory: STORAGE_PREFIX + 'applied_v1',
+    queuedHistory: STORAGE_PREFIX + 'queued_v1',
     attempts: STORAGE_PREFIX + 'attempts_v1',
     dailyCounters: STORAGE_PREFIX + 'daily_counters',
     lastCommittedVid: STORAGE_PREFIX + 'last_committed_vid',
@@ -886,45 +887,59 @@ function formatTime(dOrTs = new Date()) {
   // list of processed ids starts empty in every tab, so without this such a vacancy is
   // opened on every run only to find the response already there. Written at once, since
   // a queued vacancy can be answered in another tab.
-  const APPLIED_HISTORY_TTL = 30 * 24 * 60 * 60 * 1000;
-  const APPLIED_HISTORY_MAX = 2000;
+  const VID_HISTORY_TTL = 30 * 24 * 60 * 60 * 1000;
+  const VID_HISTORY_MAX = 2000;
 
-  function readAppliedHistory() {
-    const map = parseJson(storage.localGet(KEYS.appliedHistory), {});
-    return map && typeof map === 'object' && !Array.isArray(map) ? map : {};
+  // A map of vacancy id to the time it was stored, kept for VID_HISTORY_TTL.
+  function createVidHistory(key) {
+    const read = () => {
+      const map = parseJson(storage.localGet(key), {});
+      return map && typeof map === 'object' && !Array.isArray(map) ? map : {};
+    };
+    const write = (map) => {
+      const now = Date.now();
+      const kept = Object.entries(map)
+        .filter(([, ts]) => now - Number(ts) < VID_HISTORY_TTL)
+        .sort((a, b) => Number(b[1]) - Number(a[1]))
+        .slice(0, VID_HISTORY_MAX);
+      storage.localSet(key, JSON.stringify(Object.fromEntries(kept)));
+    };
+    return {
+      remember(vid) {
+        const clean = cleanVid(vid);
+        if (!clean) return;
+        const map = read();
+        map[clean] = Date.now();
+        write(map);
+      },
+      forget(vid) {
+        const clean = cleanVid(vid);
+        const map = read();
+        if (!clean || !(clean in map)) return;
+        delete map[clean];
+        write(map);
+      },
+      ids() {
+        const now = Date.now();
+        return new Set(Object.entries(read())
+          .filter(([, ts]) => now - Number(ts) < VID_HISTORY_TTL)
+          .map(([vid]) => vid));
+      }
+    };
   }
 
-  function writeAppliedHistory(map) {
-    const now = Date.now();
-    const kept = Object.entries(map)
-      .filter(([, ts]) => now - Number(ts) < APPLIED_HISTORY_TTL)
-      .sort((a, b) => Number(b[1]) - Number(a[1]))
-      .slice(0, APPLIED_HISTORY_MAX);
-    storage.localSet(KEYS.appliedHistory, JSON.stringify(Object.fromEntries(kept)));
-  }
+  const appliedHistory = createVidHistory(KEYS.appliedHistory);
+  function rememberApplied(vid) { appliedHistory.remember(vid); }
+  function forgetApplied(vid) { appliedHistory.forget(vid); }
+  function getAppliedHistorySet() { return appliedHistory.ids(); }
 
-  function rememberApplied(vid) {
-    const clean = cleanVid(vid);
-    if (!clean) return;
-    const map = readAppliedHistory();
-    map[clean] = Date.now();
-    writeAppliedHistory(map);
-  }
-
-  function forgetApplied(vid) {
-    const clean = cleanVid(vid);
-    const map = readAppliedHistory();
-    if (!clean || !(clean in map)) return;
-    delete map[clean];
-    writeAppliedHistory(map);
-  }
-
-  function getAppliedHistorySet() {
-    const now = Date.now();
-    return new Set(Object.entries(readAppliedHistory())
-      .filter(([, ts]) => now - Number(ts) < APPLIED_HISTORY_TTL)
-      .map(([vid]) => vid));
-  }
+  // Vacancies queued for a reason a new attempt cannot change: a questionnaire, a response
+  // on another site, a promo page, no apply button. "Очистить всё" empties the queue, and
+  // without this the next run would open all of them again only to queue them again.
+  // Passing failures (a submit or a relocation not confirmed) are not kept: for them a
+  // new attempt is the point of removing them from the queue.
+  const queuedHistory = createVidHistory(KEYS.queuedHistory);
+  const LASTING_QUEUE_REASONS = new Set(['test_required', 'test-questionnaire', 'queued_external_site', 'queued_promo', 'no-apply-button']);
 
   function flushStorageCaches() {
     flushProcessedIDs();
@@ -2300,6 +2315,7 @@ function formatTime(dOrTs = new Date()) {
     };
     const res = ManualQueue.add(entry);
     if (res.success) {
+      if (clean && LASTING_QUEUE_REASONS.has(note)) queuedHistory.remember(clean);
       if (res.isNew) {
         recordOutcome(clean, 'queued', note || 'manual');
       }
@@ -3024,10 +3040,11 @@ function formatTime(dOrTs = new Date()) {
     // vacancy already waiting in the manual queue would be opened again each session.
     const queued = new Set(ManualQueue.get().map(item => cleanVid(item.vid)));
     const applied = getAppliedHistorySet();
+    const queuedBefore = queuedHistory.ids();
     const targets = [];
     for (const b of allBtns) {
       const vid = getVacancyID(b);
-      if (processed.has(vid) || isBlacklisted(vid) || queued.has(cleanVid(vid)) || applied.has(cleanVid(vid))) continue;
+      if (processed.has(vid) || isBlacklisted(vid) || queued.has(cleanVid(vid)) || applied.has(cleanVid(vid)) || queuedBefore.has(cleanVid(vid))) continue;
       if (config.skipHidden && !isVisible(b)) {
         markVacancyProcessed(vid, runId);
         recordOutcome(vid, 'skipped', 'skip_hidden_employer');
@@ -3193,19 +3210,22 @@ function formatTime(dOrTs = new Date()) {
   function watchBackgroundTime() {
     const doc = globalThis.document;
     if (!doc) return;
-    const markHidden = () => {
+    const markHidden = (since = Date.now()) => {
       if (!doc.hidden || !isRunning() || storage.sessionGet(KEYS.hiddenSince)) return;
-      storage.sessionSet(KEYS.hiddenSince, String(Date.now()));
+      storage.sessionSet(KEYS.hiddenSince, String(since));
       hhaLog('info', 'tab_hidden');
       flushLogBuffer();
     };
     if (doc.hidden) markHidden();
     addGlobalListener(doc, 'visibilitychange', () => {
       // Leaving the page for the next vacancy also turns it hidden. Such a page is gone
-      // half a second later and its timer never fires; a tab really sent to the
-      // background is still there. If the page leaves meanwhile, the next one loads
-      // hidden and is marked above.
-      if (doc.hidden) return void setTimeout(markHidden, 500);
+      // a second later and its timer never fires; a tab really sent to the background is
+      // still there. The wait also drops a glance at another window shorter than a
+      // second. If the page leaves meanwhile, the next one loads hidden and is marked above.
+      if (doc.hidden) {
+        const at = Date.now();
+        return void setTimeout(() => markHidden(at), 1000);
+      }
       const since = toNum(storage.sessionGet(KEYS.hiddenSince), 0);
       if (!since) return;
       storage.sessionRemove(KEYS.hiddenSince);
