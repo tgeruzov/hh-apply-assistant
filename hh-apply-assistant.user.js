@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.8
+// @version      0.2.9
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -132,6 +132,7 @@ function formatTime(dOrTs = new Date()) {
     logBuffer: 'hha:log_buffer',
     watchdogStallCount: 'hha:watchdog_stall_count',
     watchdogStallVid: 'hha:watchdog_stall_vid',
+    hiddenSince: 'hha:hidden_since',
     skipAlertShown: 'hha:skip_alert_shown',
     sessionProcessedTotal: 'hha:session_processed_total',
     sessionAnomalousSkips: 'hha:session_anomalous_skips',
@@ -144,7 +145,10 @@ function formatTime(dOrTs = new Date()) {
   const PAGE_WATCHDOG_TIMEOUT = 15000; // 15 seconds
   const WATCHDOG_STALL_TIMEOUT = 60000; // 60 seconds stall timeout
   const SKIP_ALERT_RATIO = 0.7; // 70% threshold for skip rate alert
-  const MAX_LOG_ENTRIES = 600;
+  const MAX_LOG_ENTRIES = 1000;
+  // A watchdog tick normally comes every second. A longer gap means the page did not run
+  // at all: the computer slept, or the browser paused the background tab.
+  const TIMER_GAP_MS = 30000;
 
   // Text rules of the detectors, in one place so they can be narrowed by the decision log.
   // Several of them look alike on purpose: each one is tuned to where it is applied.
@@ -3183,6 +3187,50 @@ function formatTime(dOrTs = new Date()) {
     }
   }
 
+  // How long a run spent in a background tab. The start time lives in sessionStorage,
+  // because every vacancy is a new page: one pair of entries covers the whole stay in the
+  // background, however many pages were loaded meanwhile.
+  function watchBackgroundTime() {
+    const doc = globalThis.document;
+    if (!doc) return;
+    const markHidden = () => {
+      if (!doc.hidden || !isRunning() || storage.sessionGet(KEYS.hiddenSince)) return;
+      storage.sessionSet(KEYS.hiddenSince, String(Date.now()));
+      hhaLog('info', 'tab_hidden');
+      flushLogBuffer();
+    };
+    if (doc.hidden) markHidden();
+    addGlobalListener(doc, 'visibilitychange', () => {
+      // Leaving the page for the next vacancy also turns it hidden. Such a page is gone
+      // half a second later and its timer never fires; a tab really sent to the
+      // background is still there. If the page leaves meanwhile, the next one loads
+      // hidden and is marked above.
+      if (doc.hidden) return void setTimeout(markHidden, 500);
+      const since = toNum(storage.sessionGet(KEYS.hiddenSince), 0);
+      if (!since) return;
+      storage.sessionRemove(KEYS.hiddenSince);
+      hhaLog('info', 'tab_visible', { hiddenMs: Date.now() - since });
+    });
+    // Chrome may freeze a background tab to save power; nothing runs until it resumes.
+    // A page left for the next one is frozen too, into the back-forward cache, right
+    // after pagehide: that freeze is not logged.
+    let frozenAt = 0;
+    let leaving = false;
+    addGlobalListener(globalThis.window, 'pagehide', () => { leaving = true; });
+    addGlobalListener(globalThis.window, 'pageshow', () => { leaving = false; });
+    addGlobalListener(doc, 'freeze', () => {
+      if (leaving || !isRunning()) return;
+      frozenAt = Date.now();
+      hhaLog('warn', 'page_frozen');
+      flushLogBuffer();
+    });
+    addGlobalListener(doc, 'resume', () => {
+      if (!frozenAt) return;
+      hhaLog('warn', 'page_resumed', { frozenMs: Date.now() - frozenAt });
+      frozenAt = 0;
+    });
+  }
+
   function resetSessionCounters() {
     storage.sessionRemove(KEYS.sessionProcessedTotal);
     storage.sessionRemove(KEYS.sessionAnomalousSkips);
@@ -3264,7 +3312,14 @@ function formatTime(dOrTs = new Date()) {
   // --- 17. Bootstrap & Global Binding ---
   function bootstrap() {
     if (watchdogIntervalId === null) {
+      let lastTickTs = Date.now();
       watchdogIntervalId = setInterval(() => {
+        const now = Date.now();
+        // Logged before the tick, so a stall reload right after a sleep shows its cause.
+        if (now - lastTickTs > TIMER_GAP_MS && isRunning()) {
+          hhaLog('warn', 'timer_gap', { gapMs: now - lastTickTs, hidden: Boolean(globalThis.document?.hidden) });
+        }
+        lastTickTs = now;
         try { watchdogTick(); } catch (e) { console.warn('[HH] Watchdog tick error:', e); }
       }, 1000);
     }
@@ -3394,6 +3449,7 @@ function formatTime(dOrTs = new Date()) {
     addGlobalListener(win, 'beforeunload', () => {
       if (!isRunning()) releaseInstanceLock(TAB_ID);
     });
+    watchBackgroundTime();
     // The queue and the counters are shared by all hh.ru tabs: a vacancy answered in
     // another tab updates the HUD here without a reload.
     addGlobalListener(win, 'storage', (e) => {
