@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.12
+// @version      0.2.13
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -7553,7 +7553,13 @@ function formatTime(dOrTs = new Date()) {
       if (!r || !r.startedAt || !r.endedAt) return '';
       const n = (v) => Math.max(0, Number(v) || 0);
       const durationMs = r.endedAt - r.startedAt;
-      const when = durationMs < 60000 ? 'Меньше минуты' : `За ${Math.round(durationMs / 60000)} мин`;
+      const minutes = Math.round(durationMs / 60000);
+      let when = 'Меньше минуты';
+      if (durationMs >= 60000) {
+        const h = Math.floor(minutes / 60);
+        const m = minutes % 60;
+        when = h === 0 ? `За ${m} мин` : (m === 0 ? `За ${h} ч` : `За ${h} ч ${m} мин`);
+      }
       const parts = [`${n(r.applied)} ${pluralRu(n(r.applied), 'отклик', 'отклика', 'откликов')}`];
       if (n(r.queued)) parts.push(`${n(r.queued)} в очередь`);
       if (n(r.skipped)) parts.push(`${n(r.skipped)} ${pluralRu(n(r.skipped), 'пропуск', 'пропуска', 'пропусков')}`);
