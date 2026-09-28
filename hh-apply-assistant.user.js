@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.13
+// @version      0.2.14
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -1057,7 +1057,12 @@ function formatTime(dOrTs = new Date()) {
 
   // --- 9. Concurrency & Instance Locks ---
   const INSTANCE_LOCK_TTL = 30000;
-  const WEBLOCK_ACQUIRE_TIMEOUT = 2000;
+  // After a navigation the previous page can hold the lock for another 1-1.6 s on live
+  // hh.ru. A timeout means "another tab runs the script" and stops the run, so it has to
+  // leave a wide margin; a real second tab is still caught, just a few seconds later.
+  const WEBLOCK_ACQUIRE_TIMEOUT = 5000;
+  // A wait longer than this is logged as a warning, to see how close it gets to the timeout.
+  const WEBLOCK_SLOW_WAIT = 1000;
   let currentLeaseId = null;
   let instanceLeaseVerified = false;
   let hasActiveWebLock = false;
@@ -1093,7 +1098,7 @@ function formatTime(dOrTs = new Date()) {
   async function acquireInstanceLock(tabId) {
     await releaseWebLock();
     const now = Date.now();
-    // On search pages the acquisition sometimes takes up to a second. waitMs is the time
+    // On search pages the acquisition sometimes takes 1-1.6 s. waitMs is the time
     // until the browser granted the lock, totalMs until this code ran again: a long wait
     // means another document held the lock, a short wait with a long total means the
     // page's own scripts kept the main thread busy.
@@ -1171,10 +1176,11 @@ function formatTime(dOrTs = new Date()) {
 
     currentLeaseId = leaseId;
     instanceLeaseVerified = true;
-    hhaLog('info', 'lock_acquire', {
+    const waitMs = grantedAt !== null ? grantedAt - now : undefined;
+    hhaLog(waitMs > WEBLOCK_SLOW_WAIT ? 'warn' : 'info', 'lock_acquire', {
       tabId,
       leaseId,
-      waitMs: grantedAt !== null ? grantedAt - now : undefined,
+      waitMs,
       totalMs: Date.now() - now
     });
     return true;
