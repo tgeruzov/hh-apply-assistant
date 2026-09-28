@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.11
+// @version      0.2.12
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -3563,6 +3563,18 @@ function formatTime(dOrTs = new Date()) {
     SKIP_RATE_ALERT: 'Проверьте фильтры поиска. Если вакансии пропускаются зря, скопируйте отчёт и приложите его к issue на GitHub.',
   };
 
+  // Why a run stopped with an error: one word for the pill and the tab title,
+  // a short phrase for the panel header. Codes not listed here get the default.
+  const STOP_REASONS = {
+    CAPTCHA_DETECTED: { short: 'Капча', line: 'Остановлено: капча' },
+    RATE_LIMITED: { short: 'Доступ', line: 'Остановлено: hh.ru ограничил доступ' },
+    WATCHDOG_GIVEUP: { short: 'Зависла', line: 'Остановлено: страница не отвечает' },
+    DOM_SELECTOR_NOT_FOUND: { short: 'Вёрстка', line: 'Остановлено: в выдаче нет кнопки отклика' },
+    TAB_LOCK_LOST: { short: 'Вкладка', line: 'Остановлено: работает другая вкладка' },
+    STORAGE_BLOCKED: { short: 'Хранилище', line: 'Остановлено: хранилище недоступно' },
+  };
+  const STOP_REASON_DEFAULT = { short: 'Сбой', line: 'Остановлено из-за ошибки' };
+
   const ACTIVITY_TEXT = {
     resuming: 'Продолжаю на новой странице',
     locking: 'Проверяю, не запущен ли скрипт в другой вкладке',
@@ -3947,8 +3959,13 @@ function formatTime(dOrTs = new Date()) {
       pointer-events: none;
     }
 
-    .hha-root.is-running .hha-pill-step {
+    .hha-root.is-running .hha-pill-step,
+    .hha-root.is-stopped-error .hha-pill-step {
       display: inline-block;
+    }
+
+    .hha-root.is-stopped-error .hha-pill-step {
+      color: var(--md-sys-color-error);
     }
 
     .hha-pill-status {
@@ -5944,6 +5961,7 @@ function formatTime(dOrTs = new Date()) {
       }
 
       this._domEventsBound = false;
+      this._syncDocTitle(true);
       this.unbindAssistant();
       if (this._onDocClick) {
         document.removeEventListener('click', this._onDocClick);
@@ -7425,11 +7443,13 @@ function formatTime(dOrTs = new Date()) {
       if (!this.#shadow) return;
       const { status = 'idle' } = this._status || {};
       const isRunning = status === 'running';
+      const isStoppedError = status === 'error';
 
       const root = this.#shadow.querySelector('[data-el="root"]') || this.#shadow.querySelector('.hha-root');
-      if (root && root.classList.contains('is-running') !== isRunning) {
+      if (root && (root.classList.contains('is-running') !== isRunning || root.classList.contains('is-stopped-error') !== isStoppedError)) {
         root.classList.toggle('is-running', isRunning);
-        // The step segment appears only while running, so the pill changes width.
+        root.classList.toggle('is-stopped-error', isStoppedError);
+        // The step segment appears only while running or after an error stop, so the pill changes width.
         this._updatePosition();
       }
 
@@ -7453,7 +7473,7 @@ function formatTime(dOrTs = new Date()) {
         } else if (status === 'error') {
           targetClass = 'hha-btn-error';
           targetLabel = 'Сброс';
-          targetTitle = 'Ошибка. Нажмите, чтобы сбросить';
+          targetTitle = `${this._stopReason().line}. Нажмите, чтобы сбросить`;
         }
 
         const labelChanged = this._lastBtnLabel !== targetLabel;
@@ -7518,7 +7538,7 @@ function formatTime(dOrTs = new Date()) {
       // The full limit, 200 in 24 hours, is in the button tooltip; here the line must fit.
       if (code === 'DAILY_LIMIT_REACHED') return 'Лимит hh.ru исчерпан, продолжить можно позже';
       if (code === 'COMPLETED') return `Дневной лимит скрипта: ${MAX_DAILY_LIMIT} откликов`;
-      if (status === 'error') return 'Остановлено из-за ошибки';
+      if (status === 'error') return this._stopReason().line;
       const run = this._runSummaryText();
       if (run) return run;
       if (status === 'done') return 'Вакансии в выдаче закончились';
@@ -7548,7 +7568,12 @@ function formatTime(dOrTs = new Date()) {
       return 'Запуск завершен';
     }
 
+    _stopReason() {
+      return STOP_REASONS[this._status.code] || STOP_REASON_DEFAULT;
+    }
+
     _pillStepText() {
+      if (this._status.status === 'error') return this._stopReason().short;
       if (this._status.status !== 'running') return '';
       const a = this._activity;
       if (!a) return 'Работаю';
@@ -7582,16 +7607,57 @@ function formatTime(dOrTs = new Date()) {
       const line = this.#shadow.querySelector('[data-el="status-line"]');
       if (line) {
         line.textContent = text;
-        line.title = text === this._runSummaryText() ? `${this._runStopReason()}. ${text}` : text;
+        if (this._status.status === 'error') {
+          line.title = ERROR_TITLES[this._status.code] || text;
+        } else {
+          line.title = text === this._runSummaryText() ? `${this._runStopReason()}. ${text}` : text;
+        }
       }
       const hover = text === summary ? summary : `${summary}\n${text}`;
       this.#shadow.querySelectorAll('[data-summary-title]').forEach(el => { el.title = hover; });
 
       this._setPillStepText(this._pillStepText());
+      this._syncDocTitle();
 
       const until = this._status.status === 'running' ? this._activity?.until : null;
       if (until && until > Date.now()) {
         this._statusLineTimer = setTimeout(() => this._syncStatusLine(), 1000);
+      }
+    }
+
+    // The tab title gets a prefix only when the run needs attention: an error
+    // stop, the daily limit or the end of the results. The prefix goes away on
+    // the next start or reset.
+    _docTitlePrefix() {
+      const { status, code } = this._status;
+      if (status === 'error') return this._stopReason().short;
+      if (code === 'DAILY_LIMIT_REACHED' || code === 'COMPLETED') return 'Лимит';
+      if (status === 'done') {
+        return this._lastRun ? `Готово: ${Math.max(0, Number(this._lastRun.applied) || 0)}` : 'Готово';
+      }
+      return '';
+    }
+
+    // hh.ru can rewrite the title after the page loads, so while a prefix is
+    // set an observer puts it back.
+    _syncDocTitle(clear = false) {
+      const prefix = clear ? '' : this._docTitlePrefix();
+      const mark = prefix ? `${prefix} | ` : '';
+      const prev = this._titleMark || '';
+      let base = document.title;
+      if (prev && base.startsWith(prev)) base = base.slice(prev.length);
+      this._titleMark = mark;
+      if (document.title !== mark + base) document.title = mark + base;
+
+      if (mark && !this._titleObserver && document.head && typeof MutationObserver === 'function') {
+        this._titleObserver = new MutationObserver(() => {
+          const m = this._titleMark;
+          if (m && !document.title.startsWith(m)) document.title = m + document.title;
+        });
+        this._titleObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
+      } else if (!mark && this._titleObserver) {
+        this._titleObserver.disconnect();
+        this._titleObserver = null;
       }
     }
 
