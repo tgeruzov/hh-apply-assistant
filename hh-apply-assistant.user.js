@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HH Apply Assistant
 // @namespace    https://github.com/tgeruzov/hh-apply-assistant
-// @version      0.2.14
+// @version      0.2.15
 // @author       Timur Geruzov
 // @description  Автоматические отклики на вакансии hh.ru из поиска. Вакансии с тестами и анкетами откладывает в очередь для ручного отклика
 // @license      GPL-3.0-only
@@ -138,6 +138,7 @@ function formatTime(dOrTs = new Date()) {
     sessionProcessedTotal: 'hha:session_processed_total',
     sessionAnomalousSkips: 'hha:session_anomalous_skips',
     runStats: 'hha:run_stats',
+    runVisits: 'hha:run_visits',
     lastRun: 'hha:last_run'
   };
 
@@ -778,32 +779,49 @@ function formatTime(dOrTs = new Date()) {
 
   const getSentCount = () => getDailyCounters().applied;
 
+  // The lists below are written to storage at once. They used to be written on pagehide
+  // only, and in a live run that write was lost: a skipped vacancy was not in the list on
+  // the search page and was opened again and again.
   let memProcessedIds = null;
-  let memProcessedIdsDirty = false;
 
+  // Ids are kept without the v_ prefix: some pages give it and others do not.
   function getProcessedIDs() {
     if (!memProcessedIds) {
       const arr = parseJson(storage.sessionGet(KEYS.history), []);
-      memProcessedIds = new Set(Array.isArray(arr) ? arr : []);
+      memProcessedIds = new Set((Array.isArray(arr) ? arr : []).map(cleanVid).filter(Boolean));
     }
     return memProcessedIds;
   }
 
-  function flushProcessedIDs() {
-    if (memProcessedIdsDirty && memProcessedIds) {
-      storage.sessionSet(KEYS.history, JSON.stringify(Array.from(memProcessedIds)));
-      memProcessedIdsDirty = false;
-    }
+  function isProcessedID(id) {
+    return Boolean(id) && getProcessedIDs().has(cleanVid(id));
   }
 
   function addProcessedID(id) {
-    if (!id) return true;
+    const clean = cleanVid(id);
+    if (!clean) return true;
     const ids = getProcessedIDs();
-    if (!ids.has(id)) {
-      ids.add(id);
-      memProcessedIdsDirty = true;
+    if (!ids.has(clean)) {
+      ids.add(clean);
+      storage.sessionSet(KEYS.history, JSON.stringify(Array.from(ids)));
     }
     return true;
+  }
+
+  // How many times each vacancy was opened from the search in this run. A vacancy is
+  // opened again only after a failure, at most MAX_VACANCY_ATTEMPTS times; more visits
+  // mean it was not marked as processed, and the run would go round in a loop.
+  function readRunVisits() {
+    const map = parseJson(storage.sessionGet(KEYS.runVisits), {});
+    return map && typeof map === 'object' && !Array.isArray(map) ? map : {};
+  }
+
+  function countRunVisit(vid) {
+    const clean = cleanVid(vid);
+    if (!clean) return;
+    const map = readRunVisits();
+    map[clean] = (Number(map[clean]) || 0) + 1;
+    storage.sessionSet(KEYS.runVisits, JSON.stringify(map));
   }
 
   // --- Attempts & Blacklist Tracking (Circuit Breaker) ---
@@ -832,6 +850,7 @@ function formatTime(dOrTs = new Date()) {
     const count = (Number(map[clean]) || 0) + 1;
     map[clean] = count;
     memVacancyAttemptsDirty = true;
+    flushVacancyAttempts();
     return count;
   }
 
@@ -880,6 +899,7 @@ function formatTime(dOrTs = new Date()) {
     const map = getBlacklistMap();
     map[clean] = { ts: Date.now(), reason: String(reason || '') };
     memBlacklistDirty = true;
+    flushBlacklist();
   }
 
   // Vacancies with a response, kept across tabs and sessions. Some search cards keep the
@@ -942,7 +962,6 @@ function formatTime(dOrTs = new Date()) {
   const LASTING_QUEUE_REASONS = new Set(['test_required', 'test-questionnaire', 'queued_external_site', 'queued_promo', 'no-apply-button']);
 
   function flushStorageCaches() {
-    flushProcessedIDs();
     flushVacancyAttempts();
     flushBlacklist();
   }
@@ -958,6 +977,20 @@ function formatTime(dOrTs = new Date()) {
     }
   }, { capture: true });
 
+  // Every page change of a run goes through here. The log is written before leaving:
+  // in a live run the write on pagehide did not reach storage, and the entries of the
+  // last seconds on a vacancy page (the decision and the outcome) were lost.
+  function leavePage(url) {
+    onPageHide();
+    const loc = globalThis.location;
+    if (!loc) return;
+    if (!url) {
+      loc.reload();
+      return;
+    }
+    try { loc.assign(url); } catch (_) { loc.href = url; }
+  }
+
   function handleVacancyFailure(vid, reason = 'apply_failed', runId = currentRunId, meta = null) {
     if (!vid) return returnToList(null, { markProcessed: false, runId });
     const clean = cleanVid(vid);
@@ -966,7 +999,6 @@ function formatTime(dOrTs = new Date()) {
     if (attempts >= MAX_VACANCY_ATTEMPTS) {
       addToBlacklist(clean, reason);
       markVacancyProcessed(clean, runId);
-      markVacancyProcessed('v_' + clean, runId);
       saveCurrentForManual(
         clean,
         reason || 'apply_failed',
@@ -2351,7 +2383,7 @@ function formatTime(dOrTs = new Date()) {
       isNavigating = true;
       setActivity('returning');
       setTimeout(() => { isNavigating = false; }, 7000);
-      try { loc.assign(returnUrl); } catch (_) { loc.href = returnUrl; }
+      leavePage(returnUrl);
     }
     return true;
   }
@@ -2673,7 +2705,7 @@ function formatTime(dOrTs = new Date()) {
         const fullTarget = directHref.startsWith('http') ? directHref : (new URL(directHref, globalThis.location?.origin || 'https://hh.ru').href);
         setTrapLock(45000, runId);
         setLastAttemptID(vid);
-        try { globalThis.location.assign(fullTarget); } catch (_) { globalThis.location.href = fullTarget; }
+        leavePage(fullTarget);
         return 'RESPONSE_PAGE';
       }
     }
@@ -2852,8 +2884,9 @@ function formatTime(dOrTs = new Date()) {
     const href = toSearchListUrl(nextBtn.getAttribute?.('href') || nextBtn.href);
     if (href && globalThis.location) {
       setReturnUrl(href);
-      try { globalThis.location.assign(href); } catch (_) { globalThis.location.href = href; }
+      leavePage(href);
     } else {
+      onPageHide();
       clickElement(nextBtn);
     }
   }
@@ -2878,6 +2911,7 @@ function formatTime(dOrTs = new Date()) {
     // resume of the same run, not a new start.
     const isResume = isRunning();
     if (!isResume || !readRunStats()) startRunStats();
+    if (!isResume) storage.sessionRemove(KEYS.runVisits);
     setRunning(true);
     markProgress();
     hhaLog('info', isResume ? 'resume' : 'start', { runId, limit: MAX_DAILY_LIMIT });
@@ -3010,11 +3044,8 @@ function formatTime(dOrTs = new Date()) {
     setActivity('pause_before_vacancy', { vid, durationMs: pauseMs });
     await wait(pauseMs);
     if (stopSignal || runId !== currentRunId) return false;
-    try {
-      globalThis.location.assign(safeTargetUrl);
-    } catch (_) {
-      globalThis.location.href = safeTargetUrl;
-    }
+    countRunVisit(vid);
+    leavePage(safeTargetUrl);
     return true;
   }
 
@@ -3041,7 +3072,7 @@ function formatTime(dOrTs = new Date()) {
       }
     }
 
-    const processed = getProcessedIDs();
+    const visits = readRunVisits();
     // The processed list lives in sessionStorage and starts empty in every new tab, so a
     // vacancy already waiting in the manual queue would be opened again each session.
     const queued = new Set(ManualQueue.get().map(item => cleanVid(item.vid)));
@@ -3050,7 +3081,13 @@ function formatTime(dOrTs = new Date()) {
     const targets = [];
     for (const b of allBtns) {
       const vid = getVacancyID(b);
-      if (processed.has(vid) || isBlacklisted(vid) || queued.has(cleanVid(vid)) || applied.has(cleanVid(vid)) || queuedBefore.has(cleanVid(vid))) continue;
+      const clean = cleanVid(vid);
+      if (isProcessedID(vid) || isBlacklisted(vid) || queued.has(clean) || applied.has(clean) || queuedBefore.has(clean)) continue;
+      if ((Number(visits[clean]) || 0) >= MAX_VACANCY_ATTEMPTS) {
+        hhaLog('warn', 'vacancy_repeat_blocked', { vid, visits: Number(visits[clean]) });
+        markVacancyProcessed(vid, runId);
+        continue;
+      }
       if (config.skipHidden && !isVisible(b)) {
         markVacancyProcessed(vid, runId);
         recordOutcome(vid, 'skipped', 'skip_hidden_employer');
@@ -3140,7 +3177,7 @@ function formatTime(dOrTs = new Date()) {
         storage.sessionSet(KEYS.watchdogStallCount, String(stallCount));
         lastProgressTs = now;
         hhaLog('warn', 'watchdog_stall', { vid: currentVid || undefined, stallCount, elapsedMs });
-        try { globalThis.location?.reload(); } catch (e) {
+        try { leavePage(); } catch (e) {
           hhaLog('warn', 'watchdog_reload_failed', { error: String(e && e.message || e) });
         }
         return true;
