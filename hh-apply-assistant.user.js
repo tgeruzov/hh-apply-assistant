@@ -6576,11 +6576,11 @@ function cleanVacancyTitle(raw) {
       if (root) {
         root.dataset.activeTab = tabName;
       }
-      // The queue flyout is taller: the pill moves down if that flyout would leave the window.
-      const pos = this._clampPillCoordinates(this._pillPos.x, this._pillPos.y, window.innerWidth || 1024, window.innerHeight || 768);
+      // The queue flyout is taller: the pill moves down while that flyout would leave the
+      // window, and back to its stored place on the letter tab.
+      const pos = this._placePill();
       if (pos.x !== this._pillPos.x || pos.y !== this._pillPos.y) {
         this._pillPos = pos;
-        this._persistPosition();
         if (root) this._animateSnap(root);
       }
       this._updatePosition();
@@ -7872,12 +7872,23 @@ function cleanVacancyTitle(raw) {
       }
     }
 
+    // A smaller window only moves the pill on screen; the stored place is kept, so it
+    // comes back once the window does (DevTools docked at the bottom, a split screen).
     _onResize() {
+      this._pillPos = this._placePill();
+      this._updatePosition();
+      this._syncCoverHighlights();
+    }
+
+    // Where the pill should be in the current window: the stored distances to the nearer
+    // edges, clamped so it and the panel above it fit.
+    _placePill() {
       const winW = window.innerWidth || 1024;
       const winH = window.innerHeight || 768;
-      this._pillPos = this._clampPillCoordinates(this._pillPos.x, this._pillPos.y, winW, winH);
-      this._persistPosition();
-      this._updatePosition();
+      const a = this._pillAnchor || { ax: 'r', dx: 219, ay: 'b', dy: 60 };
+      const x = a.ax === 'r' ? winW - a.dx : a.dx;
+      const y = a.ay === 'b' ? winH - a.dy : a.dy;
+      return this._clampPillCoordinates(x, y, winW, winH);
     }
 
     _updatePosition() {
@@ -7926,44 +7937,45 @@ function cleanVacancyTitle(raw) {
       }
     }
 
+    // No stored place: bottom right, 24 px from the bottom edge (the default anchor).
     _restorePosition() {
-      const winW = window.innerWidth || 1024;
-      const winH = window.innerHeight || 768;
-
-      // Default position: Bottom-Right with 24px margin
-      const defCenterX = Math.max(203, winW - 219);
-      const defY = Math.max(8, winH - 36 - 24);
-
-      let pos = null;
+      const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+      let anchor = null;
+      let legacy = null;
       try {
-        const rawV3 = localStorage.getItem('hha_hud_pos_v3');
-        if (rawV3) {
-          pos = JSON.parse(rawV3);
+        const v4 = JSON.parse(localStorage.getItem('hha_hud_pos_v4') || 'null');
+        if (v4 && (v4.ax === 'l' || v4.ax === 'r') && (v4.ay === 't' || v4.ay === 'b') && isNum(v4.dx) && isNum(v4.dy)) {
+          anchor = v4;
         } else {
-          // Migrate legacy v2 coordinate (v2 stored left coordinate)
-          const rawV2 = localStorage.getItem('hha_hud_pos_v2');
-          if (rawV2) {
-            const p2 = JSON.parse(rawV2);
-            if (p2 && typeof p2.x === 'number' && !isNaN(p2.x) && typeof p2.y === 'number' && !isNaN(p2.y)) {
-              pos = { x: p2.x + 83, y: p2.y };
-            }
-          }
+          // Older versions kept window coordinates: v3 the pill centre, v2 its left edge.
+          const v3 = JSON.parse(localStorage.getItem('hha_hud_pos_v3') || 'null');
+          const v2 = JSON.parse(localStorage.getItem('hha_hud_pos_v2') || 'null');
+          if (v3 && isNum(v3.x) && isNum(v3.y)) legacy = v3;
+          else if (v2 && isNum(v2.x) && isNum(v2.y)) legacy = { x: v2.x + 83, y: v2.y };
         }
       } catch (_) {}
 
-      if (pos && typeof pos.x === 'number' && !isNaN(pos.x) && typeof pos.y === 'number' && !isNaN(pos.y)) {
-        this._pillPos = this._clampPillCoordinates(pos.x, pos.y, winW, winH);
-      } else {
-        this._pillPos = this._clampPillCoordinates(defCenterX, defY, winW, winH);
+      this._pillAnchor = anchor;
+      if (legacy) {
+        this._pillPos = legacy;
+        this._persistPosition();
       }
-
-      this._persistPosition();
+      this._pillPos = this._placePill();
       this._updatePosition();
     }
 
+    // Keeps the place the user chose as distances to the nearer left/right and top/bottom
+    // edges of the window it was chosen in.
     _persistPosition() {
+      const winW = window.innerWidth || 1024;
+      const winH = window.innerHeight || 768;
+      const { x, y } = this._pillPos;
+      this._pillAnchor = {
+        ax: x > winW / 2 ? 'r' : 'l', dx: Math.round(x > winW / 2 ? winW - x : x),
+        ay: y > winH / 2 ? 'b' : 't', dy: Math.round(y > winH / 2 ? winH - y : y)
+      };
       try {
-        localStorage.setItem('hha_hud_pos_v3', JSON.stringify({ x: this._pillPos.x, y: this._pillPos.y }));
+        localStorage.setItem('hha_hud_pos_v4', JSON.stringify(this._pillAnchor));
       } catch (_) {}
     }
 
