@@ -4181,6 +4181,9 @@ function cleanVacancyTitle(raw) {
     inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`
   };
 
+  // The running segment of Стоп (see .hha-btn-sweep in the stylesheet).
+  const BTN_SWEEP = '<svg class="hha-btn-sweep" viewBox="0 0 76 32" preserveAspectRatio="none" aria-hidden="true" focusable="false"><rect x="0.75" y="0.75" width="74.5" height="30.5" rx="15.25" pathLength="100"></rect></svg>';
+
   // --- 3. Shadow DOM Stylesheet ---
 
   const STYLES = `
@@ -4597,6 +4600,8 @@ function cleanVacancyTitle(raw) {
     }
 
     .hha-btn-label {
+      position: relative;
+      z-index: 1;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -4671,26 +4676,52 @@ function cleanVacancyTitle(raw) {
       transform: scale(0.97);
     }
 
-    /* Indicator when Automation is Running. The button breathes through the opacity
-       of an inner overlay: the compositor animates it without repainting, while a
-       pulsing box-shadow repainted every frame of the run and was clipped by the pill. */
-    .hha-root.is-running .hha-btn-stop::before {
-      content: '';
+    /* Indicator while a run goes: a short teal segment runs round the outline of Стоп,
+       one lap in 2.4 s. The whole button breathing every 2 s read as a pulse that pulled
+       the eye for the whole run. The segment is a stroke on an SVG the size of the
+       button (both quick buttons are 76x32); pathLength 100 makes the dash a share of
+       the outline. Under the pointer Стоп turns red, and the segment gives way to it. */
+    .hha-btn-sweep {
       position: absolute;
       inset: 0;
-      border-radius: inherit;
-      background: var(--md-sys-color-primary);
+      width: 100%;
+      height: 100%;
       opacity: 0;
       pointer-events: none;
-      animation: hhaStopPulse 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      transition: opacity 160ms ease-out;
     }
 
-    @keyframes hhaStopPulse {
-      0%, 100% {
-        opacity: 0;
+    .hha-btn-sweep rect {
+      fill: none;
+      stroke: var(--md-sys-color-primary);
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-dasharray: 16 84;
+    }
+
+    .hha-root.is-running .hha-btn-stop .hha-btn-sweep {
+      opacity: 1;
+    }
+
+    .hha-root.is-running .hha-btn-stop .hha-btn-sweep rect {
+      animation: hhaStopSweep 2.4s linear infinite;
+    }
+
+    .hha-root.is-running .hha-btn-stop:hover .hha-btn-sweep {
+      opacity: 0;
+    }
+
+    /* The pill's copy of the button is hidden while the panel is open: no lap there. */
+    .hha-root.is-expanded .hha-pill .hha-btn-sweep rect {
+      animation: none;
+    }
+
+    @keyframes hhaStopSweep {
+      from {
+        stroke-dashoffset: 0;
       }
-      50% {
-        opacity: 0.08;
+      to {
+        stroke-dashoffset: -100;
       }
     }
 
@@ -6559,6 +6590,12 @@ function cleanVacancyTitle(raw) {
         animation: none !important;
       }
 
+      /* A segment standing still on the outline would look like a flaw: no indicator,
+         the step text and its countdown show the run. */
+      .hha-btn-sweep {
+        display: none !important;
+      }
+
       .hha-pill,
       .hha-flyout,
       .hha-panel,
@@ -7151,6 +7188,7 @@ function cleanVacancyTitle(raw) {
             </div>
             <div class="hha-pill-step" data-el="pill-step" aria-hidden="true"></div>
             <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="pill-quick-btn">
+              ${BTN_SWEEP}
               <span class="hha-btn-label" data-el="pill-quick-label">Старт</span>
             </button>
           </div>
@@ -7268,6 +7306,7 @@ function cleanVacancyTitle(raw) {
               </div>
               <div class="hha-footer-actions">
                 <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="footer-quick-btn">
+                  ${BTN_SWEEP}
                   <span class="hha-btn-label" data-el="footer-quick-label">Старт</span>
                 </button>
               </div>
@@ -8510,7 +8549,7 @@ function cleanVacancyTitle(raw) {
           const desiredClassName = `hha-btn-quick ${targetClass}`;
           let labelEl = quickBtn.querySelector('.hha-btn-label');
           if (!labelEl) {
-            quickBtn.innerHTML = `<span class="hha-btn-label">${targetLabel}</span>`;
+            quickBtn.innerHTML = `${BTN_SWEEP}<span class="hha-btn-label">${targetLabel}</span>`;
             labelEl = quickBtn.querySelector('.hha-btn-label');
           }
           // A newer status cancels a swap still in flight.
