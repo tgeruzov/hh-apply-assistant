@@ -3914,7 +3914,7 @@ function cleanVacancyTitle(raw) {
       --md-sys-color-on-surface: #191C1B;
       --md-sys-color-on-surface-variant: #3F4946;
 
-      --md-sys-color-outline: #707976;
+      --md-sys-color-outline: #66706D;
       --md-sys-color-outline-variant: #E2E7E5;
 
       /* Surface Colors */
@@ -3938,6 +3938,10 @@ function cleanVacancyTitle(raw) {
       --md-sys-elevation-level1: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.04);
       --md-sys-elevation-level2: 0 4px 14px -1px rgba(0, 0, 0, 0.07), 0 2px 5px -1px rgba(0, 0, 0, 0.04);
       --md-sys-elevation-level3: 0 12px 28px -4px rgba(0, 0, 0, 0.08), 0 4px 10px -2px rgba(0, 0, 0, 0.03);
+      /* Quick button shadows: the same three-part list in every state, so they interpolate. */
+      --hha-btn-shadow-raised: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.04), inset 0 0 0 1px transparent;
+      --hha-btn-shadow-hover: 0 4px 14px -1px rgba(0, 0, 0, 0.07), 0 2px 5px -1px rgba(0, 0, 0, 0.04), inset 0 0 0 1px transparent;
+      --hha-btn-shadow-flat: 0 1px 3px transparent, 0 1px 2px transparent, inset 0 0 0 1px transparent;
 
       /* State Layer Opacities */
       --md-sys-state-hover: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
@@ -3979,8 +3983,10 @@ function cleanVacancyTitle(raw) {
       /* HUD Motion Specification */
       --hha-motion-expand-duration: 500ms;
       --hha-motion-spring-easing: cubic-bezier(0.34, 1.15, 0.64, 1);
-      --hha-motion-collapse-duration: 500ms;
-      --hha-motion-collapse-easing: cubic-bezier(0.34, 1.15, 0.64, 1);
+      /* Leaving is quicker than arriving and accelerates out, with no spring: the panel
+         does not linger after Esc or the close button. */
+      --hha-motion-collapse-duration: 260ms;
+      --hha-motion-collapse-easing: cubic-bezier(0.3, 0, 0.8, 0.15);
       --hha-motion-tab-duration: 200ms;
       --hha-motion-tab-easing: cubic-bezier(0.2, 0, 0, 1);
       --hha-motion-tab-shift: 6px;
@@ -4074,9 +4080,9 @@ function cleanVacancyTitle(raw) {
       transform-origin: center bottom;
       will-change: transform, opacity;
       transition:
-        opacity 250ms ease-out 200ms,
-        transform var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
-        visibility var(--hha-motion-collapse-duration, 500ms) linear,
+        opacity 180ms ease-out 90ms,
+        transform 320ms var(--md-sys-motion-easing-emphasized-decelerate) 40ms,
+        visibility 0s linear 0s,
         box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
         border-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
         background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard);
@@ -4092,16 +4098,17 @@ function cleanVacancyTitle(raw) {
       pointer-events: none;
       transform: scale(0.92) translate3d(0, 12px, 0);
       transition:
-        opacity 300ms ease-out 0s,
-        transform var(--hha-motion-expand-duration, 500ms) var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
-        visibility var(--hha-motion-expand-duration, 500ms) linear;
+        opacity 110ms linear 0s,
+        transform 300ms var(--md-sys-motion-easing-standard),
+        visibility 0s linear 110ms;
     }
 
     .hha-pill-status-group {
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      cursor: grab;
+      /* A click here opens the panel; dragging still works, the hand shows while it does. */
+      cursor: pointer;
       user-select: none;
       position: relative;
       overflow: hidden;
@@ -4127,7 +4134,10 @@ function cleanVacancyTitle(raw) {
       background: var(--md-sys-color-surface-container-highest);
     }
 
-    .hha-pill-status-group:active,
+    .hha-pill-status-group:active {
+      background: var(--md-sys-color-surface-container-highest);
+    }
+
     .hha-root.is-dragging .hha-pill-status-group {
       background: var(--md-sys-color-surface-container-highest);
       cursor: grabbing;
@@ -4136,10 +4146,15 @@ function cleanVacancyTitle(raw) {
     /* Sized to the text; _setPillStepText() animates between measured widths.
        The countdown keeps the width thanks to tabular digits. */
     .hha-pill-step {
-      display: none;
-      width: auto;
+      display: inline-block;
+      width: 0;
       max-width: 96px;
-      transition: width var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard);
+      margin-left: -6px;
+      opacity: 0;
+      transition:
+        width 280ms var(--md-sys-motion-easing-standard),
+        margin-left 280ms var(--md-sys-motion-easing-standard),
+        opacity 160ms var(--md-sys-motion-easing-standard);
       font-size: var(--md-sys-typescale-label-medium-size);
       font-weight: 500;
       line-height: var(--md-comp-control-height);
@@ -4153,7 +4168,19 @@ function cleanVacancyTitle(raw) {
 
     .hha-root.is-running .hha-pill-step,
     .hha-root.is-stopped-error .hha-pill-step {
-      display: inline-block;
+      margin-left: 0;
+      opacity: 1;
+      transition:
+        width 280ms var(--md-sys-motion-easing-standard),
+        margin-left 280ms var(--md-sys-motion-easing-standard),
+        opacity 200ms var(--md-sys-motion-easing-standard) 80ms;
+    }
+
+    /* Wide enough for the longest step while running ("Загрузка 2 с", about 68px): the
+       pill keeps one width for the whole run and Стоп does not move under the pointer. */
+    .hha-root.is-running .hha-pill-step {
+      width: 72px;
+      text-align: center;
     }
 
     .hha-root.is-stopped-error .hha-pill-step {
@@ -4261,9 +4288,9 @@ function cleanVacancyTitle(raw) {
       position: relative;
       overflow: hidden;
       transition:
-        background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard),
-        color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard),
-        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
+        background-color 180ms var(--md-sys-motion-easing-standard),
+        color 180ms var(--md-sys-motion-easing-standard),
+        box-shadow 180ms var(--md-sys-motion-easing-standard),
         transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
@@ -4281,15 +4308,18 @@ function cleanVacancyTitle(raw) {
     .hha-btn-label.is-swapping {
       transform: translateY(3px);
       opacity: 0;
+      transition:
+        transform 110ms var(--md-sys-motion-easing-standard),
+        opacity 110ms var(--md-sys-motion-easing-standard);
     }
 
     .hha-pill .hha-btn-quick {
       opacity: 1;
       transition:
         opacity 140ms ease-out 60ms,
-        background-color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard),
-        color var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard),
-        box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
+        background-color 180ms var(--md-sys-motion-easing-standard),
+        color 180ms var(--md-sys-motion-easing-standard),
+        box-shadow 180ms var(--md-sys-motion-easing-standard),
         transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
@@ -4302,39 +4332,40 @@ function cleanVacancyTitle(raw) {
     .hha-btn-start {
       background: var(--md-sys-color-primary);
       color: var(--md-sys-color-on-primary);
-      box-shadow: var(--md-sys-elevation-level1);
+      box-shadow: var(--hha-btn-shadow-raised);
     }
 
     .hha-btn-start:hover {
       background: color-mix(in srgb, var(--md-sys-color-primary) 92%, var(--md-sys-color-on-primary));
-      box-shadow: var(--md-sys-elevation-level2);
+      box-shadow: var(--hha-btn-shadow-hover);
       color: var(--md-sys-color-on-primary);
     }
 
     .hha-btn-start:active {
       background: color-mix(in srgb, var(--md-sys-color-primary) 88%, var(--md-sys-color-on-primary));
-      box-shadow: var(--md-sys-elevation-level1);
+      box-shadow: var(--hha-btn-shadow-raised);
       transform: scale(0.97);
     }
 
-    /* Filled Button for Stop (Error Role) */
+    /* Outlined Button for Stop. Red is kept for an error stop (Сброс), so a red pill
+       always means the run needs attention; stopping is an ordinary action and only
+       turns red under the pointer. */
     .hha-btn-stop {
-      background: var(--md-sys-color-error);
-      color: var(--md-sys-color-on-error);
-      box-shadow: var(--md-sys-elevation-level1);
+      background: var(--md-sys-color-surface-container-lowest);
+      color: var(--md-sys-color-on-surface);
+      box-shadow: 0 1px 3px transparent, 0 1px 2px transparent, inset 0 0 0 1px var(--md-sys-color-outline);
     }
 
     .hha-btn-stop:hover {
-      background: color-mix(in srgb, var(--md-sys-color-error) 92%, var(--md-sys-color-on-error));
-      box-shadow: var(--md-sys-elevation-level2);
-      color: var(--md-sys-color-on-error);
+      background: var(--md-sys-color-error-container);
+      color: var(--md-sys-color-on-error-container);
+      box-shadow: 0 1px 3px transparent, 0 1px 2px transparent, inset 0 0 0 1px var(--md-sys-color-error);
     }
 
-    .hha-btn-stop:active,
-    .hha-btn-stop:focus-visible {
-      background: color-mix(in srgb, var(--md-sys-color-error) 88%, var(--md-sys-color-on-error));
-      box-shadow: var(--md-sys-elevation-level1);
-      color: var(--md-sys-color-on-error);
+    .hha-btn-stop:active {
+      background: color-mix(in srgb, var(--md-sys-color-error-container) 85%, var(--md-sys-color-error));
+      color: var(--md-sys-color-on-error-container);
+      box-shadow: 0 1px 3px transparent, 0 1px 2px transparent, inset 0 0 0 1px var(--md-sys-color-error);
       transform: scale(0.97);
     }
 
@@ -4346,7 +4377,7 @@ function cleanVacancyTitle(raw) {
       position: absolute;
       inset: 0;
       border-radius: inherit;
-      background: var(--md-sys-color-on-error);
+      background: var(--md-sys-color-primary);
       opacity: 0;
       pointer-events: none;
       animation: hhaStopPulse 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
@@ -4357,7 +4388,7 @@ function cleanVacancyTitle(raw) {
         opacity: 0;
       }
       50% {
-        opacity: 0.14;
+        opacity: 0.08;
       }
     }
 
@@ -4366,18 +4397,18 @@ function cleanVacancyTitle(raw) {
       background: var(--md-sys-color-primary);
       color: var(--md-sys-color-on-primary);
       border: none;
-      box-shadow: var(--md-sys-elevation-level1);
+      box-shadow: var(--hha-btn-shadow-raised);
     }
 
     .hha-btn-done:hover {
       background: color-mix(in srgb, var(--md-sys-color-primary) 92%, var(--md-sys-color-on-primary));
-      box-shadow: var(--md-sys-elevation-level2);
+      box-shadow: var(--hha-btn-shadow-hover);
       color: var(--md-sys-color-on-primary);
     }
 
     .hha-btn-done:active {
       background: color-mix(in srgb, var(--md-sys-color-primary) 88%, var(--md-sys-color-on-primary));
-      box-shadow: var(--md-sys-elevation-level1);
+      box-shadow: var(--hha-btn-shadow-raised);
       transform: scale(0.97);
     }
 
@@ -4386,7 +4417,7 @@ function cleanVacancyTitle(raw) {
       background: var(--md-sys-color-surface-container-highest);
       color: var(--md-sys-color-on-surface-variant);
       border: 1px solid var(--md-sys-color-outline-variant);
-      box-shadow: none;
+      box-shadow: var(--hha-btn-shadow-flat);
     }
 
     .hha-btn-limit:hover {
@@ -4403,19 +4434,19 @@ function cleanVacancyTitle(raw) {
     .hha-btn-error {
       background: var(--md-sys-color-error);
       color: var(--md-sys-color-on-error);
-      box-shadow: var(--md-sys-elevation-level1);
+      box-shadow: var(--hha-btn-shadow-raised);
     }
 
     .hha-btn-error:hover {
       background: color-mix(in srgb, var(--md-sys-color-error) 92%, var(--md-sys-color-on-error));
-      box-shadow: var(--md-sys-elevation-level2);
+      box-shadow: var(--hha-btn-shadow-hover);
       color: var(--md-sys-color-on-error);
     }
 
     .hha-btn-error:active,
     .hha-btn-error:focus-visible {
       background: color-mix(in srgb, var(--md-sys-color-error) 88%, var(--md-sys-color-on-error));
-      box-shadow: var(--md-sys-elevation-level1);
+      box-shadow: var(--hha-btn-shadow-raised);
       transform: scale(0.97);
       color: var(--md-sys-color-on-error);
     }
@@ -4457,7 +4488,7 @@ function cleanVacancyTitle(raw) {
         min-height 400ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
         max-height 400ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
         transform var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
-        opacity 250ms ease-in 200ms,
+        opacity 200ms ease-in 30ms,
         border-radius var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
         box-shadow var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
         visibility var(--hha-motion-collapse-duration, 500ms) linear;
@@ -4514,14 +4545,14 @@ function cleanVacancyTitle(raw) {
       opacity: 0;
       transform: translate3d(0, -8px, 0) scale(0.96);
       transition:
-        opacity 200ms ease-out 0s,
-        transform var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1));
+        opacity 120ms ease-out 0s,
+        transform var(--hha-motion-collapse-duration, 260ms) var(--hha-motion-collapse-easing, cubic-bezier(0.3, 0, 0.8, 0.15));
     }
 
     .hha-root.is-expanded .hha-island-header {
       opacity: 1;
       transform: translate3d(0, 0, 0) scale(1);
-      transition: opacity 350ms ease-out 80ms, transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 80ms;
+      transition: opacity 260ms ease-out 50ms, transform 420ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 50ms;
     }
 
     .hha-flyout .hha-panels,
@@ -4529,29 +4560,29 @@ function cleanVacancyTitle(raw) {
       opacity: 0;
       transform: translate3d(0, 10px, 0) scale(0.94);
       transition:
-        opacity 200ms ease-out 0s,
-        transform var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1));
+        opacity 120ms ease-out 0s,
+        transform var(--hha-motion-collapse-duration, 260ms) var(--hha-motion-collapse-easing, cubic-bezier(0.3, 0, 0.8, 0.15));
     }
 
     .hha-root.is-expanded .hha-panels,
     .hha-root.is-expanded .hha-log-row {
       opacity: 1;
       transform: translate3d(0, 0, 0) scale(1);
-      transition: opacity 350ms ease-out 100ms, transform 480ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 100ms;
+      transition: opacity 280ms ease-out 70ms, transform 440ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 70ms;
     }
 
     .hha-flyout .hha-island-footer {
       opacity: 0;
       transform: translate3d(0, 0, 0);
       transition:
-        opacity 200ms ease-out 0s,
-        transform var(--hha-motion-collapse-duration, 500ms) var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1));
+        opacity 120ms ease-out 0s,
+        transform var(--hha-motion-collapse-duration, 260ms) var(--hha-motion-collapse-easing, cubic-bezier(0.3, 0, 0.8, 0.15));
     }
 
     .hha-root.is-expanded .hha-island-footer {
       opacity: 1;
       transform: translate3d(0, 0, 0);
-      transition: opacity 320ms ease-out 60ms, transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 60ms;
+      transition: opacity 240ms ease-out 40ms, transform 420ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 40ms;
     }
 
     /* 5.1 Island Header */
@@ -4716,8 +4747,12 @@ function cleanVacancyTitle(raw) {
       flex-shrink: 0;
     }
 
+    /* A rare action: grey at rest, red only under the pointer and when it asks to confirm. */
     .hha-btn-clear-log {
-      color: var(--md-sys-color-error);
+      color: var(--md-sys-color-on-surface-variant);
+      transition:
+        background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+        color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
     }
 
     .hha-btn-clear-log[hidden] {
@@ -4727,6 +4762,7 @@ function cleanVacancyTitle(raw) {
     .hha-btn-clear-log:hover,
     .hha-btn-clear-log.is-confirming {
       background: var(--md-sys-color-error-container);
+      color: var(--md-sys-color-error);
     }
 
     .hha-btn-clear-log:active {
@@ -4785,8 +4821,8 @@ function cleanVacancyTitle(raw) {
       transform: translate3d(var(--shared-counter-offset, 100px), 0, 0);
       will-change: transform, opacity;
       transition:
-        transform 350ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
-        opacity 200ms ease-out,
+        transform var(--hha-motion-collapse-duration, 260ms) var(--hha-motion-collapse-easing, cubic-bezier(0.3, 0, 0.8, 0.15)),
+        opacity 140ms ease-out,
         background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard),
         box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
     }
@@ -4795,8 +4831,8 @@ function cleanVacancyTitle(raw) {
       opacity: 1;
       transform: translate3d(0, 0, 0);
       transition:
-        transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 80ms,
-        opacity 320ms ease-out 80ms,
+        transform 420ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 0ms,
+        opacity 160ms ease-out 20ms,
         background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard),
         box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
     }
@@ -4853,16 +4889,16 @@ function cleanVacancyTitle(raw) {
       transform: scale(0.85);
       will-change: transform, opacity;
       transition:
-        transform 350ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
-        opacity 200ms ease-out;
+        transform var(--hha-motion-collapse-duration, 260ms) var(--hha-motion-collapse-easing, cubic-bezier(0.3, 0, 0.8, 0.15)),
+        opacity 140ms ease-out;
     }
 
     .hha-root.is-expanded .hha-island-footer .hha-tabs {
       opacity: 1;
       transform: scale(1);
       transition:
-        transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 100ms,
-        opacity 320ms ease-out 100ms;
+        transform 420ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 40ms,
+        opacity 220ms ease-out 50ms;
     }
 
     .hha-tab-indicator {
@@ -4906,16 +4942,16 @@ function cleanVacancyTitle(raw) {
       transform: translate3d(var(--shared-btn-offset, -104px), 0, 0);
       will-change: transform, opacity;
       transition:
-        transform 350ms var(--hha-motion-collapse-easing, cubic-bezier(0.34, 1.15, 0.64, 1)),
-        opacity 200ms ease-out;
+        transform var(--hha-motion-collapse-duration, 260ms) var(--hha-motion-collapse-easing, cubic-bezier(0.3, 0, 0.8, 0.15)),
+        opacity 140ms ease-out;
     }
 
     .hha-root.is-expanded .hha-footer-actions .hha-btn-quick {
       opacity: 1;
       transform: translate3d(0, 0, 0);
       transition:
-        transform 450ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 80ms,
-        opacity 320ms ease-out 80ms;
+        transform 420ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 0ms,
+        opacity 160ms ease-out 20ms;
     }
 
     .hha-tab-btn {
@@ -5297,7 +5333,7 @@ function cleanVacancyTitle(raw) {
     }
 
     .hha-queue-card.is-viewed .hha-queue-salary {
-      opacity: 0.75;
+      color: var(--md-sys-color-outline);
     }
 
     .hha-queue-card-top {
@@ -5406,7 +5442,7 @@ function cleanVacancyTitle(raw) {
       padding: 0 7px;
       box-sizing: border-box;
       border-radius: var(--md-sys-shape-corner-small);
-      font-size: 10.5px;
+      font-size: var(--md-sys-typescale-label-small-size);
       font-weight: 500;
       letter-spacing: -0.05px;
       flex-shrink: 0;
@@ -5454,10 +5490,11 @@ function cleanVacancyTitle(raw) {
 
     /* Delete item button with Icon Button state layers */
     .hha-log-item-delete {
-      width: 20px;
-      height: 20px;
-      min-width: 20px;
-      min-height: 20px;
+      width: 28px;
+      height: 28px;
+      min-width: 28px;
+      min-height: 28px;
+      margin: -4px -6px -4px 0;
       padding: 0;
       display: inline-flex;
       align-items: center;
@@ -5763,6 +5800,25 @@ function cleanVacancyTitle(raw) {
     .hha-tooltip.is-visible {
       opacity: 1;
       visibility: visible;
+    }
+
+    /* The arrow points at the element: below the tooltip when it sits above the element,
+       on top when it sits below. _showTooltip() sets its x and the side. */
+    .hha-tooltip::after {
+      content: '';
+      position: absolute;
+      left: var(--hha-arrow-x, 50%);
+      bottom: -4px;
+      width: 9px;
+      height: 9px;
+      background: inherit;
+      border-radius: 1px;
+      transform: translateX(-50%) rotate(45deg);
+    }
+
+    .hha-tooltip.is-below::after {
+      bottom: auto;
+      top: -4px;
     }
 
     /* Undo after removing from the queue */
@@ -6405,11 +6461,17 @@ function cleanVacancyTitle(raw) {
 
       if (typeof assistant.on === 'function') {
         this._unsubscribers.push(
+          // The log row is read when the panel opens; with the panel open during a run it
+          // follows each outcome and status change, not every log line.
           assistant.on('status', (payload) => {
             if (payload) this.updateStatus(payload.status, payload.code || payload.statusCode);
+            if (this._isExpanded) this._syncLogRow();
           }),
           assistant.on('progress', (payload) => {
             if (payload) this.updateProgress(payload.sent);
+          }),
+          assistant.on('outcome', () => {
+            if (this._isExpanded) this._syncLogRow();
           }),
           assistant.on('activity', (activity) => {
             this._activity = activity || null;
@@ -6760,7 +6822,7 @@ function cleanVacancyTitle(raw) {
         <style>${STYLES}</style>
         <div class="hha-root" data-el="root" data-active-tab="${this._activeTab}">
           <div class="hha-pill" data-el="pill">
-            <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и очередь" data-summary-title>
+            <div class="hha-pill-status-group" data-action="toggle-expand" data-el="pill-status-group" tabindex="0" role="button" aria-expanded="false" aria-label="Открыть настройки и очередь">
               <div class="hha-pill-status">
                 <span class="hha-pill-progress" data-el="pill-progress"><span class="hha-count-item is-sent">${ICONS.send}<span class="hha-current-count" data-el="pill-current-count">0</span></span><span class="hha-count-item is-queue">${ICONS.list}<span class="hha-queue-count" data-el="pill-queue-count">0</span></span></span>
               </div>
@@ -6775,11 +6837,11 @@ function cleanVacancyTitle(raw) {
           <div class="hha-flyout" data-el="flyout" role="dialog" aria-modal="false" aria-label="Панель управления откликами">
             <!-- Top Header: Drag Handle & Collapse Button -->
             <header class="hha-island-header" data-el="island-header">
-              <div class="hha-header-drag-handle" title="Перетащите для перемещения">
+              <div class="hha-header-drag-handle">
                 <span class="hha-header-grip"></span>
               </div>
               <div class="hha-status-line" data-el="status-line"></div>
-              <button type="button" class="hha-btn-collapse" data-action="collapse-island" aria-label="Свернуть панель" title="Свернуть">${ICONS.close(18)}</button>
+              <button type="button" class="hha-btn-collapse" data-action="collapse-island" aria-label="Свернуть панель" data-tooltip="Свернуть (Esc)">${ICONS.close(18)}</button>
             </header>
 
             <!-- Error banner: above both tabs, it does not hide the letter or switch the tab -->
@@ -6872,7 +6934,7 @@ function cleanVacancyTitle(raw) {
 
             <!-- Bottom Dock: Counter on the Left + Tabs in Center + Quick Action Button on the Right -->
             <footer class="hha-island-footer">
-              <div class="hha-footer-status-group" data-action="toggle-expand" data-el="footer-status-group" tabindex="0" role="button" aria-expanded="true" aria-label="Свернуть панель" data-summary-title>
+              <div class="hha-footer-status-group" data-action="toggle-expand" data-el="footer-status-group" tabindex="0" role="button" aria-expanded="true" aria-label="Свернуть панель">
                 <div class="hha-footer-status">
                   <span class="hha-footer-progress" data-el="footer-progress"><span class="hha-count-item is-sent">${ICONS.send}<span class="hha-current-count" data-el="footer-current-count">0</span></span><span class="hha-count-item is-queue">${ICONS.list}<span class="hha-queue-count" data-el="footer-queue-count">0</span></span></span>
                 </div>
@@ -7745,16 +7807,17 @@ function cleanVacancyTitle(raw) {
       const maxX = Math.max(minX, flyoutRect.width - tipW - 8);
       const x = clamp(targetCenterX - tipW / 2, minX, maxX);
 
+      // 9px between the element and the tooltip leaves room for the arrow.
       const spaceAbove = targetRect.top - flyoutRect.top;
-      let y;
-      if (spaceAbove >= tipH + 8) {
-        y = (targetRect.top - flyoutRect.top) - tipH - 5;
-      } else {
-        y = (targetRect.bottom - flyoutRect.top) + 5;
-      }
+      const below = spaceAbove < tipH + 12;
+      let y = below
+        ? (targetRect.bottom - flyoutRect.top) + 9
+        : (targetRect.top - flyoutRect.top) - tipH - 9;
       const maxY = Math.max(8, flyoutRect.height - tipH - 8);
       y = clamp(y, 8, maxY);
 
+      tooltip.classList.toggle('is-below', below);
+      tooltip.style.setProperty('--hha-arrow-x', `${Math.round(clamp(targetCenterX - x, 12, tipW - 12))}px`);
       tooltip.style.left = `${Math.round(x)}px`;
       tooltip.style.top = `${Math.round(y)}px`;
     }
@@ -8100,12 +8163,18 @@ function cleanVacancyTitle(raw) {
           targetLabel = 'Стоп';
           targetTitle = 'Остановить автоматизацию';
         } else if (status === 'done' || (this._status && this._status.code === 'DAILY_LIMIT_REACHED')) {
-          const isDaily = this._status && this._status.code === 'DAILY_LIMIT_REACHED';
-          targetClass = isDaily ? 'hha-btn-limit' : 'hha-btn-done';
-          targetLabel = isDaily ? 'Лимит' : 'Готово';
-          targetTitle = isDaily
-            ? `Достигнут суточный лимит HeadHunter (${MAX_DAILY_LIMIT} откликов за 24 часа)`
-            : 'Вакансии в выдаче закончились. Нажмите, чтобы пройти выдачу ещё раз';
+          // Both limits get the grey button: there is nothing to start until the limit frees.
+          const code = this._status && this._status.code;
+          const isLimit = code === 'DAILY_LIMIT_REACHED' || code === 'COMPLETED';
+          targetClass = isLimit ? 'hha-btn-limit' : 'hha-btn-done';
+          targetLabel = isLimit ? 'Лимит' : 'Готово';
+          if (code === 'DAILY_LIMIT_REACHED') {
+            targetTitle = `Достигнут суточный лимит HeadHunter (${MAX_DAILY_LIMIT} откликов за 24 часа)`;
+          } else if (code === 'COMPLETED') {
+            targetTitle = `Сегодня отправлено ${MAX_DAILY_LIMIT} откликов, это лимит скрипта. Счётчик обнулится в полночь`;
+          } else {
+            targetTitle = 'Вакансии в выдаче закончились. Нажмите, чтобы пройти выдачу ещё раз';
+          }
         } else if (status === 'error') {
           targetClass = 'hha-btn-error';
           targetLabel = 'Сброс';
@@ -8116,27 +8185,32 @@ function cleanVacancyTitle(raw) {
         this._lastBtnLabel = targetLabel;
 
         quickBtns.forEach(quickBtn => {
-          quickBtn.title = targetTitle;
+          if (quickBtn.dataset.el === 'pill-quick-btn') quickBtn.title = targetTitle;
+          else quickBtn.dataset.tooltip = targetTitle;
           const desiredClassName = `hha-btn-quick ${targetClass}`;
-          if (quickBtn.className !== desiredClassName) {
-            quickBtn.className = desiredClassName;
-          }
-
           let labelEl = quickBtn.querySelector('.hha-btn-label');
           if (!labelEl) {
             quickBtn.innerHTML = `<span class="hha-btn-label">${targetLabel}</span>`;
-          } else if (!this._hasSyncedStatus) {
+            labelEl = quickBtn.querySelector('.hha-btn-label');
+          }
+          // A newer status cancels a swap still in flight.
+          if (quickBtn._swapTimer) {
+            clearTimeout(quickBtn._swapTimer);
+            quickBtn._swapTimer = null;
+          }
+          const apply = () => {
+            if (quickBtn.className !== desiredClassName) quickBtn.className = desiredClassName;
             labelEl.textContent = targetLabel;
-          } else if (labelChanged) {
+            labelEl.classList.remove('is-swapping');
+          };
+          if (this._hasSyncedStatus && labelChanged) {
             labelEl.classList.add('is-swapping');
-            setTimeout(() => {
-              if (labelEl) {
-                labelEl.textContent = targetLabel;
-                labelEl.classList.remove('is-swapping');
-              }
-            }, 150);
+            quickBtn._swapTimer = setTimeout(() => {
+              quickBtn._swapTimer = null;
+              apply();
+            }, 120);
           } else {
-            labelEl.textContent = targetLabel;
+            apply();
           }
         });
         this._hasSyncedStatus = true;
@@ -8174,8 +8248,27 @@ function cleanVacancyTitle(raw) {
       const cur = displayCurrent !== undefined ? displayCurrent : Math.max(0, sent);
 
       const currentEls = this.#shadow.querySelectorAll('.hha-current-count');
-      currentEls.forEach(el => { el.textContent = String(cur); });
+      this._setCount(currentEls, cur);
       this._syncStatusLine();
+    }
+
+    // Writes a counter; when it grows (a new response, a new queued vacancy) the number
+    // gives a short nudge, so a collapsed pill still shows that the run is moving.
+    _setCount(els, value) {
+      const text = String(value);
+      els.forEach(el => {
+        const prev = Number(el.textContent);
+        if (el.textContent === text) return;
+        el.textContent = text;
+        // Not on the first values a page gets from the engine, or every load would nudge.
+        if (this._countsReady && value > prev && typeof el.animate === 'function' &&
+            !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+          el.animate(
+            [{ transform: 'scale(1)' }, { transform: 'scale(1.25)', offset: 0.35 }, { transform: 'scale(1)' }],
+            { duration: 380, easing: 'cubic-bezier(0.2, 0, 0, 1)' }
+          );
+        }
+      });
     }
 
     _summaryText() {
@@ -8246,11 +8339,24 @@ function cleanVacancyTitle(raw) {
       return (ACTIVITY_SHORT[a.code] || 'Работаю') + (secondsLeft > 0 ? ` ${formatSeconds(secondsLeft)}` : '');
     }
 
-    // A width transition does not run when `auto` changes with the text, so the
-    // new width is measured and the element moves between two pixel values.
+    // While running the step has a fixed width (CSS), so the pill and its Стоп button stay
+    // put through Поиск, Пауза 5 с, Жду hh.ru; a new word fades in, the countdown just
+    // ticks. After an error stop the width follows the word: a width transition does not
+    // run when `auto` changes with the text, so the new width is measured and the element
+    // moves between two pixel values.
     _setPillStepText(text) {
       const step = this.#shadow?.querySelector('[data-el="pill-step"]');
       if (!step || step.textContent === text) return;
+      const word = (t) => String(t || '').replace(/\s*\d.*$/, '');
+      const isNewWord = word(step.textContent) !== word(text);
+      if (this._status.status === 'running') {
+        step.style.width = '';
+        step.textContent = text;
+        if (isNewWord && text && typeof step.animate === 'function' && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+          step.animate([{ opacity: 0, transform: 'translate3d(0, 3px, 0)' }, { opacity: 1, transform: 'none' }], { duration: 180, easing: 'cubic-bezier(0.2, 0, 0, 1)' });
+        }
+        return;
+      }
       const from = step.offsetWidth;
       step.textContent = text;
       step.style.width = 'auto';
@@ -8273,13 +8379,19 @@ function cleanVacancyTitle(raw) {
       if (line) {
         line.textContent = text;
         if (this._status.status === 'error') {
-          line.title = ERROR_TITLES[this._status.code] || text;
+          line.dataset.tooltip = ERROR_TITLES[this._status.code] || text;
         } else {
-          line.title = text === this._runSummaryText() ? `${this._runStopReason()}. ${text}` : text;
+          line.dataset.tooltip = text === this._runSummaryText() ? `${this._runStopReason()}. ${text}` : text;
         }
       }
       const hover = text === summary ? summary : `${summary}\n${text}`;
-      this.#shadow.querySelectorAll('[data-summary-title]').forEach(el => { el.title = hover; });
+      const pillGroup = this.#shadow.querySelector('[data-el="pill-status-group"]');
+      if (pillGroup) {
+        pillGroup.title = hover;
+        pillGroup.setAttribute('aria-label', `${hover.replace(/\n/g, '. ')}. Открыть панель`);
+      }
+      const footerGroup = this.#shadow.querySelector('[data-el="footer-status-group"]');
+      if (footerGroup) footerGroup.dataset.tooltip = hover;
 
       this._setPillStepText(this._pillStepText());
       this._syncDocTitle();
@@ -8375,8 +8487,9 @@ function cleanVacancyTitle(raw) {
       this._syncQueueActions();
       const count = this._queue ? this._queue.length : 0;
 
-      const queueCountEls = this.#shadow.querySelectorAll('.hha-queue-count');
-      queueCountEls.forEach(el => { el.textContent = String(count); });
+      this._setCount(this.#shadow.querySelectorAll('.hha-queue-count'), count);
+      const toolbarTitle = this.#shadow.querySelector('[data-el="queue-toolbar-title"]');
+      if (toolbarTitle) toolbarTitle.textContent = count ? `Ждут ручного отклика: ${count}` : 'Ручной отклик';
 
       const queueStream = this.#shadow.querySelector('[data-el="queue-stream"]');
       if (queueStream) {
