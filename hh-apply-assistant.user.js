@@ -4022,6 +4022,8 @@ function cleanVacancyTitle(raw) {
     SUBMIT_UNCONFIRMED: 'Отправка отклика не подтвердилась',
     RESPONSE_PAGE_ERROR: 'Сбой на странице отклика',
     STORAGE_BLOCKED: 'Доступ к хранилищу заблокирован',
+    STORAGE_FULL: 'Хранилище браузера переполнено',
+    APPLY_BUTTON_NOT_FOUND: 'Кнопка отклика не найдена на вакансиях',
     TAB_BUSY: 'Скрипт уже запущен в другой вкладке',
     TAB_LOCK_LOST: 'Потеряна блокировка вкладки',
     VACANCY_URL_NOT_FOUND: 'Не удалось определить ссылку вакансии',
@@ -4045,6 +4047,8 @@ function cleanVacancyTitle(raw) {
     STORAGE_BLOCKED: 'Разрешите сайту hh.ru сохранять данные (cookies и данные сайтов) и обновите страницу.',
     WATCHDOG_GIVEUP: 'Обновите страницу и нажмите кнопку Продолжить. ' + REPORT_HINT,
     DOM_SELECTOR_NOT_FOUND: 'Скорее всего, hh.ru поменял вёрстку. Скопируйте отчёт и приложите его к issue на GitHub.',
+    APPLY_BUTTON_NOT_FOUND: 'Скорее всего, hh.ru поменял вёрстку страницы вакансии. Эти вакансии не остались в очереди, следующий запуск откроет их снова. Скопируйте отчёт и приложите его к issue на GitHub.',
+    STORAGE_FULL: 'Освободите место: очистите лог кнопкой Очистить внизу панели и нажмите Продолжить. Если не помогло, удалите в браузере данные других сайтов.',
     ATTACH_BTN_NOT_FOUND: LETTER_HINT,
     LETTER_FORM_TIMEOUT: LETTER_HINT,
     SUBMIT_BTN_NOT_FOUND: LETTER_HINT,
@@ -4058,8 +4062,11 @@ function cleanVacancyTitle(raw) {
     RATE_LIMITED: { short: 'Доступ', line: 'Остановлено: hh.ru ограничил доступ' },
     WATCHDOG_GIVEUP: { short: 'Зависла', line: 'Остановлено: страница не отвечает' },
     DOM_SELECTOR_NOT_FOUND: { short: 'Вёрстка', line: 'Остановлено: в выдаче нет кнопки отклика' },
+    APPLY_BUTTON_NOT_FOUND: { short: 'Вёрстка', line: 'Остановлено: на вакансиях нет кнопки отклика' },
     TAB_LOCK_LOST: { short: 'Вкладка', line: 'Остановлено: работает другая вкладка' },
+    TAB_BUSY: { short: 'Вкладка', line: 'Остановлено: работает другая вкладка' },
     STORAGE_BLOCKED: { short: 'Хранилище', line: 'Остановлено: хранилище недоступно' },
+    STORAGE_FULL: { short: 'Хранилище', line: 'Остановлено: хранилище переполнено' },
   };
   const STOP_REASON_DEFAULT = { short: 'Сбой', line: 'Остановлено из-за ошибки' };
 
@@ -4285,7 +4292,6 @@ function cleanVacancyTitle(raw) {
       --hha-motion-collapse-easing: cubic-bezier(0.3, 0, 0.8, 0.15);
       --hha-motion-tab-duration: 200ms;
       --hha-motion-tab-easing: cubic-bezier(0.2, 0, 0, 1);
-      --hha-motion-tab-shift: 6px;
       --hha-motion-indicator-duration: 250ms;
       --hha-motion-indicator-easing: cubic-bezier(0.2, 0, 0, 1);
 
@@ -5189,6 +5195,25 @@ function cleanVacancyTitle(raw) {
         opacity 140ms ease-out;
     }
 
+    /* A window under 422 px makes the panel narrower than 390 px: the bottom bar gives up
+       its spacing and the tabs their minimum width, so the Start button stays inside. */
+    @media (max-width: 421px) {
+      .hha-island-footer {
+        padding: 8px;
+        gap: 4px;
+      }
+
+      .hha-island-footer .hha-tabs {
+        width: auto;
+        min-width: 0;
+        flex: 1 1 auto;
+      }
+
+      .hha-tab-btn {
+        padding: 0 4px;
+      }
+    }
+
     .hha-root.is-expanded .hha-island-footer .hha-tabs {
       opacity: 1;
       transform: scale(1);
@@ -5397,13 +5422,9 @@ function cleanVacancyTitle(raw) {
         visibility 0s linear 0s;
     }
 
-    .hha-panels.slide-forward .hha-panel:not(.active) {
-      transform: translate3d(calc(-1 * var(--hha-motion-tab-shift, 6px)), 0, 0);
-    }
-
-    .hha-panels.slide-backward .hha-panel:not(.active) {
-      transform: translate3d(var(--hha-motion-tab-shift, 6px), 0, 0);
-    }
+    /* Tabs switch by a crossfade only. The old 6 px sideways slide drew the two cards of
+       the same width over each other with an offset while both faded: their edges doubled
+       and the inner box looked wider for as long as the panel grew in height. */
 
     /* 8. Queue & Log Containers */
     /* Tab 2: Queue Container */
@@ -6208,9 +6229,12 @@ function cleanVacancyTitle(raw) {
     }
 
     /* 12. Switch & Cover Letter */
+    /* No shorter than the switch row, three lines of the letter and the row of variable
+       buttons (44 + 58 + 28 px and the borders): in a short panel the panel scrolls, and
+       the buttons are not cut off. */
     .hha-card-cover {
       flex: 1;
-      min-height: 0;
+      min-height: 132px;
       display: flex;
       flex-direction: column;
       margin-bottom: 0 !important;
@@ -6334,9 +6358,11 @@ function cleanVacancyTitle(raw) {
       box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary);
     }
 
+    /* Three lines of the letter at least; a shorter panel (a 175-200 % zoom on a laptop)
+       scrolls instead of laying the field over the variable buttons below it. */
     .hha-cover-container {
       flex: 1;
-      min-height: 0;
+      min-height: 58px;
       display: flex;
       flex-direction: column;
       padding: 0;
@@ -6351,7 +6377,7 @@ function cleanVacancyTitle(raw) {
       width: 100%;
       flex: 1;
       height: 100%;
-      min-height: 105px;
+      min-height: 0;
       background: transparent;
       border: none;
       border-radius: 0;
@@ -6560,6 +6586,9 @@ function cleanVacancyTitle(raw) {
     // the <hha-hud> element.
     #shadow = null;
     #assistant = null;
+    // What "Вернуть" puts back into the queue: private as well, or a page script could
+    // slip its own items into the queue through the next click on that button.
+    #undoItems = [];
 
     constructor() {
       super();
@@ -6780,7 +6809,7 @@ function cleanVacancyTitle(raw) {
           }),
           assistant.on('config', (payload) => {
             const current = payload?.current || payload;
-            this.updateConfig(current);
+            this.#updateConfig(current);
           }),
           assistant.on('runSummary', (summary) => {
             this._lastRun = summary || null;
@@ -6829,11 +6858,11 @@ function cleanVacancyTitle(raw) {
       this._syncQueue();
     }
 
-    updateConfig(config) {
+    #updateConfig(config) {
       if (!config) return;
-      if (typeof config.coverText === 'string' && config.coverText.length > MAX_COVER_LENGTH) {
-        config.coverText = config.coverText.slice(0, MAX_COVER_LENGTH);
-      }
+      // A copy: the payload is the engine's own config object.
+      config = { ...config };
+      if (typeof config.coverText === 'string') config.coverText = sliceSafe(config.coverText, MAX_COVER_LENGTH);
       this._config = { ...this._config, ...config };
       this.updateProgress(this._progress ? this._progress.sent : 0);
       this._syncConfig();
@@ -6951,7 +6980,6 @@ function cleanVacancyTitle(raw) {
       if (!['settings', 'queue'].includes(tabName)) {
         tabName = 'settings';
       }
-      const prevTab = this._activeTab;
       this._activeTab = tabName;
       this._resetClearQueueBtn();
       this._hideTooltip();
@@ -6974,15 +7002,6 @@ function cleanVacancyTitle(raw) {
         if (root) this._animateSnap(root);
       }
       this._updatePosition();
-
-      const tabOrder = { settings: 0, queue: 1 };
-      const prevIdx = tabOrder[prevTab] !== undefined ? tabOrder[prevTab] : 0;
-      const nextIdx = tabOrder[tabName] !== undefined ? tabOrder[tabName] : 0;
-      const panelsContainer = this.#shadow.querySelector('.hha-panels');
-      if (panelsContainer) {
-        panelsContainer.classList.toggle('slide-forward', nextIdx >= prevIdx);
-        panelsContainer.classList.toggle('slide-backward', nextIdx < prevIdx);
-      }
 
       const tabs = this.#shadow.querySelectorAll('.hha-tab-btn');
       tabs.forEach(t => {
@@ -7088,12 +7107,19 @@ function cleanVacancyTitle(raw) {
       return this._collapsedPillWidth || 166;
     }
 
+    // The panel's real width, min(390px, 100vw - 16px) as in CSS, and the margin around it.
+    // With a fixed 390 a window under 422 px put the panel's right part, the Start button
+    // with it, out of the window.
+    _flyoutBox(winW) {
+      const width = Math.min(390, winW - 16);
+      return { halfW: width / 2, padding: Math.min(16, Math.max(0, (winW - width) / 2)) };
+    }
+
     _clampPillCoordinates(centerX, y, winW, winH) {
       const padding = 16;
-      const flyoutMaxW = 390;
-      const halfW = flyoutMaxW / 2;
-      const minX = padding + halfW;
-      const maxX = Math.max(minX, winW - padding - halfW);
+      const box = this._flyoutBox(winW);
+      const minX = box.padding + box.halfW;
+      const maxX = Math.max(minX, winW - box.padding - box.halfW);
 
       const baseH = this._flyoutHeight();
       const gap = 8;
@@ -7258,7 +7284,7 @@ function cleanVacancyTitle(raw) {
       // The switch only decides whether the letter is sent; the text stays editable
       // either way, so it can be prepared before sending is turned on.
       if (useCoverCb) {
-        useCoverCb.addEventListener('change', () => this._applyConfig({ useCover: useCoverCb.checked }));
+        useCoverCb.addEventListener('change', () => this.#applyConfig({ useCover: useCoverCb.checked }));
       }
 
       if (coverTextarea) {
@@ -7268,7 +7294,7 @@ function cleanVacancyTitle(raw) {
             this._coverDebounceTimer = null;
           }
           if (coverTextarea.value === (this._config.coverText || '')) return;
-          const saved = this._applyConfig({ coverText: coverTextarea.value });
+          const saved = this.#applyConfig({ coverText: coverTextarea.value });
           this._showCoverStatus(saved ? 'Сохранено' : 'Не удалось сохранить', !saved);
         };
         coverTextarea.addEventListener('scroll', () => this._syncCoverHighlights());
@@ -7352,7 +7378,7 @@ function cleanVacancyTitle(raw) {
       layer.style.transform = `translate3d(0, ${-ta.scrollTop}px, 0)`;
     }
 
-    _insertLetterVar(name) {
+    #insertLetterVar(name) {
       const ta = this.#shadow?.querySelector('[data-el="setting-cover-text"]');
       if (!ta || !letterVarKey(name)) return;
       const token = `{${name}}`;
@@ -7427,7 +7453,7 @@ function cleanVacancyTitle(raw) {
         header.addEventListener('pointercancel', this._onPointerUp);
       }
 
-      root.addEventListener('click', (e) => this._handleRootClick(e));
+      root.addEventListener('click', (e) => this.#handleRootClick(e));
       root.addEventListener('pointerover', (e) => {
         const target = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-tooltip]') : null;
         if (target && target.getAttribute('data-tooltip')) this._showTooltip(target);
@@ -7699,15 +7725,15 @@ function cleanVacancyTitle(raw) {
       this._updatePosition();
     }
 
-    _resolveError() {
+    #resolveError() {
       if (this._status.status === 'error') {
-        this._resetAfterError({ restart: true });
+        this.#resetAfterError({ restart: true });
       } else {
         this._dismissError();
       }
     }
 
-    async _resetAfterError({ restart = false } = {}) {
+    async #resetAfterError({ restart = false } = {}) {
       this._dismissError();
       if (!this.#assistant) return;
       await this.#assistant.resetState();
@@ -7735,7 +7761,7 @@ function cleanVacancyTitle(raw) {
       }
     }
 
-    _handleClearQueueAction(target) {
+    #handleClearQueueAction(target) {
       if (target.disabled || (typeof target.hasAttribute === 'function' && target.hasAttribute('disabled')) || this._queue.length === 0) {
         return;
       }
@@ -7746,7 +7772,7 @@ function cleanVacancyTitle(raw) {
         const removed = [...(this._queue || [])];
         if (this.#assistant && typeof this.#assistant.clearManualQueue === 'function') {
           this.#assistant.clearManualQueue();
-          this._offerUndo(removed);
+          this.#offerUndo(removed);
         } else {
           this._queue = [];
           this._syncQueue();
@@ -7764,11 +7790,11 @@ function cleanVacancyTitle(raw) {
     // "Убрано из очереди. Вернуть" for a few seconds after a removal. A vacancy with a
     // questionnaire is remembered for 30 days once queued, so the script would not bring
     // it back by itself: a misclick on the cross would lose it. Removals in a row add up.
-    _offerUndo(items) {
+    #offerUndo(items) {
       const bar = this.#shadow?.querySelector('[data-el="undo-bar"]');
       if (!bar || !items.length) return;
-      this._undoItems = (this._undoTimer ? this._undoItems : []).concat(items);
-      const n = this._undoItems.length;
+      this.#undoItems = (this._undoTimer ? this.#undoItems : []).concat(items);
+      const n = this.#undoItems.length;
       bar.querySelector('[data-el="undo-text"]').textContent = n === 1 ? 'Убрано из очереди' : `Убрано из очереди: ${n}`;
       bar.hidden = false;
       this._armUndoTimer();
@@ -7791,13 +7817,13 @@ function cleanVacancyTitle(raw) {
     _hideUndo() {
       if (this._undoTimer) clearTimeout(this._undoTimer);
       this._undoTimer = null;
-      this._undoItems = [];
+      this.#undoItems = [];
       const bar = this.#shadow?.querySelector('[data-el="undo-bar"]');
       if (bar) bar.hidden = true;
     }
 
-    _undoRemove() {
-      const items = this._undoItems || [];
+    #undoRemove() {
+      const items = this.#undoItems || [];
       this._hideUndo();
       for (const item of items) {
         if (this.#assistant && typeof this.#assistant.restoreManualItem === 'function') {
@@ -7809,7 +7835,7 @@ function cleanVacancyTitle(raw) {
       if (!this.#assistant) this._syncQueue();
     }
 
-    _handleOpenVacancyAction(target, e) {
+    #handleOpenVacancyAction(target, e) {
       const vid = target.dataset.vid || target.dataset.cleanVid;
       const cVid = cleanVid(target.dataset.cleanVid || vid);
       const targetCard = target.closest('.hha-queue-card') || target;
@@ -7831,7 +7857,7 @@ function cleanVacancyTitle(raw) {
       }
     }
 
-    _handleDeleteQueueItemAction(target) {
+    #handleDeleteQueueItemAction(target) {
       const vid = target.dataset.vid || target.dataset.cleanVid;
       const cVid = cleanVid(target.dataset.cleanVid || vid);
       if (!vid) return;
@@ -7845,7 +7871,7 @@ function cleanVacancyTitle(raw) {
           this._syncQueue();
         }
         this._removingVids.delete(cVid);
-        if (removed) this._offerUndo([removed]);
+        if (removed) this.#offerUndo([removed]);
       };
       if (card && !card.classList.contains('is-removing')) {
         // The list is rebuilt when another card goes; the set keeps this one collapsed
@@ -7860,7 +7886,7 @@ function cleanVacancyTitle(raw) {
       }
     }
 
-    _handleRootClick(e) {
+    #handleRootClick(e) {
       if (this._justDragged) {
         e.stopPropagation();
         e.preventDefault();
@@ -7882,19 +7908,19 @@ function cleanVacancyTitle(raw) {
 
       const action = actionTarget.dataset.action;
       const actionMap = {
-        'quick-toggle': (_, ev) => { ev.stopPropagation(); this._handleToggleAutomation(); },
+        'quick-toggle': (_, ev) => { ev.stopPropagation(); this.#handleToggleAutomation(); },
         'toggle-expand': (_, ev) => { ev.stopPropagation(); this.toggleExpand(); },
         'collapse-island': (_, ev) => { ev.stopPropagation(); this.toggleExpand(false); },
         'switch-tab': (tgt, ev) => { ev.stopPropagation(); this.setActiveTab(tgt.dataset.tab); },
         'copy-last-error': (tgt, ev) => { ev.stopPropagation(); this._copyLastErrorToClipboard(tgt); },
-        'resolve-error': (_, ev) => { ev.stopPropagation(); this._resolveError(); },
-        'clear-queue': (tgt, ev) => { ev.stopPropagation(); this._handleClearQueueAction(tgt); },
-        'open-vacancy': (tgt, ev) => { this._handleOpenVacancyAction(tgt, ev); },
-        'delete-queue-item': (tgt, ev) => { ev.stopPropagation(); this._handleDeleteQueueItemAction(tgt); },
-        'undo-remove': (_, ev) => { ev.stopPropagation(); this._undoRemove(); },
-        'insert-letter-var': (tgt, ev) => { ev.stopPropagation(); this._insertLetterVar(tgt.dataset.var); },
+        'resolve-error': (_, ev) => { ev.stopPropagation(); this.#resolveError(); },
+        'clear-queue': (tgt, ev) => { ev.stopPropagation(); this.#handleClearQueueAction(tgt); },
+        'open-vacancy': (tgt, ev) => { this.#handleOpenVacancyAction(tgt, ev); },
+        'delete-queue-item': (tgt, ev) => { ev.stopPropagation(); this.#handleDeleteQueueItemAction(tgt); },
+        'undo-remove': (_, ev) => { ev.stopPropagation(); this.#undoRemove(); },
+        'insert-letter-var': (tgt, ev) => { ev.stopPropagation(); this.#insertLetterVar(tgt.dataset.var); },
         'copy-log': (tgt, ev) => { ev.stopPropagation(); this._copyLog(tgt); },
-        'clear-log': (tgt, ev) => { ev.stopPropagation(); this._handleClearLogAction(tgt); }
+        'clear-log': (tgt, ev) => { ev.stopPropagation(); this.#handleClearLogAction(tgt); }
       };
 
       const handler = actionMap[action];
@@ -7997,7 +8023,7 @@ function cleanVacancyTitle(raw) {
     }
 
     // Two clicks, like "Очистить всё" in the queue: the first asks, the second clears.
-    _handleClearLogAction(btn) {
+    #handleClearLogAction(btn) {
       if (typeof this.#assistant?.clearLog !== 'function') return;
       if (this._logConfirmTimer) {
         this._resetClearLogBtn();
@@ -8034,7 +8060,7 @@ function cleanVacancyTitle(raw) {
       });
     }
 
-    _handleToggleAutomation() {
+    #handleToggleAutomation() {
       if (!this.#assistant) return;
       const now = Date.now();
       if (this._lastToggleTime && (now - this._lastToggleTime) < 250) return;
@@ -8058,7 +8084,7 @@ function cleanVacancyTitle(raw) {
           this.setActiveTab('settings');
         }
       } else if (this._status.status === 'error') {
-        this._resetAfterError();
+        this.#resetAfterError();
       } else {
         const lim = MAX_DAILY_LIMIT;
         const sent = this._progress ? this._progress.sent : 0;
@@ -8071,9 +8097,9 @@ function cleanVacancyTitle(raw) {
       }
     }
 
-    _applyConfig(partial) {
-      if (partial && typeof partial.coverText === 'string' && partial.coverText.length > MAX_COVER_LENGTH) {
-        partial.coverText = partial.coverText.slice(0, MAX_COVER_LENGTH);
+    #applyConfig(partial) {
+      if (partial && typeof partial.coverText === 'string') {
+        partial = { ...partial, coverText: sliceSafe(partial.coverText, MAX_COVER_LENGTH) };
       }
       this._config = { ...this._config, ...partial };
       this.updateProgress(this._progress ? this._progress.sent : 0);
@@ -8349,11 +8375,9 @@ function cleanVacancyTitle(raw) {
       root.classList.toggle('is-expanded', this._isExpanded);
 
       // Strict Center Anchor positioning: Center X stays stable regardless of pill width expansions
-      const padding = 16;
-      const flyoutMaxW = 390;
-      const halfW = flyoutMaxW / 2;
-      const minX = padding + halfW;
-      const maxX = Math.max(minX, winW - padding - halfW);
+      const box = this._flyoutBox(winW);
+      const minX = box.padding + box.halfW;
+      const maxX = Math.max(minX, winW - box.padding - box.halfW);
       const clampedCenterX = Math.round(clamp(this._pillPos.x, minX, maxX));
       const bottomDist = Math.max(8, winH - (this._pillPos.y + 36));
 
