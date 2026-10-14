@@ -511,6 +511,9 @@ function cleanVacancyTitle(raw) {
   // --- Watchdog Progress Tracking ---
   let lastProgressTs = Date.now();
   let lastCommittedVid = null;
+  // The vacancy whose letter field the script filled last, so a response sent from a
+  // form with no letter field can still get the letter through the attach button.
+  let letterFilledVid = null;
   function markProgress() {
     lastProgressTs = Date.now();
   }
@@ -2466,8 +2469,14 @@ function cleanVacancyTitle(raw) {
   async function submitCoverLetterForm(scope = null, runId = currentRunId, letter = null) {
     if (!isRunCurrent(runId)) return false;
     const ta = query('letterTextarea', scope);
+    // A letter to send and no field for it here: never silent, the log says where it looked.
+    if (!ta && letter !== null) {
+      hhaLog('warn', 'letter_field_missing', { vid: cleanVid(resolveCurrentVid()), scope: scope && scope.nodeType === 1 ? describeElement(scope) : 'document' });
+    }
     if (ta && letter !== null) {
       fillTextarea(ta, letter);
+      letterFilledVid = cleanVid(resolveCurrentVid());
+      hhaLog('info', 'letter_filled', { vid: letterFilledVid, page: Page.isResponseForm() ? 'response_form' : 'vacancy' });
       await actionPause();
       if (!isRunCurrent(runId)) return false;
     }
@@ -2523,7 +2532,10 @@ function cleanVacancyTitle(raw) {
       return isRunCurrent(runId) ? 'OK' : 'STOPPED';
     }
 
-    const modalScope = getVisibleModals()[0] || q(SELECTORS.modal) || globalThis.document?.body;
+    // The dialog that holds this field: the first visible "modal" on the page can be another
+    // popup of hh.ru (the selector is broad), with no field in it. The submit button of the
+    // letter dialog sits in its footer, outside the form, so the scope is the whole dialog.
+    const modalScope = ta.closest?.('[role="dialog"]') || ta.closest?.(SELECTORS.modal) || ta.form || getVisibleModals()[0] || globalThis.document?.body;
     const letterSent = await submitCoverLetterForm(modalScope, runId, letter);
     if (!isRunCurrent(runId)) return 'STOPPED';
     if (!letterSent) {
@@ -2531,8 +2543,7 @@ function cleanVacancyTitle(raw) {
       return 'OK';
     }
     await waitForCondition(() => {
-      const sheet = getVisibleModals()[0];
-      const isSheetClosed = !sheet || !isVisible(sheet);
+      const isSheetClosed = !modalScope.isConnected || !isVisible(modalScope);
       return isSheetClosed || isResponseConfirmed({ allowDocumentStrongText: true });
     }, 5000, activeAbortController?.signal);
     return isRunCurrent(runId) ? 'OK' : 'STOPPED';
@@ -2599,11 +2610,28 @@ function cleanVacancyTitle(raw) {
     return confirmed ? 'OK' : 'FAIL';
   }
 
+  // A response form with no letter field (hh.ru shows one, for example, to pick a resume)
+  // sends the response without the letter; the "Приложить сопроводительное письмо"
+  // button that comes after it is the only way to add one. The response counts either way.
+  async function attachLetterAfterResponse(vid, runId) {
+    if (!config.useCover || letterFilledVid === cleanVid(vid) || Page.isResponseForm()) return;
+    // A variable with no value: letter_skipped is already in the log, there is nothing to attach.
+    if (renderLetter(config.coverText, letterValues(vid)).missing.length) return;
+    const btn = await waitForCondition(() => isAttachCoverAvailable() && queryExact('attachCoverBtn'), 3000, activeAbortController?.signal);
+    if (!isRunCurrent(runId)) return;
+    if (!btn) {
+      hhaLog('warn', 'letter_not_attached', { vid, reason: 'form_without_letter', seen: describeLetterControls() });
+      return;
+    }
+    await handleScenarioA(btn, runId);
+  }
+
   async function handleModalOutcome(vid, runId) {
     const modal = getVisibleModals()[0] || null;
     setActivity('submitting', { vid });
     const res = await handleScenarioB(modal, runId);
     if (res === 'OK' && vid) {
+      await attachLetterAfterResponse(vid, runId);
       commitSuccess(vid, runId);
     } else if ((res === 'SKIP' || res === 'SKIP_REJECT_WARNING' || res === 'SKIP_REJECT_REGEX') && vid) {
       logDecision(vid, 'skip_reject');
@@ -2670,6 +2698,20 @@ function cleanVacancyTitle(raw) {
     return 'FAIL';
   }
 
+  // Short visible controls that mention a letter, e.g. `a[data-qa="..."] "Добавить
+  // сопроводительное"`: for the log when the known attach button is not on the page.
+  function describeLetterControls() {
+    const found = [];
+    for (const el of qa('button, a, [role="button"]')) {
+      if (found.length >= 3) break;
+      const txt = collapseSpaces(el.innerText || el.textContent || '');
+      if (!txt || txt.length > 80 || !/сопроводительн|письм/i.test(txt) || !isVisible(el)) continue;
+      const box = el.closest?.('[data-qa]');
+      found.push(`${describeElement(el)}${box && box !== el ? ' in ' + describeElement(box) : ''} "${txt.slice(0, 60)}"`);
+    }
+    return found.join(' | ') || 'none';
+  }
+
   async function dispatchOutcome(outcome, vid, runId, relocAttempts = 0) {
     if (!outcome) return 'FAIL';
     if (outcome === 'DAILY_LIMIT') { haltForDailyLimit(); return 'BLOCKED'; }
@@ -2694,6 +2736,16 @@ function cleanVacancyTitle(raw) {
     }
 
     if (outcome === 'SUCCESS') {
+      // hh.ru sent the response at once, with no form. A letter can then go only through
+      // the attach button, which may show up a moment after the confirmation; without it
+      // the response stays without a letter, and the log names what the page offered.
+      // A letter with a variable that has no value would not go anyway: no wait for it.
+      if (config.useCover && !Page.isResponseForm() && !renderLetter(config.coverText, letterValues(vid)).missing.length) {
+        const late = await waitForCondition(() => isAttachCoverAvailable(), 3000, activeAbortController?.signal);
+        if (!isRunCurrent(runId)) return 'STOPPED';
+        if (late) return dispatchOutcome('ATTACH_COVER', vid, runId, relocAttempts);
+        hhaLog('warn', 'letter_not_attached', { vid, reason: 'no_attach_button', seen: describeLetterControls() });
+      }
       if (vid) {
         if (!Page.isResponseForm() && !pageLooksLikeTest()) {
           commitSuccess(vid, runId);
