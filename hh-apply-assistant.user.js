@@ -733,8 +733,24 @@ function cleanVacancyTitle(raw) {
       addedAt: Number(entry.addedAt || entry.ts) || Date.now(),
       returnUrl: toSafeHhUrl(entry.returnUrl || ''),
       viewed: Boolean(entry.viewed),
-      viewedAt: entry.viewedAt ? Number(entry.viewedAt) : null
+      viewedAt: entry.viewedAt ? Number(entry.viewedAt) : null,
+      questions: normalizeQuestions(entry.questions)
     };
+  }
+
+  // How many questions the employer's form asks and the first of them, shown on the
+  // queue card so the queue can be sorted out without opening every vacancy.
+  function normalizeQuestions(q) {
+    const count = Math.round(Number(q && q.count) || 0);
+    if (count < 1) return null;
+    return { count: Math.min(count, 99), first: collapseSpaces(q.first).slice(0, 200) };
+  }
+
+  // The questions on the page right now: hh.ru renders each one as
+  // div[data-qa="task-question"] (seen on the response form page, 2026-10-13).
+  function readTaskQuestions() {
+    const texts = qa('[data-qa="task-question"]').map((el) => collapseSpaces(el.innerText || el.textContent)).filter(Boolean);
+    return texts.length ? { count: texts.length, first: texts[0] } : null;
   }
 
   const ManualQueue = {
@@ -2402,7 +2418,8 @@ function cleanVacancyTitle(raw) {
       addedAt: Date.now(),
       title: title || (clean ? `Вакансия #${clean}` : 'Вакансия'),
       employer,
-      salary
+      salary,
+      questions: readTaskQuestions()
     };
     const res = ManualQueue.add(entry);
     if (res.success) {
@@ -3480,6 +3497,7 @@ function cleanVacancyTitle(raw) {
     getManualQueue: () => ManualQueue.get(),
     markManualItemViewed: (vid, viewed) => ManualQueue.markViewed(vid, viewed),
     removeManualItem: (vid) => ManualQueue.remove(vid),
+    restoreManualItem: (item) => ManualQueue.add(item),
     clearManualQueue: () => ManualQueue.clear(),
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
@@ -5237,12 +5255,14 @@ function cleanVacancyTitle(raw) {
       border-color: transparent !important;
       overflow: hidden !important;
       pointer-events: none !important;
+      /* The card slides out and fades first, then its place closes: collapsing the height
+         while the text was still opaque squeezed and clipped the lines on screen. */
       transition:
-        opacity 180ms cubic-bezier(0.3, 0, 0.8, 0.15),
-        transform 180ms cubic-bezier(0.3, 0, 0.8, 0.15),
-        max-height 220ms cubic-bezier(0.05, 0.7, 0.1, 1),
-        padding 220ms cubic-bezier(0.05, 0.7, 0.1, 1),
-        border-color 180ms ease !important;
+        opacity 140ms ease-out,
+        transform 160ms cubic-bezier(0.3, 0, 0.8, 0.15),
+        max-height 200ms cubic-bezier(0.2, 0, 0, 1) 90ms,
+        padding 200ms cubic-bezier(0.2, 0, 0, 1) 90ms,
+        border-color 140ms ease !important;
     }
 
     .hha-queue-card:last-child {
@@ -5349,6 +5369,24 @@ function cleanVacancyTitle(raw) {
 
     .hha-queue-card.is-viewed .hha-queue-employer {
       color: var(--md-sys-color-outline);
+    }
+
+    /* The first question of the employer's form, quoted with a bar on the left. */
+    .hha-queue-question {
+      font-size: var(--md-sys-typescale-body-small-size);
+      line-height: 16px;
+      color: var(--md-sys-color-on-surface);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+      padding: 1px 0 1px 8px;
+      border-left: 2px solid var(--md-sys-color-primary-container);
+    }
+
+    .hha-queue-card.is-viewed .hha-queue-question {
+      color: var(--md-sys-color-outline);
+      border-left-color: var(--md-sys-color-outline-variant);
     }
 
     .hha-queue-card-bottom {
@@ -5717,6 +5755,74 @@ function cleanVacancyTitle(raw) {
     .hha-tooltip.is-visible {
       opacity: 1;
       visibility: visible;
+    }
+
+    /* Undo after removing from the queue */
+    .hha-snackbar {
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      bottom: 8px;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 38px;
+      padding: 0 6px 0 14px;
+      box-sizing: border-box;
+      background: var(--md-sys-color-inverse-surface);
+      color: var(--md-sys-color-inverse-on-surface);
+      border-radius: var(--md-sys-shape-corner-small);
+      box-shadow: var(--md-sys-elevation-level3);
+      font-size: var(--md-sys-typescale-body-small-size);
+      line-height: 16px;
+      animation: hhaSnackIn 220ms var(--md-sys-motion-easing-emphasized-decelerate);
+    }
+
+    .hha-snackbar[hidden] {
+      display: none;
+    }
+
+    @keyframes hhaSnackIn {
+      from { opacity: 0; transform: translate3d(0, 8px, 0); }
+      to { opacity: 1; transform: none; }
+    }
+
+    .hha-snackbar-action {
+      height: 28px;
+      padding: 0 12px;
+      border: none;
+      border-radius: var(--md-sys-shape-corner-full);
+      background: transparent;
+      color: var(--md-sys-color-primary-container);
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-label-medium-size);
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-snackbar-action:hover {
+      background: color-mix(in srgb, var(--md-sys-color-inverse-on-surface) 12%, transparent);
+    }
+
+    .hha-snackbar-action:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px var(--md-sys-color-primary-container);
+    }
+
+    .hha-sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      border: 0;
     }
 
     /* 11. Settings Controls */
@@ -6110,6 +6216,7 @@ function cleanVacancyTitle(raw) {
       this._collapsedPillWidth = 166;
       this._isAnimating = false;
       this._queue = [];
+      this._removingVids = new Set();
       this._lastErrorPayload = null;
       this._config = {
         useCover: false,
@@ -6255,6 +6362,7 @@ function cleanVacancyTitle(raw) {
       if (this._statusLineTimer) { clearTimeout(this._statusLineTimer); this._statusLineTimer = null; }
       if (this._animTimer) { clearTimeout(this._animTimer); this._animTimer = null; }
       if (this._queueConfirmTimer) { clearTimeout(this._queueConfirmTimer); this._queueConfirmTimer = null; }
+      if (this._undoTimer) { clearTimeout(this._undoTimer); this._undoTimer = null; }
     }
 
     // --- Public API ---
@@ -6704,6 +6812,11 @@ function cleanVacancyTitle(raw) {
                   </div>
                   <div class="hha-overlay-scrollbar" data-el="queue-scrollbar">
                     <div class="hha-overlay-thumb" data-el="queue-scroll-thumb"></div>
+                  </div>
+                  <!-- Undo for a removal: a misclick on the cross would lose the vacancy for 30 days -->
+                  <div class="hha-snackbar" data-el="undo-bar" role="status" aria-live="polite" hidden>
+                    <span class="hha-snackbar-text" data-el="undo-text"></span>
+                    <button type="button" class="hha-snackbar-action" data-action="undo-remove">Вернуть</button>
                   </div>
                 </div>
               </div>
@@ -7186,8 +7299,10 @@ function cleanVacancyTitle(raw) {
         clearTimeout(this._queueConfirmTimer);
         this._queueConfirmTimer = null;
         this._resetClearQueueBtn();
+        const removed = [...(this._queue || [])];
         if (this.#assistant && typeof this.#assistant.clearManualQueue === 'function') {
           this.#assistant.clearManualQueue();
+          this._offerUndo(removed);
         } else {
           this._queue = [];
           this._syncQueue();
@@ -7200,6 +7315,54 @@ function cleanVacancyTitle(raw) {
           this._resetClearQueueBtn();
         }, 3000);
       }
+    }
+
+    // "Убрано из очереди. Вернуть" for a few seconds after a removal. A vacancy with a
+    // questionnaire is remembered for 30 days once queued, so the script would not bring
+    // it back by itself: a misclick on the cross would lose it. Removals in a row add up.
+    _offerUndo(items) {
+      const bar = this.#shadow?.querySelector('[data-el="undo-bar"]');
+      if (!bar || !items.length) return;
+      this._undoItems = (this._undoTimer ? this._undoItems : []).concat(items);
+      const n = this._undoItems.length;
+      bar.querySelector('[data-el="undo-text"]').textContent = n === 1 ? 'Убрано из очереди' : `Убрано из очереди: ${n}`;
+      bar.hidden = false;
+      this._armUndoTimer();
+      if (!bar.dataset.bound) {
+        bar.dataset.bound = '1';
+        // The bar waits while the pointer or the keyboard is on it.
+        bar.addEventListener('pointerenter', () => { clearTimeout(this._undoTimer); this._undoTimer = 1; });
+        bar.addEventListener('pointerleave', () => this._armUndoTimer());
+        bar.addEventListener('focusin', () => { clearTimeout(this._undoTimer); this._undoTimer = 1; });
+        bar.addEventListener('focusout', () => this._armUndoTimer());
+      }
+    }
+
+    _armUndoTimer() {
+      if (this.#shadow?.querySelector('[data-el="undo-bar"]')?.hidden) return;
+      if (this._undoTimer) clearTimeout(this._undoTimer);
+      this._undoTimer = setTimeout(() => this._hideUndo(), 6000);
+    }
+
+    _hideUndo() {
+      if (this._undoTimer) clearTimeout(this._undoTimer);
+      this._undoTimer = null;
+      this._undoItems = [];
+      const bar = this.#shadow?.querySelector('[data-el="undo-bar"]');
+      if (bar) bar.hidden = true;
+    }
+
+    _undoRemove() {
+      const items = this._undoItems || [];
+      this._hideUndo();
+      for (const item of items) {
+        if (this.#assistant && typeof this.#assistant.restoreManualItem === 'function') {
+          this.#assistant.restoreManualItem(item);
+        } else if (!this._queue.some(it => cleanVid(it.vid) === cleanVid(item.vid))) {
+          this._queue = [item, ...this._queue];
+        }
+      }
+      if (!this.#assistant) this._syncQueue();
     }
 
     _handleOpenVacancyAction(target, e) {
@@ -7229,6 +7392,7 @@ function cleanVacancyTitle(raw) {
       const cVid = cleanVid(target.dataset.cleanVid || vid);
       if (!vid) return;
       const card = target.closest('.hha-queue-card');
+      const removed = (this._queue || []).find(it => cleanVid(it.vid) === cVid);
       const executeRemove = () => {
         if (this.#assistant && typeof this.#assistant.removeManualItem === 'function') {
           this.#assistant.removeManualItem(vid);
@@ -7236,12 +7400,17 @@ function cleanVacancyTitle(raw) {
           this._queue = this._queue.filter(it => cleanVid(it.vid) !== cVid);
           this._syncQueue();
         }
+        this._removingVids.delete(cVid);
+        if (removed) this._offerUndo([removed]);
       };
       if (card && !card.classList.contains('is-removing')) {
+        // The list is rebuilt when another card goes; the set keeps this one collapsed
+        // in the new markup instead of showing it again for the rest of its animation.
+        this._removingVids.add(cVid);
         card.style.maxHeight = `${card.offsetHeight}px`;
         void card.offsetHeight;
         card.classList.add('is-removing');
-        setTimeout(executeRemove, 220);
+        setTimeout(executeRemove, 290);
       } else {
         executeRemove();
       }
@@ -7278,6 +7447,7 @@ function cleanVacancyTitle(raw) {
         'clear-queue': (tgt, ev) => { ev.stopPropagation(); this._handleClearQueueAction(tgt); },
         'open-vacancy': (tgt, ev) => { this._handleOpenVacancyAction(tgt, ev); },
         'delete-queue-item': (tgt, ev) => { ev.stopPropagation(); this._handleDeleteQueueItemAction(tgt); },
+        'undo-remove': (_, ev) => { ev.stopPropagation(); this._undoRemove(); },
         'insert-letter-var': (tgt, ev) => { ev.stopPropagation(); this._insertLetterVar(tgt.dataset.var); },
         'copy-log': (tgt, ev) => { ev.stopPropagation(); this._copyLog(tgt); },
         'clear-log': (tgt, ev) => { ev.stopPropagation(); this._handleClearLogAction(tgt); }
@@ -8048,9 +8218,15 @@ function cleanVacancyTitle(raw) {
       const reasonInfo = formatQueueReasonInfo(item.reason);
       const cleanSalary = formatCleanSalary(item.salary || '');
       const isViewed = Boolean(item.viewed);
+      const isRemoving = this._removingVids.has(cVid);
+      // A questionnaire the script saw: the badge counts the questions and the first one
+      // is shown, so a one-line "Telegram nick" is told apart from a long test at a glance.
+      const questions = item.questions && item.questions.count ? item.questions : null;
+      const badgeText = questions ? `${questions.count} ${pluralRu(questions.count, 'вопрос', 'вопроса', 'вопросов')}` : reasonInfo.text;
+      const badgeType = questions ? 'info' : reasonInfo.type;
 
       return `
-        <div class="hha-queue-card ${isViewed ? 'is-viewed' : ''}" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-url="${escapeHtml(targetUrl || '#')}" role="link" tabindex="0" title="Открыть вакансию в новой вкладке">
+        <div class="hha-queue-card ${isViewed ? 'is-viewed' : ''}${isRemoving ? ' is-removing' : ''}" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-url="${escapeHtml(targetUrl || '#')}" role="link" tabindex="0" title="Открыть вакансию в новой вкладке">
           <div class="hha-queue-card-top">
             <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="${escapeHtml(displayTitle)}">
               <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
@@ -8059,12 +8235,14 @@ function cleanVacancyTitle(raw) {
           </div>
           ${displayEmployer ? `
           <div class="hha-queue-card-mid">
-            <span class="hha-queue-employer" title="${escapeHtml(displayEmployer)}">${escapeHtml(displayEmployer)}</span>
+            <span class="hha-queue-employer" data-tooltip="${escapeHtml(displayEmployer)}">${escapeHtml(displayEmployer)}</span>
           </div>` : ''}
+          ${questions && questions.first ? `
+          <div class="hha-queue-question" data-tooltip="${escapeHtml(questions.first)}">${escapeHtml(questions.first)}</div>` : ''}
           <div class="hha-queue-card-bottom">
             ${isViewed ? `<span class="hha-queue-badge badge-viewed">Просмотрено</span>` : ''}
-            <span class="hha-queue-badge badge-${escapeHtml(reasonInfo.type)}">${escapeHtml(reasonInfo.text)}</span>
-            ${cleanSalary ? `<span class="hha-queue-salary" title="${escapeHtml(item.salary || cleanSalary)}">${escapeHtml(cleanSalary)}</span>` : ''}
+            <span class="hha-queue-badge badge-${escapeHtml(badgeType)}">${escapeHtml(badgeText)}</span>
+            ${cleanSalary ? `<span class="hha-queue-salary" data-tooltip="${escapeHtml(item.salary || cleanSalary)}">${escapeHtml(cleanSalary)}</span>` : ''}
           </div>
         </div>
       `;
