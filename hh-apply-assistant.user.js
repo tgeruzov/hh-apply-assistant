@@ -35,6 +35,19 @@ function clamp(val, min, max) {
 
 const collapseSpaces = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 
+// At most n UTF-16 units, without cutting a surrogate pair in half: half an emoji turns
+// into a replacement sign once the text is sent.
+function sliceSafe(s, n) {
+  const str = String(s ?? '');
+  if (str.length <= n) return str;
+  const last = str.charCodeAt(n - 1);
+  return str.slice(0, last >= 0xD800 && last <= 0xDBFF ? n - 1 : n);
+}
+
+// A stored value as text: strings and numbers only. Anything else in storage (an object
+// written by another script or by hand) would show up as "[object Object]".
+const asText = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '');
+
 const formatCleanSalary = (raw) => {
   if (!raw) return '';
   return collapseSpaces(
@@ -129,6 +142,19 @@ function cleanVacancyTitle(raw) {
   // --- 1. Constants, Selectors & Defaults ---
   // GM_info is available to every userscript, including @grant none; 'dev' is for runs outside a manager.
   const VERSION = (typeof GM_info !== 'undefined' && GM_info.script?.version) || 'dev';
+  // This file's address as stack traces show it (Tampermonkey's userscript.html?name=...,
+  // the mock's /hha.user.js), to tell this script's errors from the page's. Empty when the
+  // stack has no address of its own or it is the page itself (a script injected inline).
+  const OWN_SCRIPT_URL = (() => {
+    try {
+      const m = /((?:https?|chrome-extension|moz-extension|safari-web-extension|blob):[^\s()@]+?):\d+:\d+/.exec(new Error().stack || '');
+      const url = m ? m[1] : '';
+      const page = String(globalThis.location?.href || '').split('#')[0];
+      return url && url !== page ? url : '';
+    } catch (_) {
+      return '';
+    }
+  })();
   const SELECTORS = {
     modal: '[data-qa="bottom-sheet-content"], [data-qa="vacancy-response-popup-form"], [data-qa*="modal" i], [class*="modal" i], [data-qa*="popup" i], [class*="popup" i], [role="dialog"]',
     modalClose: '[data-qa="vacancy-response-popup-close"], [data-qa*="close" i], button[aria-label*="закрыть" i]',
@@ -177,6 +203,7 @@ function cleanVacancyTitle(raw) {
     blacklist: STORAGE_PREFIX + 'blacklist_v1',
     appliedHistory: STORAGE_PREFIX + 'applied_v1',
     queuedHistory: STORAGE_PREFIX + 'queued_v1',
+    skippedHistory: STORAGE_PREFIX + 'skipped_v1',
     attempts: STORAGE_PREFIX + 'attempts_v1',
     dailyCounters: STORAGE_PREFIX + 'daily_counters',
     lastCommittedVid: STORAGE_PREFIX + 'last_committed_vid',
@@ -189,6 +216,9 @@ function cleanVacancyTitle(raw) {
     sessionAnomalousSkips: 'hha:session_anomalous_skips',
     runStats: 'hha:run_stats',
     runVisits: 'hha:run_visits',
+    runPages: 'hha:run_pages',
+    noButtonStreak: 'hha:no_button_streak',
+    inflight: 'hha:inflight',
     lastRun: 'hha:last_run'
   };
 
@@ -201,6 +231,8 @@ function cleanVacancyTitle(raw) {
   // A watchdog tick normally comes every second. A longer gap means the page did not run
   // at all: the computer slept, or the browser paused the background tab.
   const TIMER_GAP_MS = 30000;
+  // A tick this late means the page's timers were held back, not that the run hung.
+  const TICK_LATE_MS = 3000;
 
   // Text rules of the detectors, in one place so they can be narrowed by the decision log.
   // Several of them look alike on purpose: each one is tuned to where it is applied.
@@ -293,14 +325,41 @@ function cleanVacancyTitle(raw) {
     }
   }
 
-  function storeSet(type, key, val) {
+  // The log is the biggest key in localStorage and the least needed one: when the storage
+  // is full, it gives way to the queue, the counters and the lists, down to its last entries.
+  const LOG_KEEP_ON_FULL = 100;
+  function freeLogSpace(s) {
     try {
-      const s = getNativeStore(type);
+      const list = JSON.parse(s.getItem(KEYS.logBuffer) || '[]');
+      if (!Array.isArray(list) || list.length <= LOG_KEEP_ON_FULL) return false;
+      s.setItem(KEYS.logBuffer, JSON.stringify(list.slice(-LOG_KEEP_ON_FULL)));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  let storageFailureLogged = false;
+  function storeSet(type, key, val) {
+    let s = null;
+    try {
+      s = getNativeStore(type);
       if (!s) return false;
       s.setItem(key, String(val));
       return true;
     } catch (e) {
-      console.warn(`[HH] Storage quota exceeded on ${type}Storage (key: ${key}):`, e);
+      if (s && type === 'local' && key !== KEYS.logBuffer && freeLogSpace(s)) {
+        try {
+          s.setItem(key, String(val));
+          return true;
+        } catch (_) {}
+      }
+      console.warn(`[HH] Storage write failed on ${type}Storage (key: ${key}):`, e);
+      // Once per page: a write that did not go through is lost data, and the log says which.
+      if (key !== KEYS.logBuffer && !storageFailureLogged) {
+        storageFailureLogged = true;
+        hhaLog('warn', 'storage_write_failed', { storage: type, key, error: String(e && e.name || e) });
+      }
       return false;
     }
   }
@@ -530,22 +589,34 @@ function cleanVacancyTitle(raw) {
     return { date: today, applied: 0, queued: 0, skipped: 0, error: 0 };
   }
 
+  // Today's counters. Reading never writes: the next outcome saves a new day. The stored
+  // day is kept when it is today or tomorrow: tomorrow means the time zone or the clock
+  // went back (a trip, an OS zone fixed), and those counts are the user's real day.
+  // A read during a short visit to another date used to wipe them.
   function getDailyCounters() {
-    const today = getLocalDateKey();
-    const raw = storage.localGet(KEYS.dailyCounters);
-    const data = parseJson(raw, null);
-    if (data && data.date === today) {
+    const now = new Date();
+    const today = getLocalDateKey(now);
+    const tomorrow = getLocalDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+    const data = parseJson(storage.localGet(KEYS.dailyCounters), null);
+    if (data && typeof data === 'object' && (data.date === today || data.date === tomorrow)) {
+      const n = (v) => Math.max(0, Math.floor(Number(v)) || 0);
       return {
-        date: today,
-        applied: Number(data.applied) || 0,
-        queued: Number(data.queued) || 0,
-        skipped: Number(data.skipped) || 0,
-        error: Number(data.error) || 0
+        date: data.date,
+        applied: n(data.applied),
+        queued: n(data.queued),
+        skipped: n(data.skipped),
+        error: n(data.error)
       };
     }
-    const fresh = makeFreshCounters(today);
-    storage.localSet(KEYS.dailyCounters, JSON.stringify(fresh));
-    return fresh;
+    return makeFreshCounters(today);
+  }
+
+  function emitProgress() {
+    const cur = getSentCount();
+    events.emit('progress', {
+      sent: cur,
+      percentage: Math.min(100, Math.round((cur / MAX_DAILY_LIMIT) * 100))
+    });
   }
 
   function saveDailyCounters(counters) {
@@ -655,6 +726,11 @@ function cleanVacancyTitle(raw) {
     storage.sessionRemove(KEYS.watchdogStallCount);
     storage.sessionRemove(KEYS.watchdogStallVid);
     markProgress();
+    if (clean) {
+      clearInflight(clean);
+      // Any other outcome of a vacancy ends a series of vacancies without the apply button.
+      if (finalReason !== 'queued_no_button') storage.sessionRemove(KEYS.noButtonStreak);
+    }
 
     const logLevel = finalOutcome === 'error' ? 'error' : (finalOutcome === 'skipped' ? 'warn' : 'info');
     const logData = {
@@ -680,11 +756,12 @@ function cleanVacancyTitle(raw) {
 
   // --- 6. Configuration ---
   function normalizeConfig(raw) {
-    const m = { ...DEFAULTS, ...(raw || {}) };
+    const m = { ...DEFAULTS, ...(raw && typeof raw === 'object' ? raw : {}) };
+    // Booleans written as strings ("false") by hand or by another script mean what they say.
     return {
-      coverText: String(m.coverText ?? DEFAULT_COVER_TEXT).slice(0, MAX_COVER_LENGTH),
-      useCover: Boolean(m.useCover),
-      skipHidden: m.skipHidden !== false,
+      coverText: sliceSafe(typeof m.coverText === 'string' ? m.coverText : (asText(m.coverText) || DEFAULT_COVER_TEXT), MAX_COVER_LENGTH),
+      useCover: m.useCover === true || m.useCover === 'true',
+      skipHidden: !(m.skipHidden === false || m.skipHidden === 'false'),
     };
   }
 
@@ -719,21 +796,21 @@ function cleanVacancyTitle(raw) {
   // --- 7. Manual Queue Domain ---
 
   function normalizeManualEntry(entry) {
-    if (!entry) return null;
-    const rawVid = String(entry.vid || entry.id || '').trim();
+    if (!entry || typeof entry !== 'object') return null;
+    const rawVid = (asText(entry.vid) || asText(entry.id)).trim();
     const vid = cleanVid(rawVid);
     if (!vid) return null;
     return {
       vid,
-      url: toSafeHhUrl(entry.url || entry.href || ''),
-      title: collapseSpaces(entry.title || ''),
-      employer: collapseSpaces(entry.employer || ''),
-      salary: collapseSpaces(entry.salary || ''),
-      reason: collapseSpaces(entry.reason || entry.note || ''),
+      url: toSafeHhUrl(asText(entry.url) || asText(entry.href)),
+      title: collapseSpaces(asText(entry.title)),
+      employer: collapseSpaces(asText(entry.employer)),
+      salary: collapseSpaces(asText(entry.salary)),
+      reason: collapseSpaces(asText(entry.reason) || asText(entry.note)),
       addedAt: Number(entry.addedAt || entry.ts) || Date.now(),
-      returnUrl: toSafeHhUrl(entry.returnUrl || ''),
-      viewed: Boolean(entry.viewed),
-      viewedAt: entry.viewedAt ? Number(entry.viewedAt) : null,
+      returnUrl: toSafeHhUrl(asText(entry.returnUrl)),
+      viewed: entry.viewed === true || entry.viewed === 'true',
+      viewedAt: entry.viewedAt ? (Number(entry.viewedAt) || null) : null,
       questions: normalizeQuestions(entry.questions)
     };
   }
@@ -743,7 +820,7 @@ function cleanVacancyTitle(raw) {
   function normalizeQuestions(q) {
     const count = Math.round(Number(q && q.count) || 0);
     if (count < 1) return null;
-    return { count: Math.min(count, 99), first: collapseSpaces(q.first).slice(0, 200) };
+    return { count: Math.min(count, 99), first: sliceSafe(collapseSpaces(asText(q.first)), 200) };
   }
 
   // The questions on the page right now: hh.ru renders each one as
@@ -788,7 +865,9 @@ function cleanVacancyTitle(raw) {
       if (idx >= 0) queue[idx] = { ...queue[idx], ...item };
       else queue.unshift(item);
       const ok = storage.localSet(KEYS.manualList, JSON.stringify(queue));
-      events.emit('manualQueue', { action: isNew ? 'add' : 'update', item, queue });
+      // A queue that was not saved is not shown either: the HUD would list a vacancy that
+      // is gone after the next page load.
+      if (ok) events.emit('manualQueue', { action: isNew ? 'add' : 'update', item, queue });
       return { success: Boolean(ok), isNew: Boolean(isNew) };
     },
     remove(vid) {
@@ -897,10 +976,13 @@ function cleanVacancyTitle(raw) {
   let memVacancyAttempts = null;
   let memVacancyAttemptsDirty = false;
 
+  // A stored map, or an empty one when the key holds anything else: a string or a number
+  // there made every later write throw in strict mode and stopped each run at once.
+  const asMap = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+
   function getVacancyAttemptsMap() {
     if (!memVacancyAttempts) {
-      const raw = storage.sessionGet(KEYS.attempts);
-      memVacancyAttempts = parseJson(raw, {}) || {};
+      memVacancyAttempts = asMap(parseJson(storage.sessionGet(KEYS.attempts), {}));
     }
     return memVacancyAttempts;
   }
@@ -929,9 +1011,10 @@ function cleanVacancyTitle(raw) {
   function getBlacklistMap() {
     if (!memBlacklist) {
       const raw = storage.localGet(KEYS.blacklist);
-      const map = parseJson(raw, {}) || {};
+      const parsed = parseJson(raw, {});
+      const map = asMap(parsed);
       const now = Date.now();
-      let changed = false;
+      let changed = Boolean(raw) && map !== parsed;
       for (const k of Object.keys(map)) {
         const entry = map[k];
         const ts = typeof entry === 'object' && entry !== null ? Number(entry.ts) : Number(entry);
@@ -977,10 +1060,12 @@ function cleanVacancyTitle(raw) {
   // opened on every run only to find the response already there. Written at once, since
   // a queued vacancy can be answered in another tab.
   const VID_HISTORY_TTL = 30 * 24 * 60 * 60 * 1000;
-  const VID_HISTORY_MAX = 2000;
+  // 30 days at hh.ru's limit of 200 responses a day, with room to spare: with 2000 the
+  // oldest ids went after 10 days, while README promises 30.
+  const VID_HISTORY_MAX = 6500;
 
-  // A map of vacancy id to the time it was stored, kept for VID_HISTORY_TTL.
-  function createVidHistory(key) {
+  // A map of vacancy id to the time it was stored, kept for ttl.
+  function createVidHistory(key, ttl = VID_HISTORY_TTL) {
     const read = () => {
       const map = parseJson(storage.localGet(key), {});
       return map && typeof map === 'object' && !Array.isArray(map) ? map : {};
@@ -988,7 +1073,7 @@ function cleanVacancyTitle(raw) {
     const write = (map) => {
       const now = Date.now();
       const kept = Object.entries(map)
-        .filter(([, ts]) => now - Number(ts) < VID_HISTORY_TTL)
+        .filter(([, ts]) => now - Number(ts) < ttl)
         .sort((a, b) => Number(b[1]) - Number(a[1]))
         .slice(0, VID_HISTORY_MAX);
       storage.localSet(key, JSON.stringify(Object.fromEntries(kept)));
@@ -1011,7 +1096,7 @@ function cleanVacancyTitle(raw) {
       ids() {
         const now = Date.now();
         return new Set(Object.entries(read())
-          .filter(([, ts]) => now - Number(ts) < VID_HISTORY_TTL)
+          .filter(([, ts]) => now - Number(ts) < ttl)
           .map(([vid]) => vid));
       }
     };
@@ -1029,6 +1114,35 @@ function cleanVacancyTitle(raw) {
   // new attempt is the point of removing them from the queue.
   const queuedHistory = createVidHistory(KEYS.queuedHistory);
   const LASTING_QUEUE_REASONS = new Set(['test_required', 'test-questionnaire', 'queued_external_site', 'queued_promo', 'no-apply-button']);
+
+  // Vacancies skipped for a reason the next session would find again: hh.ru says the
+  // resume does not fit, the resume is hidden, the vacancy is closed. The processed list
+  // lives in sessionStorage, so without this every new tab opened them and pressed the
+  // apply button again. A week, not 30 days: a reworked resume may fit next time.
+  const SKIPPED_HISTORY_TTL = 7 * 24 * 60 * 60 * 1000;
+  const skippedHistory = createVidHistory(KEYS.skippedHistory, SKIPPED_HISTORY_TTL);
+  const LASTING_SKIP_REASONS = new Set(['skip_reject_warning', 'skip_reject_regex', 'resume_hidden', 'access_denied', 'skip_inaccessible']);
+
+  // A response the script started: the apply button or a submit was pressed and hh.ru has
+  // not confirmed it yet. It lives in sessionStorage, so a Stop or a reload in between
+  // still counts the response once the page shows it, instead of losing it or taking it
+  // for a skip "already applied".
+  const INFLIGHT_TTL = 2 * 60 * 1000;
+  function markInflight(vid) {
+    const clean = cleanVid(vid);
+    if (clean) storage.sessionSet(KEYS.inflight, JSON.stringify({ vid: clean, ts: Date.now() }));
+  }
+  function readInflight() {
+    const p = parseJson(storage.sessionGet(KEYS.inflight), null);
+    if (!p || typeof p.vid !== 'string' || !(Date.now() - Number(p.ts) < INFLIGHT_TTL)) return null;
+    return p.vid;
+  }
+  function clearInflight(vid) {
+    const raw = storage.sessionGet(KEYS.inflight);
+    if (!raw) return;
+    const p = parseJson(raw, null);
+    if (!vid || !p || p.vid === cleanVid(vid)) storage.sessionRemove(KEYS.inflight);
+  }
 
   function flushStorageCaches() {
     flushVacancyAttempts();
@@ -1359,8 +1473,50 @@ function cleanVacancyTitle(raw) {
     setStatus(statusKey, code, details);
     hhaLog(isError ? 'error' : 'info', 'stop', { code, logMsg: logMsg || undefined, isError });
     if (logMsg && isError) reportError(logMsg, code, details);
+    const pending = readInflight();
+    if (pending) watchLateResponse(pending);
     flushLogBuffer();
     flushStorageCaches();
+  }
+
+  // A response that hh.ru confirms after the run stopped (Stop pressed while the script
+  // waited for hh.ru) or after a reload. It went through and counts toward hh.ru's limit,
+  // so it counts here too. Only the page is read, nothing is pressed.
+  const LATE_RESPONSE_WATCH_MS = 20000;
+  let lateWatchId = null;
+
+  function recordLateResponse(vid, source) {
+    rememberApplied(vid);
+    recordOutcome(vid, 'applied', `applied_${source}`);
+    // The run already has its summary; the response goes into it as well.
+    const last = parseJson(storage.sessionGet(KEYS.lastRun), null);
+    if (last && typeof last === 'object') {
+      last.applied = (Number(last.applied) || 0) + 1;
+      storage.sessionSet(KEYS.lastRun, JSON.stringify(last));
+      events.emit('runSummary', last);
+    }
+    emitProgress();
+  }
+
+  function watchLateResponse(vid) {
+    if (lateWatchId !== null) clearInterval(lateWatchId);
+    lateWatchId = null;
+    // Only on the page of that vacancy: its own page or its response form.
+    if (cleanVid(getVacancyIDFromHref(globalThis.location?.href) || '') !== vid) return;
+    const startedAt = Date.now();
+    const stop = () => {
+      if (lateWatchId !== null) clearInterval(lateWatchId);
+      lateWatchId = null;
+    };
+    const check = () => {
+      if (isRunning() || readInflight() !== vid || Date.now() - startedAt > LATE_RESPONSE_WATCH_MS) return stop();
+      if (detectAlreadyApplied() || isResponseConfirmed({ allowDocumentStrongText: true })) {
+        stop();
+        hhaLog('info', 'late_response', { vid, afterMs: Date.now() - startedAt });
+        recordLateResponse(vid, 'after_stop');
+      }
+    };
+    lateWatchId = setInterval(check, 500);
   }
 
   function finalizeRun(runId, statusKey, msg = '') {
@@ -1416,16 +1572,42 @@ function cleanVacancyTitle(raw) {
     if (!node) return '';
     if (!textCacheObserver) {
       const root = globalThis.document?.documentElement;
-      if (typeof MutationObserver === 'undefined' || !root) return node.textContent || '';
+      if (typeof MutationObserver === 'undefined' || !root) return readPageText(node);
       textCacheObserver = new MutationObserver(() => textCache.clear());
       textCacheObserver.observe(root, { childList: true, subtree: true, characterData: true });
     }
     let text = textCache.get(node);
     if (text === undefined) {
-      text = node.textContent || '';
+      text = readPageText(node);
       textCache.set(node, text);
     }
     return text;
+  }
+
+  // The text of a node as the page shows it in its markup, without the code inside
+  // <script>, <style>, <noscript> and <template>. textContent includes them, and the
+  // detectors took hh.ru's UI strings in an inline script ("Вы уже откликались",
+  // "Вакансия в архиве") for the state of the vacancy.
+  const NON_TEXT_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
+  function readPageText(node) {
+    if (node.nodeType === 3) return node.data;
+    if (node.nodeType === 1 && NON_TEXT_TAGS.has(node.nodeName)) return '';
+    if (typeof node.querySelector !== 'function' || !node.querySelector('script, style, noscript, template')) {
+      return node.textContent || '';
+    }
+    const doc = node.ownerDocument || globalThis.document;
+    const parts = [];
+    try {
+      const walker = doc.createTreeWalker(node, 4 /* NodeFilter.SHOW_TEXT */);
+      // The content of these tags is raw text right inside them (a template's is not in
+      // the tree at all), so the parent is enough.
+      for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+        if (!NON_TEXT_TAGS.has(t.parentNode?.nodeName)) parts.push(t.data);
+      }
+    } catch (_) {
+      return node.textContent || '';
+    }
+    return parts.join('');
   }
 
   function isVisible(el) {
@@ -1493,13 +1675,12 @@ function cleanVacancyTitle(raw) {
     return null;
   }
 
-  const applyBtnHeuristic = (r) => findPatternElement(r, 'button, a, [role="button"]', /откликнуться|отклик без резюме|перейти к отклику|apply|respond/i, 60);
   const coverBtnHeuristic = (r) => findPatternElement(r, 'button, a, [role="button"], span', /сопроводительное|письмо|cover letter|add cover/i, 60);
 
-  // vacancyApply has no text fallback on purpose: the first visible "Откликнуться"
-  // on a vacancy page may belong to the similar vacancies block.
+  // The apply buttons have no text fallback on purpose: on a vacancy page the first visible
+  // "Откликнуться" may belong to the similar vacancies block, and in the search it hid a
+  // markup change that should stop the run.
   const HEURISTIC_RESOLVERS = {
-    applyBtn: applyBtnHeuristic,
     attachCoverBtn: coverBtnHeuristic,
     attachCoverInModal: coverBtnHeuristic,
     letterSubmit: (r) => {
@@ -1565,23 +1746,13 @@ function cleanVacancyTitle(raw) {
     return q(keyOrSelector, root);
   }
 
-  function queryAll(keyOrSelector, root) {
-    if (keyOrSelector in SELECTORS) {
-      const list = qa(SELECTORS[keyOrSelector], root);
-      if (list.length) return list;
-      const heur = queryHeuristic(keyOrSelector, root);
-      return heur ? [heur] : [];
-    }
-    return qa(keyOrSelector, root);
-  }
-
   function getVisibleModals(root = globalThis.document) {
     if (!root) return [];
     return qa(SELECTORS.modal, root).filter(m => isVisible(m) && !isReviewOrFeedbackElement(m));
   }
 
   async function closeModal(modal = null) {
-    const targetModal = modal || getVisibleModals()[0] || null;
+    const targetModal = modal || pickResponseModal();
     if (!targetModal) return false;
     const closeBtn = q(SELECTORS.modalClose, targetModal);
     if (!closeBtn) return false;
@@ -1989,7 +2160,9 @@ function cleanVacancyTitle(raw) {
     if (!doc) return false;
     if (detectInaccessibleVacancy(doc, text)) return false;
     if (loc && /\/captcha|\/checkpoint|\/nocaptcha/i.test(loc.pathname)) return true;
-    if (q('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="captcha" i], iframe[src*="smartcaptcha" i], [data-qa*="captcha" i], .g-recaptcha, .h-captcha, .smart-captcha, [class*="captcha" i], [id*="captcha" i]', doc)) {
+    // Only a captcha on screen: a hidden element with "captcha" in its class (a login
+    // form, a lazy widget) stopped normal runs.
+    if (qa('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="captcha" i], iframe[src*="smartcaptcha" i], [data-qa*="captcha" i], .g-recaptcha, .h-captcha, .smart-captcha, [class*="captcha" i], [id*="captcha" i]', doc).some(isVisible)) {
       return true;
     }
     const bodyText = (text !== null ? text : (textOf(doc.body) || textOf(doc.documentElement))).slice(0, 3000);
@@ -2038,7 +2211,7 @@ function cleanVacancyTitle(raw) {
         }
       }
 
-      // Fallback check across root textContent
+      // Fallback check across the text of the page
       const fullText = textOf(body).slice(0, 3000);
       if (TEXT_RULES.dailyLimit.test(fullText)) {
         return true;
@@ -2055,9 +2228,13 @@ function cleanVacancyTitle(raw) {
     if (loc && /\/error|\/blocked|\/forbidden|\/denied|\/rate-limit/i.test(loc.pathname)) return true;
     // The title holds the vacancy name, so a bare 429/503 would also match "смена 4290 ₽".
     if (doc.title && TEXT_RULES.rateLimitTitle.test(doc.title)) return true;
-    if (q('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]', doc)) {
+    if (qa('[data-qa="error-429"], [data-qa="error-503"], .error-429, .error-503, [data-qa="error-page-title"], [data-qa="error-page"], .error-page, .cf-browser-verification, #challenge-running, #cf-challenge-running, .qrator-challenge, #qrator-clean-page, [data-qa="bloko-notification--error"]', doc).some(isVisible)) {
       return true;
     }
+    // The text rule is for hh.ru's own error pages. A page with a vacancy or search results
+    // on it is not one, and there the same words belong to the content: "Доступ ограничен:
+    // нужен допуск к гостайне" in a vacancy stopped the run as a rate limit.
+    if (q('[data-qa="vacancy-title"], [data-qa="vacancy-description"], [data-qa="vacancy-serp__vacancy"], [data-qa="serp-item__title"]', doc)) return false;
     const bodyText = (text !== null ? text : (textOf(doc.body) || textOf(doc.documentElement))).slice(0, 3000);
     return TEXT_RULES.rateLimitPage.test(bodyText);
   }
@@ -2230,10 +2407,34 @@ function cleanVacancyTitle(raw) {
     if (includeExactSelectors && (queryExact('responseChat', root) || hasResponseTextConfirmation(root) || (!config.useCover && queryExact('attachCoverBtn', root)))) {
       return 'SUCCESS';
     }
-    if (query('letterTextarea', root) || query('attachCoverInModal', root) || query('letterSubmit', root) || q('[data-qa="vacancy-response-popup-form"]', root) || isResumeModal) {
+    // A button found only by its text ("Продолжить", "Отправить") counts inside a form:
+    // a promo popup or a banner with such a button is not the response dialog.
+    const textSubmitInForm = Boolean(q('form', root)) && Boolean(query('letterSubmit', root));
+    if (query('letterTextarea', root) || query('attachCoverInModal', root) || queryExact('letterSubmit', root) || textSubmitInForm || q('[data-qa="vacancy-response-popup-form"]', root) || isResumeModal) {
       return 'MODAL_OPEN';
     }
     return null;
+  }
+
+  // The response dialog among the visible "modals". The selector is broad and also takes
+  // promo popups and banners; the first visible one used to be taken, and the script
+  // pressed "Продолжить" in a promo popup instead of sending the response. The dialog
+  // with the response form scores highest; on a tie the first one wins, as before.
+  function pickResponseModal() {
+    let best = null;
+    let bestScore = -1;
+    for (const m of getVisibleModals()) {
+      let score = 0;
+      if (q(SELECTORS.letterTextarea, m)) score += 4;
+      if (q('[data-qa="vacancy-response-popup-form"], input[type="radio"][name*="resume" i], [data-qa*="resume-item" i]', m)) score += 4;
+      if (queryExact('letterSubmit', m) || q('form button[type="submit"], form input[type="submit"], button[type="submit"][form]', m)) score += 2;
+      if (m.matches?.('[role="dialog"], [aria-modal="true"], [data-qa="bottom-sheet-content"]')) score += 1;
+      if (score > bestScore) {
+        best = m;
+        bestScore = score;
+      }
+    }
+    return best;
   }
 
   function detectResponseOutcomeOnce({ allowDocumentStrongText = false } = {}) {
@@ -2360,7 +2561,38 @@ function cleanVacancyTitle(raw) {
   function skipVacancy(vid, reason = 'skip_reject_warning', runId = currentRunId) {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
     markVacancyProcessed(vid, runId);
+    if (LASTING_SKIP_REASONS.has(reason)) skippedHistory.remember(vid);
     recordOutcome(vid, 'skipped', reason);
+  }
+
+  // Vacancies in a row with no apply button on their page. One is a vacancy without a
+  // response; several in a row mean hh.ru changed the markup. Then the whole search went
+  // to the queue and was remembered for 30 days, hidden from every later run. Now the
+  // run stops, and those vacancies leave the queue and its memory.
+  const NO_BUTTON_STOP = 3;
+  function noteNoApplyButton(vid) {
+    if (!isRunning()) return false;
+    const stored = parseJson(storage.sessionGet(KEYS.noButtonStreak), []);
+    const streak = (Array.isArray(stored) ? stored.filter((v) => typeof v === 'string') : [])
+      .concat(cleanVid(vid)).slice(-NO_BUTTON_STOP);
+    if (streak.length < NO_BUTTON_STOP) {
+      storage.sessionSet(KEYS.noButtonStreak, JSON.stringify(streak));
+      return false;
+    }
+    storage.sessionRemove(KEYS.noButtonStreak);
+    const inQueue = streak.filter((v) => ManualQueue.has(v));
+    for (const v of streak) {
+      queuedHistory.forget(v);
+      ManualQueue.remove(v);
+    }
+    if (inQueue.length) {
+      const counters = getDailyCounters();
+      counters.queued = Math.max(0, counters.queued - inQueue.length);
+      saveDailyCounters(counters);
+    }
+    haltEngine('APPLY_BUTTON_NOT_FOUND', `На ${NO_BUTTON_STOP} вакансиях подряд не нашлась кнопка отклика, автоматизация остановлена.`,
+      describeSelectorFailure('vacancyApply', globalThis.document?.body, { vids: streak.join(',') }));
+    return true;
   }
 
   function saveCurrentForManual(vid, note = '', runId = currentRunId, customTitle = '', customEmployer = '', customSalary = '', customUrl = '') {
@@ -2429,6 +2661,11 @@ function cleanVacancyTitle(raw) {
       }
       return true;
     }
+    // The storage is full even after the log gave way: every next queued vacancy would be
+    // lost the same way, silently, so the run stops and says why.
+    if (isRunning()) {
+      haltEngine('STORAGE_FULL', 'Хранилище браузера переполнено: вакансию не удалось сохранить в очередь.', { vid: clean });
+    }
     return false;
   }
 
@@ -2480,7 +2717,11 @@ function cleanVacancyTitle(raw) {
       hhaLog('warn', 'letter_skipped', { vid: cleanVid(vid), missing: missing.join(',') });
       return null;
     }
-    return text.slice(0, MAX_COVER_LENGTH);
+    if (text.length > MAX_COVER_LENGTH) {
+      // The template fits, the names made it longer. Cut whole: no half of an emoji at the end.
+      hhaLog('warn', 'letter_truncated', { vid: cleanVid(vid), length: text.length, limit: MAX_COVER_LENGTH });
+    }
+    return sliceSafe(text, MAX_COVER_LENGTH);
   }
 
   async function submitCoverLetterForm(scope = null, runId = currentRunId, letter = null) {
@@ -2506,9 +2747,14 @@ function cleanVacancyTitle(raw) {
     if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
       await waitForCondition(() => !submit.disabled && submit.getAttribute?.('aria-disabled') !== 'true', 1500, activeAbortController?.signal);
       if (submit.disabled || submit.getAttribute?.('aria-disabled') === 'true') {
+        // A Stop during the wait ends it at once: no warning, and no submit below.
+        if (!isRunCurrent(runId)) return false;
         reportWarning('Кнопка отправки остаётся неактивной после ожидания, нажимаем всё равно', 'SUBMIT_BTN_STILL_DISABLED');
       }
     }
+    // requestSubmit below does not go through clickElement and its stop check.
+    if (!isRunCurrent(runId)) return false;
+    markInflight(resolveCurrentVid());
 
     const formId = submit.getAttribute?.('form');
     const form = (formId && globalThis.document?.getElementById(formId)) || submit.form || submit.closest?.('form');
@@ -2644,7 +2890,7 @@ function cleanVacancyTitle(raw) {
   }
 
   async function handleModalOutcome(vid, runId) {
-    const modal = getVisibleModals()[0] || null;
+    const modal = pickResponseModal();
     setActivity('submitting', { vid });
     const res = await handleScenarioB(modal, runId);
     if (res === 'OK' && vid) {
@@ -2883,7 +3129,12 @@ function cleanVacancyTitle(raw) {
       }
       if (detectDailyLimit()) { haltForDailyLimit(); return 'BLOCKED'; }
       if (detectAlreadyApplied()) {
-        if (vid) {
+        if (vid && readInflight() === cleanVid(vid)) {
+          // This run pressed the button here, and the page reloaded before the response
+          // was recorded: it is this run's response, not an old one.
+          hhaLog('info', 'late_response', { vid: cleanVid(vid), source: 'reload' });
+          commitSuccess(vid, runId);
+        } else if (vid) {
           rememberApplied(vid);
           skipVacancy(vid, 'already_applied', runId);
         }
@@ -2898,6 +3149,7 @@ function cleanVacancyTitle(raw) {
       if (!applyBtn) {
         reportWarning(`Кнопка "Откликнуться" не найдена на странице вакансии #${vid}`, 'NO_APPLY_BUTTON', describeSelectorFailure('vacancyApply', globalThis.document?.body, { vid, url: pageUrl }));
         if (vid) saveCurrentForManual(vid, 'no-apply-button', runId);
+        if (vid && noteNoApplyButton(vid)) return 'BLOCKED';
         returnToList(vid, { markProcessed: true, runId });
         return 'FAIL';
       }
@@ -2908,6 +3160,7 @@ function cleanVacancyTitle(raw) {
       }
       await actionPause();
       if (!isRunCurrent(runId)) return 'STOPPED';
+      markInflight(vid);
       await clickElement(applyBtn);
       await actionPause();
       if (!isRunCurrent(runId)) return 'STOPPED';
@@ -2970,6 +3223,7 @@ function cleanVacancyTitle(raw) {
       if (!submitBtn) {
         reportWarning('Кнопка отправки формы отклика не найдена', 'SUBMIT_BTN_NOT_FOUND', describeSelectorFailure('letterSubmit', globalThis.document?.body, { vid }));
         saveCurrentForManual(vid, 'no-submit-button', runId);
+        if (vid && noteNoApplyButton(vid)) return;
         return returnToList(vid, { markProcessed: true, runId });
       }
       const submitted = await submitCoverLetterForm(null, runId, letter);
@@ -3056,8 +3310,18 @@ function cleanVacancyTitle(raw) {
     // resume of the same run, not a new start.
     const isResume = isRunning();
     if (!isResume || !readRunStats()) startRunStats();
-    if (!isResume) storage.sessionRemove(KEYS.runVisits);
+    if (!isResume) {
+      storage.sessionRemove(KEYS.runVisits);
+      storage.sessionRemove(KEYS.runPages);
+      storage.sessionRemove(KEYS.noButtonStreak);
+    }
     setRunning(true);
+    // The run flag lives in sessionStorage. When the browser does not keep it, the run
+    // cannot get past one page; it used to hang at "Запуск" with no reason shown.
+    if (!isRunning()) {
+      terminateRun('STORAGE_BLOCKED', 'Браузер не даёт сайту хранить данные, запуск невозможен.', {}, true);
+      return null;
+    }
     markProgress();
     hhaLog('info', isResume ? 'resume' : 'start', { runId, limit: MAX_DAILY_LIMIT });
     setStatus('running', 'LOOP_STARTING');
@@ -3070,16 +3334,12 @@ function cleanVacancyTitle(raw) {
       return null;
     }
     if (!acquired) {
-      currentRunId++;
-      stopSignal = true;
-      isLoopActive = false;
-      setRunning(false);
+      // An error stop, like the other reasons: the pill, the status line and the tab title
+      // name it. As an idle status it was seen only in the error card.
       const isBlocked = storage.isLocalBlocked();
       const code = isBlocked ? 'STORAGE_BLOCKED' : 'TAB_BUSY';
       const msg = isBlocked ? 'Доступ к хранилищу заблокирован.' : 'Другая вкладка уже выполняет отклики. Запуск в текущей вкладке отменен.';
-      setActivity(null);
-      setStatus('idle', code, { message: msg });
-      reportError(msg, code);
+      terminateRun(code, msg, { message: msg }, true);
       return null;
     }
     return runId;
@@ -3198,10 +3458,14 @@ function cleanVacancyTitle(raw) {
     if (globalThis.location) setReturnUrl(globalThis.location.href);
     setActivity('scanning');
 
-    let allBtns = queryAll('applyBtn');
+    // The known selector only. The text fallback found the first "Откликнуться" on the
+    // page, so after a markup change the run went on with one vacancy per page and ended
+    // as "Готово" instead of stopping with "Вёрстка" as README says.
+    const findApplyButtons = () => qa(SELECTORS.applyBtn);
+    let allBtns = findApplyButtons();
     if (!allBtns.length) {
-      await waitForCondition(() => stopSignal || runId !== currentRunId || queryAll('applyBtn').length > 0 || q('[data-qa*="empty" i], [class*="empty" i]'), 2000, activeAbortController?.signal);
-      if (!stopSignal && runId === currentRunId) allBtns = queryAll('applyBtn');
+      await waitForCondition(() => stopSignal || runId !== currentRunId || findApplyButtons().length > 0 || q('[data-qa*="empty" i], [class*="empty" i]'), 2000, activeAbortController?.signal);
+      if (!stopSignal && runId === currentRunId) allBtns = findApplyButtons();
     }
     if (stopSignal || runId !== currentRunId) return;
 
@@ -3209,7 +3473,7 @@ function cleanVacancyTitle(raw) {
       const cards = qa(SELECTORS.vacancyCard);
       // Cards that already have a response show no apply button. Then the code below finds
       // nothing to open and goes to the next page, or finishes the run on the last one.
-      const anyAlreadyApplied = cards.some(c => TEXT_RULES.serpCardApplied.test(c.textContent || ''));
+      const anyAlreadyApplied = cards.some(c => TEXT_RULES.serpCardApplied.test(textOf(c)));
       if (cards.length > 0 && !anyAlreadyApplied) {
         recordOutcome(null, 'error', 'error_selector_missing');
         if (runId !== currentRunId) return;
@@ -3223,11 +3487,12 @@ function cleanVacancyTitle(raw) {
     const queued = new Set(ManualQueue.get().map(item => cleanVid(item.vid)));
     const applied = getAppliedHistorySet();
     const queuedBefore = queuedHistory.ids();
+    const skippedBefore = skippedHistory.ids();
     const targets = [];
     for (const b of allBtns) {
       const vid = getVacancyID(b);
       const clean = cleanVid(vid);
-      if (isProcessedID(vid) || isBlacklisted(vid) || queued.has(clean) || applied.has(clean) || queuedBefore.has(clean)) continue;
+      if (isProcessedID(vid) || isBlacklisted(vid) || queued.has(clean) || applied.has(clean) || queuedBefore.has(clean) || skippedBefore.has(clean)) continue;
       if ((Number(visits[clean]) || 0) >= MAX_VACANCY_ATTEMPTS) {
         hhaLog('warn', 'vacancy_repeat_blocked', { vid, visits: Number(visits[clean]) });
         markVacancyProcessed(vid, runId);
@@ -3248,11 +3513,39 @@ function cleanVacancyTitle(raw) {
 
     const nextBtn = query('pagerNext');
     if (nextBtn) {
+      const loop = searchPagesGoRound();
+      if (loop) return finalizeRun(runId, 'done', `${loop} Всего отправлено: ${getSentCount()}`);
       await navigateToNextSearchPage(nextBtn, runId);
       return;
     }
     const finalSent = getSentCount();
     return finalizeRun(runId, 'done', `Все вакансии в выдаче обработаны. Всего отправлено: ${finalSent}`);
+  }
+
+  // The results pages this run left for the next one, by the vacancies on them. A page
+  // that comes again (hh.ru shows the last page for every number past the end) means the
+  // results go round; the run used to page on forever. hh.ru shows at most 2000 vacancies,
+  // so more pages than MAX_RUN_PAGES are a loop as well.
+  const MAX_RUN_PAGES = 150;
+  function searchPagesGoRound() {
+    const ids = qa(SELECTORS.vacancyCard)
+      .map((c) => getVacancyIDFromHref(q('a[href*="/vacancy/"]', c)?.href))
+      .filter(Boolean);
+    if (!ids.length) return '';
+    const sig = hashString(ids.sort().join(','));
+    const stored = parseJson(storage.sessionGet(KEYS.runPages), []);
+    const pages = Array.isArray(stored) ? stored.filter((v) => typeof v === 'string') : [];
+    if (pages.includes(sig)) {
+      hhaLog('warn', 'search_loop', { page: globalThis.location?.search || '', pages: pages.length });
+      return 'Выдача пошла по кругу: страница повторяет уже пройденную.';
+    }
+    if (pages.length >= MAX_RUN_PAGES) {
+      hhaLog('warn', 'search_loop', { page: globalThis.location?.search || '', pages: pages.length });
+      return `Пройдено ${MAX_RUN_PAGES} страниц выдачи, дальше hh.ru вакансий не показывает.`;
+    }
+    pages.push(sig);
+    storage.sessionSet(KEYS.runPages, JSON.stringify(pages));
+    return '';
   }
 
   async function processCurrentPage(runId) {
@@ -3525,13 +3818,26 @@ function cleanVacancyTitle(raw) {
   function bootstrap() {
     if (watchdogIntervalId === null) {
       let lastTickTs = Date.now();
+      let lastDateKey = getLocalDateKey();
       watchdogIntervalId = setInterval(() => {
         const now = Date.now();
+        const gap = now - lastTickTs;
         // Logged before the tick, so a stall reload right after a sleep shows its cause.
-        if (now - lastTickTs > TIMER_GAP_MS && isRunning()) {
-          hhaLog('warn', 'timer_gap', { gapMs: now - lastTickTs, hidden: Boolean(globalThis.document?.hidden) });
+        if (gap > TIMER_GAP_MS && isRunning()) {
+          hhaLog('warn', 'timer_gap', { gapMs: gap, hidden: Boolean(globalThis.document?.hidden) });
         }
+        // A tick seconds late means no timer of the page ran meanwhile: a background tab
+        // that Chrome throttles to one timer a minute, or a sleep. The run's own waits were
+        // just as late, so that time is not a hang: counted as one, it failed vacancies in a
+        // background tab and sent them to the queue.
+        if (gap > TICK_LATE_MS) markProgress();
         lastTickTs = now;
+        // The counter is per day: at midnight the HUD shows the new day's count at once.
+        const dateKey = getLocalDateKey();
+        if (dateKey !== lastDateKey) {
+          lastDateKey = dateKey;
+          emitProgress();
+        }
         try { watchdogTick(); } catch (e) { console.warn('[HH] Watchdog tick error:', e); }
       }, 1000);
     }
@@ -3559,7 +3865,8 @@ function cleanVacancyTitle(raw) {
         const now = Date.now();
         if (lock && isLiveLock(lock, now) && lock.tabId !== TAB_ID) {
           setRunning(false);
-          setStatus('idle', 'TAB_BUSY', { message: 'Другая вкладка уже активна' });
+          setStatus('error', 'TAB_BUSY', { message: 'Другая вкладка уже активна' });
+          reportError('Другая вкладка уже выполняет отклики. Запуск в текущей вкладке отменен.', 'TAB_BUSY');
           return;
         }
       }
@@ -3571,6 +3878,11 @@ function cleanVacancyTitle(raw) {
       }, 1500);
     }
     if (!Page.isResponseForm()) clearTrapLock();
+    // Stopped while waiting for hh.ru, then reloaded: the response may show up now.
+    if (!isRunning()) {
+      const pending = readInflight();
+      if (pending) watchLateResponse(pending);
+    }
 
     // A vacancy from the manual queue: mark it viewed, and take it off the queue once
     // the page shows a response. A run in this tab skips queued vacancies by itself.
@@ -3598,30 +3910,14 @@ function cleanVacancyTitle(raw) {
 
   const win = globalThis.window;
   if (win && typeof win.addEventListener === 'function') {
+    // An error is this script's when its stack goes through this script's file. Names of
+    // functions like queryAll or startLoop also turned up in errors of the page and of
+    // other extensions, and the HUD showed them as its own failure.
     function isUserscriptOrigin(filename, stack) {
       if (!filename && !stack) return false;
       const combined = `${filename || ''}\n${stack || ''}`;
-      if (/hh\.ru\/(?:js|static|web\/build)|yandex|google|sentry|mail\.ru|criteo|doubleclick/i.test(combined) &&
-          !/hh-apply-assistant|HhaHud|HHApplyAssistant/i.test(combined)) {
-        return false;
-      }
-      const scriptMarkers = [
-        'hh-apply-assistant',
-        'HHApplyAssistant',
-        'HhaHud',
-        'hha-hud',
-        'submitResponsePage',
-        'watchdogTick',
-        'startLoop',
-        'handleVacancyPage',
-        'clickElement',
-        'waitForCondition',
-        'queryAll',
-        'tampermonkey',
-        'violentmonkey',
-        'greasemonkey'
-      ];
-      return scriptMarkers.some(m => combined.includes(m));
+      if (OWN_SCRIPT_URL && combined.includes(OWN_SCRIPT_URL)) return true;
+      return /hh-apply-assistant|HHApplyAssistant|HhaHudElement/.test(combined);
     }
 
     addGlobalListener(win, 'error', (event) => {
