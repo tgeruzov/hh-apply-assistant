@@ -5065,10 +5065,6 @@ function cleanVacancyTitle(raw) {
         visibility 0s linear 0s;
     }
 
-    .hha-root.has-error .hha-panel[data-panel="settings"] {
-      overflow: hidden !important;
-    }
-
     .hha-panels.slide-forward .hha-panel:not(.active) {
       transform: translate3d(calc(-1 * var(--hha-motion-tab-shift, 6px)), 0, 0);
     }
@@ -5490,17 +5486,24 @@ function cleanVacancyTitle(raw) {
     }
 
     /* 9. Error Card */
+    .hha-error-slot {
+      flex-shrink: 0;
+      padding: 10px var(--hha-content-padding-x, 12px) 0;
+      box-sizing: border-box;
+    }
+
+    .hha-error-slot[hidden] {
+      display: none;
+    }
+
     .hha-card-error {
-      flex: 1;
-      height: 100%;
-      min-height: 0;
-      max-height: 100%;
+      max-height: 230px;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      gap: 10px;
+      gap: 8px;
       box-sizing: border-box;
-      padding: 14px 16px;
+      padding: 12px 14px;
       margin-bottom: 0 !important;
       background: var(--md-sys-color-error-container);
       border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent);
@@ -5610,9 +5613,10 @@ function cleanVacancyTitle(raw) {
       height: 32px;
       padding: 0 14px;
       border-radius: var(--md-sys-shape-corner-full);
-      background: transparent;
+      /* White on the tinted banner: a transparent button read as plain text there. */
+      background: var(--md-sys-color-surface-container-lowest);
       color: var(--md-sys-color-on-surface-variant);
-      border: 1px solid var(--md-sys-color-outline-variant);
+      border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent);
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-label-medium-size);
       font-weight: 500;
@@ -5648,8 +5652,10 @@ function cleanVacancyTitle(raw) {
       height: 32px;
       padding: 0 18px;
       border-radius: var(--md-sys-shape-corner-full);
-      background: var(--md-sys-color-on-surface);
-      color: var(--md-sys-color-surface);
+      /* The same role as Старт: it starts the run again. */
+      background: var(--md-sys-color-primary);
+      color: var(--md-sys-color-on-primary);
+      box-shadow: var(--md-sys-elevation-level1);
       border: none;
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-label-medium-size);
@@ -5658,11 +5664,13 @@ function cleanVacancyTitle(raw) {
       cursor: pointer;
       box-sizing: border-box;
       transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+                  box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
                   transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
     }
 
     .hha-card-error-actions .hha-btn-dismiss-error:hover {
-      background: color-mix(in srgb, var(--md-sys-color-on-surface) 88%, transparent);
+      background: color-mix(in srgb, var(--md-sys-color-primary) 92%, var(--md-sys-color-on-primary));
+      box-shadow: var(--md-sys-elevation-level2);
     }
 
     .hha-card-error-actions .hha-btn-dismiss-error:active {
@@ -5738,8 +5746,8 @@ function cleanVacancyTitle(raw) {
       font-size: var(--md-sys-typescale-body-small-size);
       font-weight: 400;
       line-height: var(--md-sys-typescale-body-small-line-height);
-      padding: 4px 8px;
-      border-radius: var(--md-sys-shape-corner-extra-small);
+      padding: 6px 10px;
+      border-radius: var(--md-sys-shape-corner-small);
       max-width: 260px;
       width: max-content;
       white-space: pre-line;
@@ -6191,8 +6199,9 @@ function cleanVacancyTitle(raw) {
 
   // --- 4. Web Component Implementation (Closed Shadow DOM) ---
 
-  // Panel height per tab: header, content, the log row and the footer.
-  const FLYOUT_HEIGHT = { settings: 352, queue: 552 };
+  // Panel height per tab: header, content, the log row and the footer. The letter tab
+  // shows about ten lines of the letter; an error banner adds its own height on top.
+  const FLYOUT_HEIGHT = { settings: 452, queue: 552 };
 
   class HhaHudElement extends HTMLElement {
     // Private, so page scripts cannot reach the engine or the closed shadow root through
@@ -6704,7 +6713,7 @@ function cleanVacancyTitle(raw) {
       const minX = padding + halfW;
       const maxX = Math.max(minX, winW - padding - halfW);
 
-      const baseH = FLYOUT_HEIGHT[this._activeTab] || FLYOUT_HEIGHT.settings;
+      const baseH = this._flyoutHeight();
       const gap = 8;
       const pillH = 36;
       const maxFlyoutH = Math.max(120, winH - 100);
@@ -6749,6 +6758,22 @@ function cleanVacancyTitle(raw) {
               <button type="button" class="hha-btn-collapse" data-action="collapse-island" aria-label="Свернуть панель" title="Свернуть">${ICONS.close(18)}</button>
             </header>
 
+            <!-- Error banner: above both tabs, it does not hide the letter or switch the tab -->
+            <div class="hha-error-slot" data-el="error-slot" hidden>
+              <div class="hha-card-error" data-el="error-card">
+                <div class="hha-card-error-body" data-el="error-card-body">
+                  <div class="hha-card-error-title" data-el="error-card-title"></div>
+                  <div class="hha-card-error-desc" data-el="error-card-desc"></div>
+                  <div class="hha-card-error-hint" data-el="error-card-hint"></div>
+                  <div class="hha-card-error-code" data-el="error-card-code"></div>
+                </div>
+                <div class="hha-card-error-actions">
+                  <button type="button" class="hha-btn-copy-error" data-action="copy-last-error" data-el="error-copy-btn" data-tooltip="Скопировать отчёт об ошибке для issue на GitHub">Скопировать</button>
+                  <button type="button" class="hha-btn-dismiss-error" data-action="resolve-error" data-el="error-resolve-btn">Понятно</button>
+                </div>
+              </div>
+            </div>
+
             <!-- Floating Tooltip -->
             <div class="hha-tooltip" data-el="tooltip"></div>
 
@@ -6780,18 +6805,6 @@ function cleanVacancyTitle(raw) {
                   </div>
                 </div>
 
-                <div class="hha-card hha-card-error" data-el="error-card" style="display: none;">
-                  <div class="hha-card-error-body" data-el="error-card-body">
-                    <div class="hha-card-error-title" data-el="error-card-title"></div>
-                    <div class="hha-card-error-desc" data-el="error-card-desc"></div>
-                    <div class="hha-card-error-hint" data-el="error-card-hint"></div>
-                    <div class="hha-card-error-code" data-el="error-card-code"></div>
-                  </div>
-                  <div class="hha-card-error-actions">
-                    <button type="button" class="hha-btn-copy-error" data-action="copy-last-error" data-el="error-copy-btn" title="Скопировать детали ошибки">Скопировать</button>
-                    <button type="button" class="hha-btn-dismiss-error" data-action="resolve-error" data-el="error-resolve-btn">Понятно</button>
-                  </div>
-                </div>
               </div>
 
               <!-- Tab 2: Queue (Очередь) -->
@@ -7060,7 +7073,6 @@ function cleanVacancyTitle(raw) {
           if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
             e.preventDefault();
             e.stopPropagation();
-            if (!this._isExpanded) this.setActiveTab('settings');
             this.toggleExpand();
           }
         });
@@ -7225,11 +7237,16 @@ function cleanVacancyTitle(raw) {
         url: details.url || window.location.href
       };
 
-      this.setActiveTab('settings');
+      // The banner sits above both tabs: the tab the user is on stays, the letter stays editable.
       this._syncErrorCard();
       const errorBody = this.#shadow?.querySelector('[data-el="error-card-body"]');
       if (errorBody) errorBody.scrollTop = 0;
-      this._updatePosition();
+    }
+
+    // The panel height for the open tab, plus the error banner while it is shown.
+    _flyoutHeight() {
+      const base = FLYOUT_HEIGHT[this._activeTab] || FLYOUT_HEIGHT.settings;
+      return base + (this._lastErrorPayload ? (this._errorSlotHeight || 0) : 0);
     }
 
     _syncErrorCard() {
@@ -7239,9 +7256,13 @@ function cleanVacancyTitle(raw) {
 
       el('root')?.classList.toggle('has-error', Boolean(err));
       el('pill-status-group')?.classList.toggle('has-error', Boolean(err));
-      el('cover-card').style.display = err ? 'none' : '';
-      el('error-card').style.display = err ? '' : 'none';
-      if (!err) return;
+      const slot = el('error-slot');
+      const wasShown = slot && !slot.hidden;
+      if (slot) slot.hidden = !err;
+      if (!err) {
+        if (wasShown) this._relayout();
+        return;
+      }
 
       const { title, desc } = parseErrorDetails(err.code, err.message);
       const hint = ERROR_HINTS[err.code] || REPORT_HINT;
@@ -7252,6 +7273,24 @@ function cleanVacancyTitle(raw) {
       el('error-card-code').textContent = `Код: ${err.code}` + (err.details?.vid ? ` [вакансия #${err.details.vid}]` : '');
       // A stopped run is restarted from the card in one click; otherwise the card only closes.
       el('error-resolve-btn').textContent = this._status.status === 'error' ? 'Продолжить' : 'Понятно';
+      // The panel grows by the banner, so the letter and the queue keep their room.
+      const h = slot ? slot.offsetHeight : 0;
+      if (h !== this._errorSlotHeight || !wasShown) {
+        this._errorSlotHeight = h;
+        this._relayout();
+      }
+    }
+
+    // After a panel height change: the pill moves if the taller panel would leave the
+    // window, back to its place otherwise, and the panel takes the new height.
+    _relayout() {
+      const pos = this._placePill();
+      if (pos.x !== this._pillPos.x || pos.y !== this._pillPos.y) {
+        this._pillPos = pos;
+        const root = this.#shadow?.querySelector('[data-el="root"]');
+        if (root) this._animateSnap(root);
+      }
+      this._updatePosition();
     }
 
     _resolveError() {
@@ -7277,7 +7316,6 @@ function cleanVacancyTitle(raw) {
       this._lastErrorPayload = null;
       if (!this.#shadow) return;
       this._syncErrorCard();
-      this._updatePosition();
 
       const copyBtn = this.#shadow.querySelector('[data-el="error-copy-btn"]');
       if (copyBtn) {
@@ -7770,7 +7808,7 @@ function cleanVacancyTitle(raw) {
       const flyoutMaxW = 390;
       const halfW = flyoutMaxW / 2;
       const padding = 16;
-      const flyoutH = FLYOUT_HEIGHT[this._activeTab] || FLYOUT_HEIGHT.settings;
+      const flyoutH = this._flyoutHeight();
       const gap = 8;
       const pillH = 36;
       const maxFlyoutH = Math.max(120, winH - 100);
@@ -7924,7 +7962,7 @@ function cleanVacancyTitle(raw) {
       if (!this._isPointerDown && typeof root.style.setProperty === 'function') {
         const pillWidth = this._getPillWidth();
         root.style.setProperty('--pill-width', `${pillWidth}px`);
-        const baseH = FLYOUT_HEIGHT[this._activeTab] || FLYOUT_HEIGHT.settings;
+        const baseH = this._flyoutHeight();
         const maxFlyoutH = Math.max(120, winH - 100);
         const finalH = Math.min(baseH, maxFlyoutH);
         root.style.setProperty('--flyout-height', `${finalH}px`);
