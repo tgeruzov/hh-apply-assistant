@@ -4983,15 +4983,15 @@ function cleanVacancyTitle(raw) {
     .hha-pill-status-group:focus-visible,
     .hha-tab-btn:focus-visible,
     .hha-btn-quick:focus-visible,
-    .hha-queue-title-link:focus-visible {
+    .hha-queue-title-link:focus-visible,
+    .hha-btn-dismiss-error:focus-visible {
       outline: none;
       box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary);
     }
 
     .hha-log-item-delete:focus-visible,
     .hha-btn-clear-all:focus-visible,
-    .hha-btn-copy-error:focus-visible,
-    .hha-btn-dismiss-error:focus-visible {
+    .hha-btn-copy-error:focus-visible {
       outline: none;
       box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-error);
     }
@@ -6316,7 +6316,6 @@ function cleanVacancyTitle(raw) {
           if (root) root.classList.add('is-expanded');
           if (statusGroup) {
             statusGroup.setAttribute('aria-expanded', 'true');
-            statusGroup.setAttribute('aria-label', 'Свернуть панель управления');
           }
           this._updatePosition();
           if (typeof requestAnimationFrame === 'function') {
@@ -6433,6 +6432,7 @@ function cleanVacancyTitle(raw) {
       }
 
       this._syncAll();
+      this._countsReady = true;
     }
 
     unbindAssistant() {
@@ -6501,7 +6501,6 @@ function cleanVacancyTitle(raw) {
         const statusGroup = this.#shadow.querySelector('[data-el="pill-status-group"]');
         if (statusGroup) {
           statusGroup.setAttribute('aria-expanded', String(this._isExpanded));
-          statusGroup.setAttribute('aria-label', this._isExpanded ? 'Свернуть панель управления' : 'Открыть настройки и очередь');
         }
         if (pill && typeof pill.offsetWidth === 'number' && pill.offsetWidth > 0 && pill.offsetWidth < 300) {
           this._collapsedPillWidth = pill.offsetWidth;
@@ -6522,6 +6521,30 @@ function cleanVacancyTitle(raw) {
           if (typeof requestAnimationFrame === 'function') {
             requestAnimationFrame(() => this._updateTabIndicator());
           }
+        }
+
+        // The switch hides the focused control (the pill counter when the panel opens,
+        // anything in the panel when it closes); focus moves to its counterpart, or a
+        // keyboard user is left on the page body. The counterpart stays hidden for a few
+        // frames of its visibility transition and cannot take focus until then.
+        const focused = this.#shadow.activeElement;
+        let focusTarget = null;
+        if (focused && next && pill && pill.contains(focused)) {
+          focusTarget = this.#shadow.querySelector('.hha-tab-btn.active');
+        } else if (focused && !next && flyout && flyout.contains(focused)) {
+          focusTarget = statusGroup;
+        }
+        if (focusTarget && typeof requestAnimationFrame === 'function') {
+          const until = Date.now() + 600;
+          const tryFocus = () => {
+            if (this._isExpanded !== next) return;
+            if (getComputedStyle(focusTarget).visibility === 'visible') {
+              focusTarget.focus({ preventScroll: true });
+            } else if (Date.now() < until) {
+              requestAnimationFrame(tryFocus);
+            }
+          };
+          requestAnimationFrame(tryFocus);
         }
 
         if (this._animTimer) clearTimeout(this._animTimer);
@@ -6608,6 +6631,7 @@ function cleanVacancyTitle(raw) {
         const isActive = t.dataset.tab === tabName;
         t.classList.toggle('active', isActive);
         t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        t.tabIndex = isActive ? 0 : -1;
       });
 
       const panels = this.#shadow.querySelectorAll('.hha-panel');
@@ -6774,19 +6798,22 @@ function cleanVacancyTitle(raw) {
               </div>
             </div>
 
+            <!-- Screen reader announcements: stops, limits, the end of the results -->
+            <div class="hha-sr-only" data-el="announcer" role="status" aria-live="polite"></div>
+
             <!-- Floating Tooltip -->
             <div class="hha-tooltip" data-el="tooltip"></div>
 
             <!-- Panels -->
             <div class="hha-panels">
               <!-- Tab 1: Settings / Cover (Письмо) -->
-              <div class="hha-panel ${this._activeTab === 'settings' ? 'active' : ''}" data-panel="settings"${this._activeTab === 'settings' ? '' : ' aria-hidden="true" inert'}>
+              <div class="hha-panel ${this._activeTab === 'settings' ? 'active' : ''}" data-panel="settings" id="hha-panel-settings" role="tabpanel" aria-labelledby="hha-tab-settings"${this._activeTab === 'settings' ? '' : ' aria-hidden="true" inert'}>
                 <div class="hha-card hha-card-cover" data-el="cover-card">
                   <div class="hha-switch-row">
                     <label class="hha-switch-label" for="hha-use-cover-input">
                       <span class="hha-row-label">Отправлять сопроводительное письмо</span>
                       <span class="hha-switch">
-                        <input type="checkbox" id="hha-use-cover-input" class="hha-switch-input" data-el="setting-use-cover"${this._config.useCover ? ' checked' : ''}>
+                        <input type="checkbox" role="switch" id="hha-use-cover-input" class="hha-switch-input" data-el="setting-use-cover"${this._config.useCover ? ' checked' : ''}>
                         <span class="hha-switch-slider"></span>
                       </span>
                     </label>
@@ -6808,7 +6835,7 @@ function cleanVacancyTitle(raw) {
               </div>
 
               <!-- Tab 2: Queue (Очередь) -->
-              <div class="hha-panel ${this._activeTab === 'queue' ? 'active' : ''}" data-panel="queue"${this._activeTab === 'queue' ? '' : ' aria-hidden="true" inert'}>
+              <div class="hha-panel ${this._activeTab === 'queue' ? 'active' : ''}" data-panel="queue" id="hha-panel-queue" role="tabpanel" aria-labelledby="hha-tab-queue"${this._activeTab === 'queue' ? '' : ' aria-hidden="true" inert'}>
                 <div class="hha-log-card">
                   <div class="hha-queue-toolbar">
                     <span class="hha-queue-toolbar-title" data-el="queue-toolbar-title">Ручной отклик</span>
@@ -6852,8 +6879,8 @@ function cleanVacancyTitle(raw) {
               </div>
               <div class="hha-tabs" data-active="${this._activeTab}" role="tablist" aria-label="Разделы панели">
                 <div class="hha-tab-indicator" data-el="tab-indicator" aria-hidden="true"></div>
-                <button type="button" class="hha-tab-btn ${this._activeTab === 'settings' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'settings' ? 'true' : 'false'}" data-action="switch-tab" data-tab="settings"><span>Письмо</span></button>
-                <button type="button" class="hha-tab-btn ${this._activeTab === 'queue' ? 'active' : ''}" role="tab" aria-selected="${this._activeTab === 'queue' ? 'true' : 'false'}" data-action="switch-tab" data-tab="queue"><span>Очередь</span></button>
+                <button type="button" class="hha-tab-btn ${this._activeTab === 'settings' ? 'active' : ''}" id="hha-tab-settings" role="tab" aria-controls="hha-panel-settings" aria-selected="${this._activeTab === 'settings' ? 'true' : 'false'}" tabindex="${this._activeTab === 'settings' ? '0' : '-1'}" data-action="switch-tab" data-tab="settings"><span>Письмо</span></button>
+                <button type="button" class="hha-tab-btn ${this._activeTab === 'queue' ? 'active' : ''}" id="hha-tab-queue" role="tab" aria-controls="hha-panel-queue" aria-selected="${this._activeTab === 'queue' ? 'true' : 'false'}" tabindex="${this._activeTab === 'queue' ? '0' : '-1'}" data-action="switch-tab" data-tab="queue"><span>Очередь</span></button>
               </div>
               <div class="hha-footer-actions">
                 <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="footer-quick-btn">
@@ -7077,6 +7104,27 @@ function cleanVacancyTitle(raw) {
           }
         });
       }
+
+      const tablist = this.#shadow.querySelector('[role="tablist"]');
+      if (tablist) {
+        tablist.addEventListener('keydown', (e) => {
+          const order = ['settings', 'queue'];
+          const idx = order.indexOf(this._activeTab);
+          const next = { ArrowRight: idx + 1, ArrowLeft: idx - 1, Home: 0, End: order.length - 1 }[e.key];
+          if (next === undefined) return;
+          e.preventDefault();
+          const tab = order[(next + order.length) % order.length];
+          this.setActiveTab(tab);
+          this.#shadow.querySelector(`.hha-tab-btn[data-tab="${tab}"]`)?.focus({ preventScroll: true });
+        });
+      }
+
+      // Tooltips also for the keyboard: shown on focus that came from the keyboard.
+      root.addEventListener('focusin', (e) => {
+        const target = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-tooltip]') : null;
+        if (target && typeof target.matches === 'function' && target.matches(':focus-visible')) this._showTooltip(target);
+      });
+      root.addEventListener('focusout', () => this._hideTooltip());
 
       this._bindFormEvents();
       this._bindDocumentEvents();
@@ -8095,6 +8143,29 @@ function cleanVacancyTitle(raw) {
       }
       if (this._lastErrorPayload) this._syncErrorCard();
       this._syncStatusLine();
+      this._announceStatus();
+    }
+
+    // Screen readers hear a run start and stop, not each step: the step line changes every
+    // second during a pause. Values a page gets on load are not announced.
+    _announceStatus() {
+      const { status, code } = this._status;
+      const key = `${status}/${code}`;
+      if (key === this._announcedKey) return;
+      const prev = this._announcedKey;
+      this._announcedKey = key;
+      if (!this._countsReady || !prev) return;
+      let text = '';
+      if (status === 'running') text = prev.startsWith('running/') ? '' : 'Автоматизация запущена';
+      else if (status === 'error') text = this._stopReason().line;
+      else if (code === 'DAILY_LIMIT_REACHED') text = 'Лимит hh.ru исчерпан, автоматизация остановлена';
+      else if (code === 'COMPLETED') text = `Отправлено ${MAX_DAILY_LIMIT} откликов, дневной лимит скрипта`;
+      else if (status === 'done') text = 'Вакансии в выдаче закончились';
+      else if (status === 'stopped') text = 'Автоматизация остановлена';
+      const box = this.#shadow?.querySelector('[data-el="announcer"]');
+      if (!text || !box) return;
+      box.textContent = '';
+      setTimeout(() => { box.textContent = text; }, 50);
     }
 
     _syncProgress() {
@@ -8276,12 +8347,12 @@ function cleanVacancyTitle(raw) {
       const badgeType = questions ? 'info' : reasonInfo.type;
 
       return `
-        <div class="hha-queue-card ${isViewed ? 'is-viewed' : ''}${isRemoving ? ' is-removing' : ''}" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-url="${escapeHtml(targetUrl || '#')}" role="link" tabindex="0" title="Открыть вакансию в новой вкладке">
+        <div class="hha-queue-card ${isViewed ? 'is-viewed' : ''}${isRemoving ? ' is-removing' : ''}" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-url="${escapeHtml(targetUrl || '#')}">
           <div class="hha-queue-card-top">
-            <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="${escapeHtml(displayTitle)}">
+            <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="${escapeHtml(displayTitle)}. Откроется в новой вкладке">
               <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
             </a>
-            <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Удалить из очереди" aria-label="Удалить из очереди">${ICONS.close(14)}</button>
+            <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Убрать из очереди" aria-label="Убрать из очереди: ${escapeHtml(displayTitle)}">${ICONS.close(14)}</button>
           </div>
           ${displayEmployer ? `
           <div class="hha-queue-card-mid">
