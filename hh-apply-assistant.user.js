@@ -404,12 +404,18 @@ function cleanVacancyTitle(raw) {
     try { return JSON.parse(raw); } catch (_) { return fallback; }
   };
 
+  // A local address counts only on a local page, that is in a mock of hh.ru. On hh.ru a
+  // stored link to localhost (the queue is in localStorage, open to the page's scripts)
+  // would open a local service, and an apply button with one would be followed.
+  const LOCAL_HOST_RE = /^(?:localhost|127\.0\.0\.1)$/i;
   function toSafeHhUrl(rawUrl) {
     if (!rawUrl) return '';
     try {
       const base = globalThis.location?.href || 'https://hh.ru';
       const u = new URL(String(rawUrl), base);
-      return (['http:', 'https:'].includes(u.protocol) && /(^|\.)(hh\.ru|localhost|127\.0\.0\.1)$/i.test(u.hostname)) ? u.href : '';
+      const isHh = /(^|\.)hh\.ru$/i.test(u.hostname);
+      const isLocal = LOCAL_HOST_RE.test(u.hostname) && LOCAL_HOST_RE.test(globalThis.location?.hostname || '');
+      return (['http:', 'https:'].includes(u.protocol) && (isHh || isLocal)) ? u.href : '';
     } catch (_) {
       return '';
     }
@@ -2682,9 +2688,10 @@ function cleanVacancyTitle(raw) {
       if (last && last !== vid) markVacancyProcessed(last, runId);
     }
     clearLastAttemptID();
-    const rawReturn = getReturnUrl();
+    // The stored address is checked like the next results page: hh.ru search only. Any
+    // address on http used to pass, and session storage is open to the page's scripts.
     const origin = globalThis.location?.origin || 'https://hh.ru';
-    const returnUrl = (rawReturn && (rawReturn.includes('/search/vacancy') || rawReturn.startsWith('http') || rawReturn.startsWith('/'))) ? rawReturn : `${origin}/search/vacancy`;
+    const returnUrl = toSearchListUrl(getReturnUrl()) || `${origin}/search/vacancy`;
     const loc = globalThis.location;
     if (loc && !Page.isSearchList() && loc.href !== returnUrl) {
       isNavigating = true;
