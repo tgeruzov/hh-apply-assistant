@@ -8015,9 +8015,12 @@ function cleanVacancyTitle(raw) {
         }
       }
       const text = lines.join('\n');
-      this._copyText(text);
-
-      if (btnEl) {
+      // As with the log: when the browser refuses the clipboard, the report goes to the
+      // console and the button says so. It used to say "Скопировано" over an empty clipboard.
+      this._copyText(text).then((ok) => {
+        const copied = ok !== false;
+        if (!copied) console.info(text);
+        if (!btnEl) return;
         if (this._copyErrorTimer) {
           clearTimeout(this._copyErrorTimer);
           this._copyErrorTimer = null;
@@ -8026,15 +8029,15 @@ function cleanVacancyTitle(raw) {
           if (!btnEl.dataset) btnEl.dataset = {};
           btnEl.dataset.origText = btnEl.textContent || 'Скопировать';
         }
-        btnEl.classList.add('is-copied');
-        btnEl.textContent = 'Скопировано';
+        btnEl.classList.toggle('is-copied', copied);
+        btnEl.textContent = copied ? 'Скопировано' : 'Не вышло, отчёт в консоли';
         this._copyErrorTimer = setTimeout(() => {
           btnEl.classList.remove('is-copied');
           btnEl.textContent = (btnEl.dataset && btnEl.dataset.origText) || 'Скопировать';
           if (btnEl.dataset) delete btnEl.dataset.origText;
           this._copyErrorTimer = null;
         }, 1800);
-      }
+      });
     }
 
     // The entry count is read when the panel opens, not on every log write.
