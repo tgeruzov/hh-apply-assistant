@@ -52,7 +52,8 @@ const formatCleanSalary = (raw) => {
   if (!raw) return '';
   return collapseSpaces(
     String(raw)
-      .replace(/(?:до\s+вычета\s+(?:налогов|ндфл)|на\s+руки|за\s+месяц|за\s+\d+\s+смен\w*|после\s+вычета|gross|net)/gi, '')
+      // [а-яё], not \w: without the u flag \w is Latin only, and "за 1 смену" left a stray "у".
+      .replace(/(?:до\s+вычета\s+(?:налогов|ндфл)|на\s+руки|за\s+месяц|за\s+\d+\s+смен[а-яё]*|после\s+вычета|gross|net)/gi, '')
       .replace(/[,.]\s*$/g, '')
   );
 };
