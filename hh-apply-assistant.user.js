@@ -1971,7 +1971,9 @@ function cleanVacancyTitle(raw) {
   }
 
   // --- Form Input Dispatch ---
-  function fillTextarea(el, value) {
+  // inputType says how the text came: insertText for typing, insertFromPaste for a paste,
+  // which has no data of its own (the text is in the clipboard).
+  function fillTextarea(el, value, inputType = 'insertText') {
     try {
       if (typeof el.focus === 'function') el.focus();
       if (el._valueTracker?.setValue) {
@@ -1988,7 +1990,7 @@ function cleanVacancyTitle(raw) {
       if (clone) clone.textContent = value || '\u200B';
 
       try {
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, cancelable: true, data: value, inputType: 'insertText' }));
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, cancelable: true, data: inputType === 'insertText' ? value : null, inputType }));
       } catch (_) {
         el.dispatchEvent(new Event('input', { bubbles: true, composed: true, cancelable: true }));
       }
@@ -2853,10 +2855,17 @@ function cleanVacancyTitle(raw) {
       hhaLog('warn', 'letter_field_missing', { vid: cleanVid(resolveCurrentVid()), scope: scope && scope.nodeType === 1 ? describeElement(scope) : 'document' });
     }
     if (ta && letter !== null) {
-      fillTextarea(ta, letter);
+      // Nobody types the same letter for every vacancy: it is pasted, a moment after the
+      // field is clicked, and read over before the submit.
+      if (PACE.on) {
+        try { ta.focus(); } catch (_) {}
+        await wait(randIn(PACE.letterBeforeMs));
+        if (!isRunCurrent(runId)) return false;
+      }
+      fillTextarea(ta, letter, PACE.on ? 'insertFromPaste' : 'insertText');
       letterFilledVid = cleanVid(resolveCurrentVid());
       hhaLog('info', 'letter_filled', { vid: letterFilledVid, page: Page.isResponseForm() ? 'response_form' : 'vacancy' });
-      await actionPause();
+      await (PACE.on ? wait(randIn(PACE.letterAfterMs)) : actionPause());
       if (!isRunCurrent(runId)) return false;
     }
     const submit = query('letterSubmit', scope) || findResponseFormSubmit(scope);
