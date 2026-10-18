@@ -13,6 +13,7 @@
 // @match        https://*.hh.ru/vacancy/*
 // @match        https://*.hh.ru/applicant/vacancy_response*
 // @match        https://*.hh.ru/article/*
+// @match        https://*.hh.ru/vrsurvey/*
 // @noframes
 // @grant        none
 // @run-at       document-idle
@@ -2154,7 +2155,9 @@ function cleanVacancyTitle(raw) {
     isResponseForm: () => Boolean(globalThis.location?.pathname?.startsWith('/applicant/vacancy_response')),
     isSearchList: () => Boolean(globalThis.location?.pathname?.startsWith('/search/vacancy')),
     isSearch: () => Boolean(globalThis.location?.pathname?.startsWith('/search')),
-    isArticle: () => Boolean(globalThis.location?.pathname?.startsWith('/article/'))
+    // Promo pages of employers: an article, or a survey hh.ru sends a vacancy to at once
+    // (/vrsurvey/iteko_drivers?...utm_redirect_vacancy_id=..., 2026-10-18).
+    isArticle: () => /^\/(?:article|vrsurvey)\//.test(globalThis.location?.pathname || '')
   };
 
   function isLeadGenRedirect() {
