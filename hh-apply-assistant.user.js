@@ -3000,6 +3000,8 @@ function cleanVacancyTitle(raw) {
       6000,
       activeAbortController?.signal
     );
+    // A stop meanwhile (a captcha, Стоп): no failed submit and no attempt to count.
+    if (!isRunCurrent(runId)) return 'STOPPED';
     if (confirmed === 'DAILY_LIMIT' || detectDailyLimit()) {
       haltForDailyLimit();
       return 'BLOCKED';
@@ -3277,6 +3279,11 @@ function cleanVacancyTitle(raw) {
           // Counted while the run was stopped, when the page showed it.
           markVacancyProcessed(vid, runId);
           letterOwed = Boolean(late.letterOwed);
+        } else if (vid && getAppliedHistorySet().has(cleanVid(vid))) {
+          // A response the script has already counted: the page came again, for one by the
+          // browser's Back button during a run. Not a skip "already applied" a second time.
+          markVacancyProcessed(vid, runId);
+          hhaLog('info', 'already_counted', { vid: cleanVid(vid) });
         } else if (vid) {
           rememberApplied(vid);
           skipVacancy(vid, 'already_applied', runId);
@@ -3392,6 +3399,7 @@ function cleanVacancyTitle(raw) {
         6000,
         activeAbortController?.signal
       );
+      if (!isRunCurrent(runId)) return;
       if (confirmed === 'DAILY_LIMIT' || detectDailyLimit()) {
         haltForDailyLimit();
         return;
