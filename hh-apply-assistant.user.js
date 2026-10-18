@@ -4351,8 +4351,8 @@ function cleanVacancyTitle(raw) {
     inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`
   };
 
-  // The running segment of Стоп (see .hha-btn-sweep in the stylesheet).
-  const BTN_SWEEP = '<svg class="hha-btn-sweep" viewBox="0 0 76 32" preserveAspectRatio="none" aria-hidden="true" focusable="false"><rect x="0.75" y="0.75" width="74.5" height="30.5" rx="15.25" pathLength="100"></rect></svg>';
+  // The ring of the round Стоп (see .hha-btn-sweep in the stylesheet).
+  const BTN_SWEEP = '<svg class="hha-btn-sweep" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><circle class="hha-ring-track" cx="16" cy="16" r="15"></circle><circle class="hha-ring-arc" cx="16" cy="16" r="15" pathLength="100" transform="rotate(-90 16 16)"></circle></svg>';
 
   // --- 3. Shadow DOM Stylesheet ---
 
@@ -4763,6 +4763,10 @@ function cleanVacancyTitle(raw) {
       position: relative;
       overflow: hidden;
       transition:
+        width 280ms var(--md-sys-motion-easing-standard),
+        min-width 280ms var(--md-sys-motion-easing-standard),
+        max-width 280ms var(--md-sys-motion-easing-standard),
+        flex-basis 280ms var(--md-sys-motion-easing-standard),
         background-color 180ms var(--md-sys-motion-easing-standard),
         color 180ms var(--md-sys-motion-easing-standard),
         box-shadow 180ms var(--md-sys-motion-easing-standard),
@@ -4793,6 +4797,10 @@ function cleanVacancyTitle(raw) {
     .hha-pill .hha-btn-quick {
       opacity: 1;
       transition:
+        width 280ms var(--md-sys-motion-easing-standard),
+        min-width 280ms var(--md-sys-motion-easing-standard),
+        max-width 280ms var(--md-sys-motion-easing-standard),
+        flex-basis 280ms var(--md-sys-motion-easing-standard),
         opacity 140ms ease-out 60ms,
         background-color 180ms var(--md-sys-motion-easing-standard),
         color 180ms var(--md-sys-motion-easing-standard),
@@ -4824,33 +4832,74 @@ function cleanVacancyTitle(raw) {
       transform: scale(0.97);
     }
 
-    /* Outlined Button for Stop. Red is kept for an error stop (Сброс), so a red pill
-       always means the run needs attention; stopping is an ordinary action and only
-       turns red under the pointer. */
+    /* Стоп while a run goes: a round button with a stop square and a ring round it, on the
+       same grey as the counters. A run is a process, and the ring reads as one: a short teal
+       arc goes round a faint track, one lap in 2.4 s. The word is kept for screen readers and
+       for the title, the square says it to the eye. Under the pointer the button turns red and
+       the ring gives way to it: red is kept for stopping and for an error stop. The pill's
+       button shrinks from 76 px to 32 and the step takes the room; in the panel footer the
+       slot keeps 76 px, so the tabs do not move, and the circle sits at its right edge. */
     .hha-btn-stop {
-      background: var(--md-sys-color-surface-container-lowest);
+      width: 32px;
+      min-width: 32px;
+      max-width: 32px;
+      flex: 0 0 32px;
+      padding: 0;
+      background: var(--md-sys-color-surface-container-high);
       color: var(--md-sys-color-on-surface);
-      box-shadow: 0 1px 3px transparent, 0 1px 2px transparent, inset 0 0 0 1px var(--md-sys-color-outline);
+      box-shadow: var(--hha-btn-shadow-flat);
+    }
+
+    .hha-btn-stop .hha-btn-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .hha-btn-stop::after {
+      content: '';
+      position: relative;
+      z-index: 1;
+      width: 10px;
+      height: 10px;
+      border-radius: 2.5px;
+      background: currentColor;
+      /* After the button has mostly shrunk: a square in a still wide button looked lost. */
+      animation: hhaStopIn 200ms var(--md-sys-motion-easing-emphasized-decelerate) 160ms backwards;
     }
 
     .hha-btn-stop:hover {
       background: var(--md-sys-color-error-container);
-      color: var(--md-sys-color-on-error-container);
-      box-shadow: 0 1px 3px transparent, 0 1px 2px transparent, inset 0 0 0 1px var(--md-sys-color-error);
+      color: var(--md-sys-color-error);
+    }
+
+    .hha-btn-stop.is-arriving:hover {
+      background: var(--md-sys-color-surface-container-high);
+      color: var(--md-sys-color-on-surface);
     }
 
     .hha-btn-stop:active {
       background: color-mix(in srgb, var(--md-sys-color-error-container) 85%, var(--md-sys-color-error));
-      color: var(--md-sys-color-on-error-container);
-      box-shadow: 0 1px 3px transparent, 0 1px 2px transparent, inset 0 0 0 1px var(--md-sys-color-error);
-      transform: scale(0.97);
+      color: var(--md-sys-color-error);
+      transform: scale(0.92);
     }
 
-    /* Indicator while a run goes: a short teal segment runs round the outline of Стоп,
-       one lap in 2.4 s. The whole button breathing every 2 s read as a pulse that pulled
-       the eye for the whole run. The segment is a stroke on an SVG the size of the
-       button (both quick buttons are 76x32); pathLength 100 makes the dash a share of
-       the outline. Under the pointer Стоп turns red, and the segment gives way to it. */
+    @keyframes hhaStopIn {
+      from {
+        opacity: 0;
+        transform: scale(0.4);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    /* The ring: an SVG circle the size of the button; pathLength 100 makes the arc a share of
+       the circle, and moving its dash offset runs it round with rounded ends. */
     .hha-btn-sweep {
       position: absolute;
       inset: 0;
@@ -4861,28 +4910,35 @@ function cleanVacancyTitle(raw) {
       transition: opacity 160ms ease-out;
     }
 
-    .hha-btn-sweep rect {
+    .hha-btn-sweep circle {
       fill: none;
+      stroke-width: 2;
+    }
+
+    .hha-btn-sweep .hha-ring-track {
+      stroke: color-mix(in srgb, var(--md-sys-color-primary) 16%, transparent);
+    }
+
+    .hha-btn-sweep .hha-ring-arc {
       stroke: var(--md-sys-color-primary);
-      stroke-width: 1.5;
       stroke-linecap: round;
-      stroke-dasharray: 16 84;
+      stroke-dasharray: 22 78;
     }
 
     .hha-root.is-running .hha-btn-stop .hha-btn-sweep {
       opacity: 1;
     }
 
-    .hha-root.is-running .hha-btn-stop .hha-btn-sweep rect {
+    .hha-root.is-running .hha-btn-stop .hha-ring-arc {
       animation: hhaStopSweep 2.4s linear infinite;
     }
 
-    .hha-root.is-running .hha-btn-stop:hover .hha-btn-sweep {
+    .hha-root.is-running .hha-btn-stop:hover:not(.is-arriving) .hha-btn-sweep {
       opacity: 0;
     }
 
     /* The pill's copy of the button is hidden while the panel is open: no lap there. */
-    .hha-root.is-expanded .hha-pill .hha-btn-sweep rect {
+    .hha-root.is-expanded .hha-pill .hha-ring-arc {
       animation: none;
     }
 
@@ -5444,7 +5500,9 @@ function cleanVacancyTitle(raw) {
     .hha-footer-actions {
       display: inline-flex;
       align-items: center;
+      justify-content: flex-end;
       flex-shrink: 0;
+      width: 76px;
       margin-left: 0;
     }
 
@@ -5472,8 +5530,20 @@ function cleanVacancyTitle(raw) {
       opacity: 1;
       transform: translate3d(0, 0, 0);
       transition:
+        width 280ms var(--md-sys-motion-easing-standard),
+        min-width 280ms var(--md-sys-motion-easing-standard),
+        max-width 280ms var(--md-sys-motion-easing-standard),
+        flex-basis 280ms var(--md-sys-motion-easing-standard),
         transform 420ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 0ms,
         opacity 160ms ease-out 20ms;
+    }
+
+    .hha-footer-actions .hha-btn-stop {
+      width: 32px;
+      min-width: 32px;
+      max-width: 32px;
+      flex: 0 0 32px;
+      padding: 0;
     }
 
     .hha-tab-btn {
@@ -6760,9 +6830,9 @@ function cleanVacancyTitle(raw) {
         animation: none !important;
       }
 
-      /* A segment standing still on the outline would look like a flaw: no indicator,
-         the step text and its countdown show the run. */
-      .hha-btn-sweep {
+      /* An arc standing still on the ring would look like a flaw: only the faint track
+         stays, and the step text and its countdown show the run. */
+      .hha-btn-sweep .hha-ring-arc {
         display: none !important;
       }
 
@@ -8734,6 +8804,13 @@ function cleanVacancyTitle(raw) {
             if (quickBtn.className !== desiredClassName) quickBtn.className = desiredClassName;
             labelEl.textContent = targetLabel;
             labelEl.classList.remove('is-swapping');
+            // Старт shrinks into the round Стоп under the pointer that pressed it: for a moment
+            // the pointer is not a hover, or the new button flashes red at every start.
+            if (labelChanged && isRunning) {
+              quickBtn.classList.add('is-arriving');
+              clearTimeout(quickBtn._arriveTimer);
+              quickBtn._arriveTimer = setTimeout(() => quickBtn.classList.remove('is-arriving'), 700);
+            }
           };
           if (this._hasSyncedStatus && labelChanged) {
             labelEl.classList.add('is-swapping');
