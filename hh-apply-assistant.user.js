@@ -211,6 +211,7 @@ function cleanVacancyTitle(raw) {
     dailyCounters: STORAGE_PREFIX + 'daily_counters',
     lastCommittedVid: STORAGE_PREFIX + 'last_committed_vid',
     captchas: STORAGE_PREFIX + 'captchas_v1',
+    skipsReset0226: STORAGE_PREFIX + 'skips_reset_0226',
     logBuffer: 'hha:log_buffer',
     watchdogStallCount: 'hha:watchdog_stall_count',
     watchdogStallVid: 'hha:watchdog_stall_vid',
@@ -222,6 +223,7 @@ function cleanVacancyTitle(raw) {
     runVisits: 'hha:run_visits',
     runPages: 'hha:run_pages',
     noButtonStreak: 'hha:no_button_streak',
+    visibilityStreak: 'hha:visibility_streak',
     inflight: 'hha:inflight',
     lateApplied: 'hha:late_applied',
     paceState: 'hha:pace_state',
@@ -255,9 +257,12 @@ function cleanVacancyTitle(raw) {
     // Reasons to skip or queue a vacancy.
     reject: /(?:не\s*соответствует(?:\s*требованиям)?|не\s*подходит|(?:^|[\s.,!?:;\u00ab\u00bb'"()\u2014\u2013-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;\u00ab\u00bb'"()\u2014\u2013-]|$)|reject|warning)/i,
     testPage: /(?:необходимо\s+пройти\s+тест|ответьте\s+на\s+(?:следующие\s+)?вопрос|тестовое\s+задание\s*работодателя|анкета\s+работодателя|пройти\s+опрос)/i,
-    // "Чтобы откликнуться на эту вакансию, поменяйте видимость резюме на 'Видно всем'" (2026-10-18):
-    // the employer takes only resumes visible to all, so the response cannot go.
-    resumeHidden: /резюме\s*скрыто|resume\s*is\s*hidden|(?:поменяйте|измените)\s+видимость\s+резюме/i,
+    resumeHidden: /резюме\s*скрыто|resume\s*is\s*hidden/i,
+    // "Чтобы откликнуться на эту вакансию, поменяйте видимость резюме на 'Видно всем
+    // работодателям, зарегистрированным на hh.ru'" (2026-10-18). It is about the user's
+    // resume, not the vacancy: in a live run it was on every response dialog. 0.2.23 took it
+    // for a vacancy to skip and skipped a whole run.
+    resumeVisibility: /(?:поменяйте|измените)\s+видимость\s+резюме/i,
     // Only a request to take a test counts: a bare "test" or "тестирование" also matched the
     // vacancy and resume titles the modal shows, like "QA Test Engineer".
     modalTest: /анкета|вопросы|questionnaire|(?:пройти|пройдите)\s+тест|take\s+(?:a|the)\s+test/i,
@@ -745,6 +750,7 @@ function cleanVacancyTitle(raw) {
       clearInflight(clean);
       // Any other outcome of a vacancy ends a series of vacancies without the apply button.
       if (finalReason !== 'queued_no_button') storage.sessionRemove(KEYS.noButtonStreak);
+      if (finalReason !== 'skip_resume_visibility') storage.sessionRemove(KEYS.visibilityStreak);
     }
 
     const logLevel = finalOutcome === 'error' ? 'error' : (finalOutcome === 'skipped' ? 'warn' : 'info');
@@ -1218,6 +1224,18 @@ function cleanVacancyTitle(raw) {
   // apply button again. A week, not 30 days: a reworked resume may fit next time.
   const SKIPPED_HISTORY_TTL = 7 * 24 * 60 * 60 * 1000;
   const skippedHistory = createVidHistory(KEYS.skippedHistory, SKIPPED_HISTORY_TTL);
+  // 0.2.23-0.2.25 skipped every vacancy whose dialog asked to change the resume visibility
+  // and remembered it for a week. Once, the skips written since the 0.2.23 release are
+  // forgotten, so those vacancies are opened again; a real rejection is found again.
+  const BAD_SKIPS_SINCE = 1792325543000;
+  if (!storage.localGet(KEYS.skipsReset0226)) {
+    const map = parseJson(storage.localGet(KEYS.skippedHistory), null);
+    if (map && typeof map === 'object' && !Array.isArray(map)) {
+      const kept = Object.fromEntries(Object.entries(map).filter(([, ts]) => Number(ts) < BAD_SKIPS_SINCE));
+      storage.localSet(KEYS.skippedHistory, JSON.stringify(kept));
+    }
+    storage.localSet(KEYS.skipsReset0226, '1');
+  }
   const LASTING_SKIP_REASONS = new Set(['skip_reject_warning', 'skip_reject_regex', 'resume_hidden', 'access_denied', 'skip_inaccessible']);
 
   // A response the script started: the apply button or a submit was pressed and hh.ru has
@@ -2483,6 +2501,10 @@ function cleanVacancyTitle(raw) {
     if (!modal) return null;
     if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
     const text = (textOf(modal) || modal.innerText || '').slice(0, 3000);
+    if (TEXT_RULES.resumeVisibility.test(text)) {
+      noteEvidence('modal_resume_visibility', text, TEXT_RULES.resumeVisibility);
+      return 'RESUME_VISIBILITY';
+    }
     if (TEXT_RULES.resumeHidden.test(text)) {
       noteEvidence('modal_resume_hidden', text, TEXT_RULES.resumeHidden);
       return 'RESUME_HIDDEN';
@@ -2719,6 +2741,24 @@ function cleanVacancyTitle(raw) {
     }
     haltEngine('APPLY_BUTTON_NOT_FOUND', `На ${NO_BUTTON_STOP} вакансиях подряд не нашлась кнопка отклика, автоматизация остановлена.`,
       describeSelectorFailure('vacancyApply', globalThis.document?.body, { vids: streak.join(',') }));
+    return true;
+  }
+
+  // Vacancies in a row whose response dialog asks to change who sees the resume. On one
+  // vacancy it may be the employer's rule; three in a row mean the resume itself, and every
+  // further vacancy would be skipped the same way, so the run stops and says what to do.
+  const VISIBILITY_STOP = 3;
+  function noteResumeVisibility(vid) {
+    if (!isRunning()) return false;
+    const stored = parseJson(storage.sessionGet(KEYS.visibilityStreak), []);
+    const streak = (Array.isArray(stored) ? stored.filter((v) => typeof v === 'string') : [])
+      .concat(cleanVid(vid)).slice(-VISIBILITY_STOP);
+    if (streak.length < VISIBILITY_STOP) {
+      storage.sessionSet(KEYS.visibilityStreak, JSON.stringify(streak));
+      return false;
+    }
+    storage.sessionRemove(KEYS.visibilityStreak);
+    haltEngine('RESUME_VISIBILITY', `На ${VISIBILITY_STOP} вакансиях подряд hh.ru просит поменять видимость резюме, автоматизация остановлена.`, { vids: streak.join(',') });
     return true;
   }
 
@@ -2968,7 +3008,7 @@ function cleanVacancyTitle(raw) {
     if (blockReason === 'DAILY_LIMIT') { haltForDailyLimit(); return 'BLOCKED'; }
     if (blockReason === 'CAPTCHA') { haltForCaptcha(); return 'CAPTCHA'; }
     if (blockReason === 'RATE_LIMIT') { haltForRateLimit(); return 'BLOCKED'; }
-    if (blockReason === 'TEST_REQUIRED' || blockReason === 'RESUME_HIDDEN') return blockReason;
+    if (blockReason === 'TEST_REQUIRED' || blockReason === 'RESUME_HIDDEN' || blockReason === 'RESUME_VISIBILITY') return blockReason;
 
     const rejectOutcome = await checkAndHandleRejectWarning(modal);
     if (rejectOutcome) return rejectOutcome;
@@ -3047,6 +3087,13 @@ function cleanVacancyTitle(raw) {
       logDecision(vid, 'skip_resume_hidden');
       if (vid) skipVacancy(vid, 'resume_hidden', runId);
       await closeModal(modal);
+    } else if (res === 'RESUME_VISIBILITY') {
+      // Nothing is sent: the submit could change who sees the resume, and that is the
+      // user's setting. The vacancy is skipped for this run only, not remembered.
+      logDecision(vid, 'skip_resume_visibility');
+      if (vid) skipVacancy(vid, 'skip_resume_visibility', runId);
+      await closeModal(modal);
+      if (vid && noteResumeVisibility(vid)) return 'BLOCKED';
     } else if (res === 'FAIL') {
       logDecision(vid, 'queue_submit_failed');
       if (vid) {
@@ -3325,7 +3372,7 @@ function cleanVacancyTitle(raw) {
       if (outcome === 'BLOCKED' || outcome === 'RESPONSE_PAGE') return outcome;
 
       const res = await dispatchOutcome(outcome, vid, runId);
-      if (['OK', 'SKIP', 'TEST_REQUIRED', 'RESUME_HIDDEN'].includes(res)) {
+      if (['OK', 'SKIP', 'TEST_REQUIRED', 'RESUME_HIDDEN', 'RESUME_VISIBILITY'].includes(res)) {
         await actionPause();
         returnToList(vid, { markProcessed: true, runId });
       } else if (res === 'FAIL') {
@@ -3470,6 +3517,7 @@ function cleanVacancyTitle(raw) {
       storage.sessionRemove(KEYS.runVisits);
       storage.sessionRemove(KEYS.runPages);
       storage.sessionRemove(KEYS.noButtonStreak);
+      storage.sessionRemove(KEYS.visibilityStreak);
       storage.sessionRemove(KEYS.paceState);
     }
     setRunning(true);
@@ -4205,6 +4253,7 @@ function cleanVacancyTitle(raw) {
     STORAGE_BLOCKED: 'Доступ к хранилищу заблокирован',
     STORAGE_FULL: 'Хранилище браузера переполнено',
     APPLY_BUTTON_NOT_FOUND: 'Кнопка отклика не найдена на вакансиях',
+    RESUME_VISIBILITY: 'hh.ru просит поменять видимость резюме',
     TAB_BUSY: 'Скрипт уже запущен в другой вкладке',
     TAB_LOCK_LOST: 'Потеряна блокировка вкладки',
     VACANCY_URL_NOT_FOUND: 'Не удалось определить ссылку вакансии',
@@ -4228,6 +4277,7 @@ function cleanVacancyTitle(raw) {
     STORAGE_BLOCKED: 'Разрешите сайту hh.ru сохранять данные (cookies и данные сайтов) и обновите страницу.',
     WATCHDOG_GIVEUP: 'Обновите страницу и нажмите кнопку Продолжить. ' + REPORT_HINT,
     DOM_SELECTOR_NOT_FOUND: 'Скорее всего, hh.ru поменял вёрстку. Скопируйте отчёт и приложите его к issue на GitHub.',
+    RESUME_VISIBILITY: 'В окне отклика hh.ru пишет, что для отклика резюме должно быть видно всем работодателям, зарегистрированным на hh.ru. Скрипт сам видимость не меняет. Поменяйте её в настройках резюме или выберите в окне отклика другое резюме, затем нажмите Продолжить.',
     APPLY_BUTTON_NOT_FOUND: 'Скорее всего, hh.ru поменял вёрстку страницы вакансии. Эти вакансии не остались в очереди, следующий запуск откроет их снова. Скопируйте отчёт и приложите его к issue на GitHub.',
     STORAGE_FULL: 'Освободите место: очистите лог кнопкой Очистить внизу панели и нажмите Продолжить. Если не помогло, удалите в браузере данные других сайтов.',
     ATTACH_BTN_NOT_FOUND: LETTER_HINT,
@@ -4244,6 +4294,7 @@ function cleanVacancyTitle(raw) {
     WATCHDOG_GIVEUP: { short: 'Зависла', line: 'Остановлено: страница не отвечает' },
     DOM_SELECTOR_NOT_FOUND: { short: 'Вёрстка', line: 'Остановлено: в выдаче нет кнопки отклика' },
     APPLY_BUTTON_NOT_FOUND: { short: 'Вёрстка', line: 'Остановлено: на вакансиях нет кнопки отклика' },
+    RESUME_VISIBILITY: { short: 'Резюме', line: 'Остановлено: видимость резюме' },
     TAB_LOCK_LOST: { short: 'Вкладка', line: 'Остановлено: работает другая вкладка' },
     TAB_BUSY: { short: 'Вкладка', line: 'Остановлено: работает другая вкладка' },
     STORAGE_BLOCKED: { short: 'Хранилище', line: 'Остановлено: хранилище недоступно' },
