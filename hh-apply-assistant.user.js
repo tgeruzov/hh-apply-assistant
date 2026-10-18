@@ -1233,7 +1233,6 @@ function cleanVacancyTitle(raw) {
 
   const getReturnUrl = () => storage.sessionGet(KEYS.returnUrl) || '';
   const setReturnUrl = (url) => storage.sessionSet(KEYS.returnUrl, url);
-  const clearReturnUrl = () => storage.sessionRemove(KEYS.returnUrl);
 
   const getLastAttemptID = () => storage.sessionGet(KEYS.lastAttempt) || null;
   const setLastAttemptID = (id) => {
@@ -3826,7 +3825,8 @@ function cleanVacancyTitle(raw) {
       await releaseInstanceLock(TAB_ID);
       clearLastAttemptID();
       clearTrapLock();
-      clearReturnUrl();
+      // The search address stays: Продолжить after a stop on a vacancy page went back to
+      // /search/vacancy without the user's filters and went on with every vacancy there.
       clearPendingVacancyMeta();
       resetSessionCounters();
       setActivity(null);
