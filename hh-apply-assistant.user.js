@@ -255,7 +255,9 @@ function cleanVacancyTitle(raw) {
     // Reasons to skip or queue a vacancy.
     reject: /(?:не\s*соответствует(?:\s*требованиям)?|не\s*подходит|(?:^|[\s.,!?:;\u00ab\u00bb'"()\u2014\u2013-])отказ(?:а|у|ом|ы)?(?=[\s.,!?:;\u00ab\u00bb'"()\u2014\u2013-]|$)|reject|warning)/i,
     testPage: /(?:необходимо\s+пройти\s+тест|ответьте\s+на\s+(?:следующие\s+)?вопрос|тестовое\s+задание\s*работодателя|анкета\s+работодателя|пройти\s+опрос)/i,
-    resumeHidden: /резюме\s*скрыто|resume\s*is\s*hidden/i,
+    // "Чтобы откликнуться на эту вакансию, поменяйте видимость резюме на 'Видно всем'" (2026-10-18):
+    // the employer takes only resumes visible to all, so the response cannot go.
+    resumeHidden: /резюме\s*скрыто|resume\s*is\s*hidden|(?:поменяйте|измените)\s+видимость\s+резюме/i,
     // Only a request to take a test counts: a bare "test" or "тестирование" also matched the
     // vacancy and resume titles the modal shows, like "QA Test Engineer".
     modalTest: /анкета|вопросы|questionnaire|(?:пройти|пройдите)\s+тест|take\s+(?:a|the)\s+test/i,
