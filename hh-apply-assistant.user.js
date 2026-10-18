@@ -220,6 +220,7 @@ function cleanVacancyTitle(raw) {
     runPages: 'hha:run_pages',
     noButtonStreak: 'hha:no_button_streak',
     inflight: 'hha:inflight',
+    lateApplied: 'hha:late_applied',
     lastRun: 'hha:last_run'
   };
 
@@ -1135,14 +1136,29 @@ function cleanVacancyTitle(raw) {
   // still counts the response once the page shows it, instead of losing it or taking it
   // for a skip "already applied".
   const INFLIGHT_TTL = 2 * 60 * 1000;
+  // hh.ru may answer a submit with a captcha and send the response once the user solves it,
+  // which takes minutes when the tab is in the background.
+  const CAPTCHA_INFLIGHT_TTL = 30 * 60 * 1000;
   function markInflight(vid) {
     const clean = cleanVid(vid);
     if (clean) storage.sessionSet(KEYS.inflight, JSON.stringify({ vid: clean, ts: Date.now() }));
   }
-  function readInflight() {
+  function readInflightEntry() {
     const p = parseJson(storage.sessionGet(KEYS.inflight), null);
-    if (!p || typeof p.vid !== 'string' || !(Date.now() - Number(p.ts) < INFLIGHT_TTL)) return null;
-    return p.vid;
+    if (!p || typeof p.vid !== 'string') return null;
+    return Date.now() - Number(p.ts) < (p.captcha ? CAPTCHA_INFLIGHT_TTL : INFLIGHT_TTL) ? p : null;
+  }
+  function readInflight() {
+    return readInflightEntry()?.vid || null;
+  }
+
+  // A response counted after the run stopped. The next run on that page does not count it
+  // again as a skip "already applied", and attaches the letter if the submit went without it.
+  function takeLateApplied(vid) {
+    const p = parseJson(storage.sessionGet(KEYS.lateApplied), null);
+    if (!p || p.vid !== cleanVid(vid)) return null;
+    storage.sessionRemove(KEYS.lateApplied);
+    return Date.now() - Number(p.ts) < CAPTCHA_INFLIGHT_TTL ? p : null;
   }
   function clearInflight(vid) {
     const raw = storage.sessionGet(KEYS.inflight);
@@ -1493,6 +1509,8 @@ function cleanVacancyTitle(raw) {
   let lateWatchId = null;
 
   function recordLateResponse(vid, source) {
+    const pending = readInflightEntry();
+    storage.sessionSet(KEYS.lateApplied, JSON.stringify({ vid, ts: Date.now(), letterOwed: Boolean(pending && pending.vid === vid && pending.letterOwed) }));
     rememberApplied(vid);
     recordOutcome(vid, 'applied', `applied_${source}`);
     // The run already has its summary; the response goes into it as well.
@@ -1511,12 +1529,13 @@ function cleanVacancyTitle(raw) {
     // Only on the page of that vacancy: its own page or its response form.
     if (cleanVid(getVacancyIDFromHref(globalThis.location?.href) || '') !== vid) return;
     const startedAt = Date.now();
+    const watchMs = readInflightEntry()?.captcha ? CAPTCHA_INFLIGHT_TTL : LATE_RESPONSE_WATCH_MS;
     const stop = () => {
       if (lateWatchId !== null) clearInterval(lateWatchId);
       lateWatchId = null;
     };
     const check = () => {
-      if (isRunning() || readInflight() !== vid || Date.now() - startedAt > LATE_RESPONSE_WATCH_MS) return stop();
+      if (isRunning() || readInflight() !== vid || Date.now() - startedAt > watchMs) return stop();
       if (detectAlreadyApplied() || isResponseConfirmed({ allowDocumentStrongText: true })) {
         stop();
         hhaLog('info', 'late_response', { vid, afterMs: Date.now() - startedAt });
@@ -1535,9 +1554,17 @@ function cleanVacancyTitle(raw) {
     terminateRun(code, logMsg, details, true);
   }
 
+  // A captcha on the submit of a response: once the user solves it, hh.ru sends the response.
+  // The error outcome used to drop the mark of the response in flight, and after Продолжить
+  // the response counted as a skip "already applied", without the letter it was sent without.
+  // Now the mark stays, longer than usual, and says whether the letter is still owed.
   const haltForCaptcha = () => {
     const vid = resolveCurrentVid();
+    const pending = readInflightEntry();
     recordOutcome(vid, 'error', 'error_captcha');
+    if (pending && pending.vid === cleanVid(vid)) {
+      storage.sessionSet(KEYS.inflight, JSON.stringify({ ...pending, captcha: true, letterOwed: config.useCover && letterFilledVid !== pending.vid }));
+    }
     haltEngine('CAPTCHA_DETECTED', 'hh.ru показал капчу, автоматизация остановлена.');
   };
   const haltForRateLimit = () => {
@@ -3137,14 +3164,27 @@ function cleanVacancyTitle(raw) {
       }
       if (detectDailyLimit()) { haltForDailyLimit(); return 'BLOCKED'; }
       if (detectAlreadyApplied()) {
-        if (vid && readInflight() === cleanVid(vid)) {
-          // This run pressed the button here, and the page reloaded before the response
-          // was recorded: it is this run's response, not an old one.
-          hhaLog('info', 'late_response', { vid: cleanVid(vid), source: 'reload' });
+        const pending = readInflightEntry();
+        const late = vid ? takeLateApplied(vid) : null;
+        let letterOwed = false;
+        if (vid && pending && pending.vid === cleanVid(vid)) {
+          // This run pressed the button here, and the page reloaded (or a captcha stopped the
+          // run) before the response was recorded: it is this run's response, not an old one.
+          hhaLog('info', 'late_response', { vid: cleanVid(vid), source: pending.captcha ? 'captcha' : 'reload' });
+          letterOwed = Boolean(pending.letterOwed);
           commitSuccess(vid, runId);
+        } else if (late) {
+          // Counted while the run was stopped, when the page showed it.
+          markVacancyProcessed(vid, runId);
+          letterOwed = Boolean(late.letterOwed);
         } else if (vid) {
           rememberApplied(vid);
           skipVacancy(vid, 'already_applied', runId);
+        }
+        if (letterOwed) {
+          setActivity('attaching_letter', { vid });
+          await attachLetterAfterResponse(vid, runId);
+          if (!isRunCurrent(runId)) return 'STOPPED';
         }
         returnToList(vid, { markProcessed: true, runId });
         return 'OK';
