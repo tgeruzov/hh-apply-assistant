@@ -4853,14 +4853,50 @@ function cleanVacancyTitle(raw) {
        button shrinks from 76 px to 32 and the step takes the room; in the panel footer the
        slot keeps 76 px, so the tabs do not move, and the circle sits at its right edge. */
     .hha-btn-stop {
+      background: var(--md-sys-color-surface-container-high);
+      color: var(--md-sys-color-on-surface);
+      box-shadow: var(--hha-btn-shadow-flat);
+    }
+
+    /* Size and colour follow the run at once, the class of the button only after its word
+       has faded (120 ms). With the size on the class, the step came in while Старт was still
+       wide and the pill grew past its new width and shrank back, and on a stop it shrank and
+       grew again. Now the step and the button change together and the pill moves once. */
+    .hha-root.is-running .hha-btn-quick {
       width: 32px;
       min-width: 32px;
       max-width: 32px;
       flex: 0 0 32px;
       padding: 0;
+    }
+
+    .hha-root.is-running .hha-btn-start {
       background: var(--md-sys-color-surface-container-high);
-      color: var(--md-sys-color-on-surface);
+      color: transparent;
       box-shadow: var(--hha-btn-shadow-flat);
+    }
+
+    /* The red of the hover turns teal quickly: halfway through 180 ms it was a muddy grey. */
+    .hha-root:not(.is-running) .hha-btn-stop {
+      background: var(--md-sys-color-primary);
+      color: transparent;
+      transition:
+        width 280ms var(--md-sys-motion-easing-standard),
+        min-width 280ms var(--md-sys-motion-easing-standard),
+        max-width 280ms var(--md-sys-motion-easing-standard),
+        flex-basis 280ms var(--md-sys-motion-easing-standard),
+        background-color 60ms linear,
+        color 60ms linear,
+        box-shadow 180ms var(--md-sys-motion-easing-standard);
+    }
+
+    /* Gone at once: fading, it showed as a dull spot on the button turning teal. */
+    .hha-root:not(.is-running) .hha-btn-stop::after {
+      display: none;
+    }
+
+    .hha-root.is-stopped-error .hha-btn-stop {
+      background: var(--md-sys-color-error);
     }
 
     .hha-btn-stop .hha-btn-label {
@@ -4881,20 +4917,20 @@ function cleanVacancyTitle(raw) {
       border-radius: 2.5px;
       background: currentColor;
       /* After the button has mostly shrunk: a square in a still wide button looked lost. */
-      animation: hhaStopIn 200ms var(--md-sys-motion-easing-emphasized-decelerate) 160ms backwards;
+      animation: hhaStopIn 200ms var(--md-sys-motion-easing-emphasized-decelerate) 60ms backwards;
     }
 
-    .hha-btn-stop:hover {
+    .hha-root.is-running .hha-btn-stop:hover {
       background: var(--md-sys-color-error-container);
       color: var(--md-sys-color-error);
     }
 
-    .hha-btn-stop.is-arriving:hover {
+    .hha-root.is-running .hha-btn-stop.is-arriving:hover {
       background: var(--md-sys-color-surface-container-high);
       color: var(--md-sys-color-on-surface);
     }
 
-    .hha-btn-stop:active {
+    .hha-root.is-running .hha-btn-stop:active {
       background: color-mix(in srgb, var(--md-sys-color-error-container) 85%, var(--md-sys-color-error));
       color: var(--md-sys-color-error);
       transform: scale(0.92);
@@ -4938,8 +4974,11 @@ function cleanVacancyTitle(raw) {
       stroke-dasharray: 22 78;
     }
 
+    /* The ring comes once the button is nearly round: a circle in a still wide button
+       did not match it. */
     .hha-root.is-running .hha-btn-stop .hha-btn-sweep {
       opacity: 1;
+      transition: opacity 200ms ease-out 60ms;
     }
 
     .hha-root.is-running .hha-btn-stop .hha-ring-arc {
@@ -5549,14 +5588,6 @@ function cleanVacancyTitle(raw) {
         flex-basis 280ms var(--md-sys-motion-easing-standard),
         transform 420ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 0ms,
         opacity 160ms ease-out 20ms;
-    }
-
-    .hha-footer-actions .hha-btn-stop {
-      width: 32px;
-      min-width: 32px;
-      max-width: 32px;
-      flex: 0 0 32px;
-      padding: 0;
     }
 
     .hha-tab-btn {
