@@ -72,8 +72,9 @@ function pluralRu(n, one, few, many) {
 }
 
 // "4 с" with a narrow no-break space: the unit stays next to the number and never
-// wraps to the next line on its own.
-const formatSeconds = (n) => `${n}\u202Fс`;
+// wraps to the next line on its own. A minute or more is "1:45": "105 с" is hard to read
+// and does not fit the pill.
+const formatSeconds = (n) => (n >= 60 ? `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}` : `${n}\u202Fс`);
 
 function formatTime(dOrTs = new Date()) {
   const d = dOrTs instanceof Date ? dOrTs : (dOrTs ? new Date(dOrTs) : new Date());
@@ -208,6 +209,7 @@ function cleanVacancyTitle(raw) {
     attempts: STORAGE_PREFIX + 'attempts_v1',
     dailyCounters: STORAGE_PREFIX + 'daily_counters',
     lastCommittedVid: STORAGE_PREFIX + 'last_committed_vid',
+    captchas: STORAGE_PREFIX + 'captchas_v1',
     logBuffer: 'hha:log_buffer',
     watchdogStallCount: 'hha:watchdog_stall_count',
     watchdogStallVid: 'hha:watchdog_stall_vid',
@@ -221,6 +223,8 @@ function cleanVacancyTitle(raw) {
     noButtonStreak: 'hha:no_button_streak',
     inflight: 'hha:inflight',
     lateApplied: 'hha:late_applied',
+    paceState: 'hha:pace_state',
+    paceTest: 'hha:pace_test',
     lastRun: 'hha:last_run'
   };
 
@@ -785,7 +789,89 @@ function cleanVacancyTitle(raw) {
   }
 
   const actionPause = () => wait(randBetween(ACTION_TIMINGS.action[0], ACTION_TIMINGS.action[1]));
-  const vacancyPauseMs = () => Math.max(2000, randBetween(ACTION_TIMINGS.delay[0], ACTION_TIMINGS.delay[1]));
+
+  // --- Pace ---
+  // A person does not keep one rhythm for an hour. On top of the pauses above: now and then a
+  // longer pause before a vacancy, a break every few dozen vacancies, the letter pasted and
+  // read before the submit, and all pauses longer for 12 hours after a captcha. Together about
+  // a fifth slower than a steady run. On a local page (the dev mocks) this is off, so their
+  // timed scenarios keep the old pace, unless a test turns it on with its own numbers in
+  // hha:pace_test; on hh.ru that key is not read.
+  const PACE_DEFAULTS = Object.freeze({
+    tailChance: 0.06,
+    tailMs: [10000, 30000],
+    breakEvery: [25, 40],
+    breakMs: [40000, 100000],
+    resumeMs: [1000, 2200],
+    letterBeforeMs: [400, 1000],
+    letterAfterMs: [1000, 2500],
+    cooldownMs: 12 * 60 * 60 * 1000
+  });
+  const PACE = (() => {
+    if (!LOCAL_HOST_RE.test(globalThis.location?.hostname || '')) return { on: true, ...PACE_DEFAULTS };
+    const test = parseJson(storage.localGet(KEYS.paceTest), null);
+    return test && typeof test === 'object' ? { ...PACE_DEFAULTS, ...test, on: true } : { ...PACE_DEFAULTS, on: false };
+  })();
+  const randIn = (range) => randBetween(range[0], range[1]);
+
+  // Captchas of the last 12 hours, shared by all tabs. One makes the pauses 1.5 times longer,
+  // two or more twice as long.
+  function recentCaptchas(now = Date.now()) {
+    const list = parseJson(storage.localGet(KEYS.captchas), []);
+    return (Array.isArray(list) ? list : []).map(Number).filter((ts) => ts <= now && now - ts < PACE.cooldownMs);
+  }
+  function noteCaptcha() {
+    storage.localSet(KEYS.captchas, JSON.stringify(recentCaptchas().concat(Date.now()).slice(-10)));
+  }
+  const paceFactor = () => (PACE.on ? 1 + 0.5 * Math.min(2, recentCaptchas().length) : 1);
+
+  function vacancyPauseMs() {
+    const f = paceFactor();
+    let ms = randIn(ACTION_TIMINGS.delay) * f;
+    if (PACE.on && Math.random() < PACE.tailChance) ms += randIn(PACE.tailMs) * f;
+    return Math.max(2000, Math.round(ms));
+  }
+
+  // A pause longer than the watchdog allows for a step (a minute, then it reloads the page):
+  // while it lasts, the watchdog takes the page as resting, not hung.
+  let restingUntil = 0;
+  async function rest(ms) {
+    restingUntil = Date.now() + ms;
+    try {
+      await wait(ms);
+    } finally {
+      restingUntil = 0;
+      markProgress();
+    }
+  }
+
+  // The vacancies opened in this run and the count at which the next break comes.
+  function readPaceState() {
+    const st = parseJson(storage.sessionGet(KEYS.paceState), null);
+    return st && typeof st === 'object' ? { opened: Math.max(0, Number(st.opened) || 0), nextBreak: Number(st.nextBreak) || 0 } : { opened: 0, nextBreak: 0 };
+  }
+  const nextBreakAfter = (opened) => opened + Math.max(1, Math.round(randIn(PACE.breakEvery) / paceFactor()));
+
+  async function breakIfDue() {
+    if (!PACE.on) return;
+    const st = readPaceState();
+    if (!st.nextBreak) st.nextBreak = nextBreakAfter(st.opened);
+    if (st.opened >= st.nextBreak) {
+      const ms = Math.round(randIn(PACE.breakMs) * paceFactor());
+      hhaLog('info', 'pace_break', { opened: st.opened, ms });
+      setActivity('break', { durationMs: ms });
+      await rest(ms);
+      st.nextBreak = nextBreakAfter(st.opened);
+    }
+    storage.sessionSet(KEYS.paceState, JSON.stringify(st));
+  }
+
+  function notePaceOpened() {
+    if (!PACE.on) return;
+    const st = readPaceState();
+    st.opened++;
+    storage.sessionSet(KEYS.paceState, JSON.stringify(st));
+  }
 
   const wait = (ms) => new Promise((resolve) => {
     const sig = activeAbortController?.signal;
@@ -1560,6 +1646,7 @@ function cleanVacancyTitle(raw) {
   const haltForCaptcha = () => {
     const vid = resolveCurrentVid();
     const pending = readInflightEntry();
+    noteCaptcha();
     recordOutcome(vid, 'error', 'error_captcha');
     if (pending && pending.vid === cleanVid(vid)) {
       storage.sessionSet(KEYS.inflight, JSON.stringify({ ...pending, captcha: true, letterOwed: config.useCover && letterFilledVid !== pending.vid }));
@@ -3089,7 +3176,7 @@ function cleanVacancyTitle(raw) {
     const t = ACTION_TIMINGS;
     const minDelay = Math.max(2000, Math.round(t.delay[0] * 0.7));
     const maxDelay = Math.round(t.delay[1] * 0.85);
-    const totalDuration = randBetween(minDelay, maxDelay);
+    const totalDuration = randBetween(minDelay, maxDelay) * paceFactor();
     const stepDelay = Math.round(totalDuration / steps);
     setActivity('reading', { vid, durationMs: stepDelay * steps });
 
@@ -3361,6 +3448,7 @@ function cleanVacancyTitle(raw) {
       storage.sessionRemove(KEYS.runVisits);
       storage.sessionRemove(KEYS.runPages);
       storage.sessionRemove(KEYS.noButtonStreak);
+      storage.sessionRemove(KEYS.paceState);
     }
     setRunning(true);
     // The run flag lives in sessionStorage. When the browser does not keep it, the run
@@ -3370,7 +3458,8 @@ function cleanVacancyTitle(raw) {
       return null;
     }
     markProgress();
-    hhaLog('info', isResume ? 'resume' : 'start', { runId, limit: MAX_DAILY_LIMIT });
+    const cooldown = paceFactor();
+    hhaLog('info', isResume ? 'resume' : 'start', { runId, limit: MAX_DAILY_LIMIT, cooldown: cooldown > 1 ? cooldown : undefined });
     setStatus('running', 'LOOP_STARTING');
 
     setActivity('locking');
@@ -3489,14 +3578,21 @@ function cleanVacancyTitle(raw) {
       return false;
     }
 
+    await breakIfDue();
+    if (stopSignal || runId !== currentRunId) return false;
     setLastAttemptID(vid);
     if (globalThis.location) setReturnUrl(globalThis.location.href);
-    hhaLog('info', 'navigate_vacancy', { vid, url: safeTargetUrl });
     const pauseMs = vacancyPauseMs();
+    hhaLog('info', 'navigate_vacancy', { vid, url: safeTargetUrl, pauseMs });
     setActivity('pause_before_vacancy', { vid, durationMs: pauseMs });
-    await wait(pauseMs);
+    // The list scrolls to the card, as it does for a person who is about to click it.
+    if (PACE.on && card) {
+      try { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+    }
+    await rest(pauseMs);
     if (stopSignal || runId !== currentRunId) return false;
     countRunVisit(vid);
+    notePaceOpened();
     leavePage(safeTargetUrl);
     return true;
   }
@@ -3553,6 +3649,12 @@ function cleanVacancyTitle(raw) {
       targets.push(b);
     }
 
+    // Not strictly top to bottom: now and then the second or third vacancy comes first.
+    if (PACE.on && targets.length > 1) {
+      const r = Math.random();
+      const i = Math.min(targets.length - 1, r < 0.65 ? 0 : (r < 0.88 ? 1 : 2));
+      targets.unshift(targets.splice(i, 1)[0]);
+    }
     for (const target of targets) {
       if (await navigateToVacancyFromSearch(target, runId)) return;
       if (stopSignal || runId !== currentRunId) return;
@@ -3647,6 +3749,11 @@ function cleanVacancyTitle(raw) {
   }
 
   function checkHang(now) {
+    // A break or a long pause: nothing to wait for, and nothing hangs.
+    if (restingUntil > now) {
+      lastProgressTs = now;
+      return false;
+    }
     if ((now - lastProgressTs) > WATCHDOG_STALL_TIMEOUT) {
       const currentVid = cleanVid(resolveCurrentVid() || '');
       // With no vacancy in flight (a search page) the count is kept per page address,
@@ -3806,7 +3913,9 @@ function cleanVacancyTitle(raw) {
       hasTrapLock: Boolean(getActiveTrapLock()),
       lastRun: parseJson(storage.sessionGet(KEYS.lastRun), null),
       lastAttemptId: getLastAttemptID(),
-      returnUrl: getReturnUrl()
+      returnUrl: getReturnUrl(),
+      // cooldown is 1.5 or 2 for 12 hours after a captcha: every pause is that much longer.
+      pace: { on: PACE.on, cooldown: paceFactor(), ...readPaceState() }
     }),
     getConfig: () => ({ ...config }),
     setConfig: (p) => persistSettings(p),
@@ -3919,11 +4028,13 @@ function cleanVacancyTitle(raw) {
         }
       }
       setStatus('running', 'AUTO_STARTING');
-      setActivity('resuming', { durationMs: 1500 });
+      // A person does not act the same 1.5 s after every page load.
+      const resumeMs = PACE.on ? randIn(PACE.resumeMs) : 1500;
+      setActivity('resuming', { durationMs: resumeMs });
       resumeTimer = setTimeout(() => {
         resumeTimer = null;
         if (isRunning()) startLoop();
-      }, 1500);
+      }, resumeMs);
     }
     if (!Page.isResponseForm()) clearTrapLock();
     // Stopped while waiting for hh.ru, then reloaded: the response may show up now.
@@ -4131,6 +4242,7 @@ function cleanVacancyTitle(raw) {
     attaching_letter: 'Прикрепляю письмо',
     returning: 'Возвращаюсь в поиск',
     next_page: 'Перехожу на следующую страницу',
+    break: 'Перерыв между вакансиями',
   };
 
   // One-word versions for the collapsed pill; the full text is in its tooltip.
@@ -4147,6 +4259,7 @@ function cleanVacancyTitle(raw) {
     attaching_letter: 'Письмо',
     returning: 'В поиск',
     next_page: 'Дальше',
+    break: 'Отдых',
   };
 
   function parseErrorDetails(code, rawMessage) {
