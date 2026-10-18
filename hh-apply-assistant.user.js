@@ -5500,6 +5500,9 @@ function cleanVacancyTitle(raw) {
       transform: scale(0.85);
       will-change: transform, opacity;
       transition:
+        width 280ms var(--md-sys-motion-easing-standard),
+        max-width 280ms var(--md-sys-motion-easing-standard),
+        flex-basis 280ms var(--md-sys-motion-easing-standard),
         transform var(--hha-motion-collapse-duration, 260ms) var(--hha-motion-collapse-easing, cubic-bezier(0.3, 0, 0.8, 0.15)),
         opacity 140ms ease-out;
     }
@@ -5518,6 +5521,12 @@ function cleanVacancyTitle(raw) {
         flex: 1 1 auto;
       }
 
+      .hha-root.is-running .hha-island-footer .hha-tabs {
+        width: auto;
+        max-width: none;
+        flex: 1 1 auto;
+      }
+
       .hha-tab-btn {
         padding: 0 4px;
       }
@@ -5527,8 +5536,16 @@ function cleanVacancyTitle(raw) {
       opacity: 1;
       transform: scale(1);
       transition:
+        width 280ms var(--md-sys-motion-easing-standard),
+        max-width 280ms var(--md-sys-motion-easing-standard),
+        flex-basis 280ms var(--md-sys-motion-easing-standard),
         transform 420ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 40ms,
         opacity 220ms ease-out 50ms;
+    }
+
+    /* Follows the tabs while they widen or narrow, with no lag of its own. */
+    .hha-tab-indicator.is-tracking {
+      transition: none;
     }
 
     .hha-tab-indicator {
@@ -5556,6 +5573,19 @@ function cleanVacancyTitle(raw) {
       flex-shrink: 0;
       width: 76px;
       margin-left: 0;
+      transition: width 280ms var(--md-sys-motion-easing-standard);
+    }
+
+    /* While a run goes the round Стоп needs 32 px of the 76: the tabs take the other 44,
+       together with the button, so the footer has no gap at its right end. */
+    .hha-root.is-running .hha-footer-actions {
+      width: 32px;
+    }
+
+    .hha-root.is-running .hha-island-footer .hha-tabs {
+      width: 248px;
+      max-width: 248px;
+      flex-basis: 248px;
     }
 
     .hha-footer-actions .hha-btn-quick {
@@ -7073,6 +7103,7 @@ function cleanVacancyTitle(raw) {
       if (this._animTimer) { clearTimeout(this._animTimer); this._animTimer = null; }
       if (this._queueConfirmTimer) { clearTimeout(this._queueConfirmTimer); this._queueConfirmTimer = null; }
       if (this._undoTimer) { clearTimeout(this._undoTimer); this._undoTimer = null; }
+      if (this._tabsResize) { this._tabsResize.disconnect(); this._tabsResize = null; }
     }
 
     // --- Public API ---
@@ -7836,6 +7867,20 @@ function cleanVacancyTitle(raw) {
       this._bindFormEvents();
       this._bindDocumentEvents();
       this._initOverlayScrollbar();
+
+      // The tabs change width when a run starts or stops (the footer gives them the room of
+      // the round Стоп): the indicator under the active tab is measured again every frame.
+      const tabsEl = this.#shadow.querySelector('.hha-tabs');
+      const indicatorEl = this.#shadow.querySelector('[data-el="tab-indicator"]');
+      if (tabsEl && indicatorEl && typeof ResizeObserver === 'function') {
+        this._tabsResize = new ResizeObserver(() => {
+          indicatorEl.classList.add('is-tracking');
+          this._updateTabIndicator();
+          clearTimeout(this._tabsTrackTimer);
+          this._tabsTrackTimer = setTimeout(() => indicatorEl.classList.remove('is-tracking'), 120);
+        });
+        this._tabsResize.observe(tabsEl);
+      }
     }
 
     _setupThumbDrag(thumb, stream, scrollbar, onDragEnd) {
