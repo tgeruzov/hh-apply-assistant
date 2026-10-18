@@ -1305,6 +1305,9 @@ function cleanVacancyTitle(raw) {
   }
 
   function handleVacancyFailure(vid, reason = 'apply_failed', runId = currentRunId, meta = null) {
+    // After Стоп or a captcha a wait that ended early is not a failed attempt: three of them
+    // used to block the vacancy for 24 hours.
+    if (!isRunCurrent(runId)) return false;
     if (!vid) return returnToList(null, { markProcessed: false, runId });
     const clean = cleanVid(vid);
     const attempts = recordVacancyAttempt(clean);
@@ -1648,7 +1651,8 @@ function cleanVacancyTitle(raw) {
         recordLateResponse(vid, 'after_stop');
       }
     };
-    lateWatchId = setInterval(check, 500);
+    // The page text is read on every check: a captcha watch lasts up to 30 minutes.
+    lateWatchId = setInterval(check, watchMs > LATE_RESPONSE_WATCH_MS ? 1000 : 500);
   }
 
   function finalizeRun(runId, statusKey, msg = '') {
@@ -3267,6 +3271,9 @@ function cleanVacancyTitle(raw) {
       3500,
       activeAbortController?.signal
     );
+    // Стоп (or a captcha the watchdog saw) ends the wait early. The page is left as it is:
+    // the script used to follow the apply link to the response form after Стоп.
+    if (!isRunCurrent(runId)) return 'STOPPED';
 
     if (outcome === 'DAILY_LIMIT' || detectDailyLimit()) {
       haltForDailyLimit();
@@ -3294,6 +3301,7 @@ function cleanVacancyTitle(raw) {
         4500,
         activeAbortController?.signal
       );
+      if (!isRunCurrent(runId)) return 'STOPPED';
     }
 
     if (!outcome) {
@@ -3369,7 +3377,7 @@ function cleanVacancyTitle(raw) {
 
       setActivity('waiting_outcome', { vid });
       const outcome = await waitForVacancyApplyOutcome(applyBtn, vid, runId);
-      if (outcome === 'BLOCKED' || outcome === 'RESPONSE_PAGE') return outcome;
+      if (outcome === 'BLOCKED' || outcome === 'RESPONSE_PAGE' || outcome === 'STOPPED') return outcome;
 
       const res = await dispatchOutcome(outcome, vid, runId);
       if (['OK', 'SKIP', 'TEST_REQUIRED', 'RESUME_HIDDEN', 'RESUME_VISIBILITY'].includes(res)) {
@@ -3422,6 +3430,16 @@ function cleanVacancyTitle(raw) {
         activeAbortController?.signal
       );
       if (!isRunCurrent(runId)) return;
+      // The response page can ask to change the resume visibility too, and its submit used
+      // to be pressed anyway. Now it is the same skip as in the response window.
+      const pageText = textOf(globalThis.document?.body).slice(0, 6000);
+      if (TEXT_RULES.resumeVisibility.test(pageText)) {
+        noteEvidence('page_resume_visibility', pageText, TEXT_RULES.resumeVisibility);
+        logDecision(vid, 'skip_resume_visibility');
+        if (vid) skipVacancy(vid, 'skip_resume_visibility', runId);
+        if (vid && noteResumeVisibility(vid)) return;
+        return returnToList(vid, { markProcessed: true, runId });
+      }
       if (!submitBtn) {
         reportWarning('Кнопка отправки формы отклика не найдена', 'SUBMIT_BTN_NOT_FOUND', describeSelectorFailure('letterSubmit', globalThis.document?.body, { vid }));
         saveCurrentForManual(vid, 'no-submit-button', runId);
@@ -4902,7 +4920,7 @@ function cleanVacancyTitle(raw) {
        for the title, the square says it to the eye. Under the pointer the button turns red and
        the ring gives way to it: red is kept for stopping and for an error stop. The pill's
        button shrinks from 76 px to 32 and the step takes the room; in the panel footer the
-       slot keeps 76 px, so the tabs do not move, and the circle sits at its right edge. */
+       slot shrinks the same way and the tabs take the room. */
     .hha-btn-stop {
       background: var(--md-sys-color-surface-container-high);
       color: var(--md-sys-color-on-surface);
