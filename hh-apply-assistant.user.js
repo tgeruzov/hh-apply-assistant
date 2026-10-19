@@ -4302,58 +4302,38 @@ function cleanVacancyTitle(raw) {
       .replace(/'/g, '&#39;');
   }
 
-  const ERROR_TITLES = {
-    GLOBAL_UNCAUGHT_ERROR: 'Внутренний сбой интерфейса',
-    GLOBAL_UNHANDLED_REJECTION: 'Сбой асинхронной операции',
-    DOM_SELECTOR_NOT_FOUND: 'Элемент страницы не найден',
-    SUBMIT_BTN_NOT_FOUND: 'Кнопка отправки не найдена',
-    SUBMIT_BTN_STILL_DISABLED: 'Кнопка отправки неактивна',
-    ATTACH_BTN_NOT_FOUND: 'Кнопка прикрепления письма не найдена',
-    LETTER_FORM_TIMEOUT: 'Форма письма не открылась вовремя',
-    RELOCATION_LOOP_GUARD: 'Зацикливание предупреждения о релокации',
-    RELOCATION_TIMEOUT: 'Таймаут подтверждения релокации',
-    RELOCATION_BTN_NOT_FOUND: 'Кнопка релокации не найдена',
-    NO_APPLY_BUTTON: 'Кнопка отклика недоступна',
-    OUTCOME_TIMEOUT: 'Превышено время ожидания отклика',
-    VACANCY_PAGE_ERROR: 'Ошибка на странице вакансии',
-    SUBMIT_FAILED: 'Сбой при отправке отклика',
-    SUBMIT_UNCONFIRMED: 'Отправка отклика не подтвердилась',
-    RESPONSE_PAGE_ERROR: 'Сбой на странице отклика',
-    STORAGE_BLOCKED: 'Доступ к хранилищу заблокирован',
-    STORAGE_FULL: 'Хранилище браузера переполнено',
-    APPLY_BUTTON_NOT_FOUND: 'Кнопка отклика не найдена на вакансиях',
-    RESUME_VISIBILITY: 'hh.ru просит поменять видимость резюме',
-    TAB_BUSY: 'Скрипт уже запущен в другой вкладке',
-    TAB_LOCK_LOST: 'Потеряна блокировка вкладки',
-    VACANCY_URL_NOT_FOUND: 'Не удалось определить ссылку вакансии',
-    MAX_ATTEMPTS_EXCEEDED: 'Превышен лимит попыток отклика',
-    VACANCY_ATTEMPT_FAILED: 'Сбой отклика (повторим позже)',
-    PAGE_HANG_TIMEOUT: 'Страница вакансии зависла',
-    EXTERNAL_VACANCY_URL: 'Вакансия ведёт на внешний сайт',
-    CAPTCHA_DETECTED: 'Обнаружена капча: решите её вручную',
-    RATE_LIMITED: 'Слишком частые запросы (Rate Limit)',
-    SKIP_RATE_ALERT: 'Аномально много пропусков вакансий',
-    WATCHDOG_GIVEUP: 'Страница перестала отвечать',
+  // What the error card says: a short title in plain words, what to do, and an icon. A stop
+  // (the run waits for Продолжить) is red; a notice the run gets past by itself is blue.
+  // `message: true` adds the technical text under the hint, small: it is for the report.
+  const REPORT_TEXT = 'Если повторяется, скопируйте отчёт и приложите его к issue на GitHub.';
+  const RESUMES_URL = 'https://hh.ru/applicant/resumes';
+  const ERROR_VIEWS = {
+    CAPTCHA_DETECTED: { icon: 'captcha', title: 'hh.ru просит пройти капчу', text: 'Решите её на странице и нажмите Продолжить. Ближайшие 12 часов паузы между вакансиями будут длиннее.' },
+    RATE_LIMITED: { icon: 'clock', title: 'hh.ru ограничил частоту запросов', text: 'Подождите 10-15 минут и нажмите Продолжить.' },
+    // No-break spaces keep "Видно всем" and "на hh.ru" on one line.
+    RESUME_VISIBILITY: { icon: 'eyeOff', title: 'Резюме скрыто от работодателей', text: ['Поставьте в ', { link: 'настройках резюме', href: RESUMES_URL }, ' видимость "Видно\u00A0всем работодателям, зарегистрированным на\u00A0hh.ru" или выберите в окне отклика другое резюме. Затем нажмите Продолжить.'] },
+    WATCHDOG_GIVEUP: { icon: 'reload', title: 'Страница перестала отвечать', text: 'Обновите страницу и нажмите Продолжить. ' + REPORT_TEXT },
+    DOM_SELECTOR_NOT_FOUND: { icon: 'layout', title: 'В выдаче нет кнопки отклика', text: 'Похоже, hh.ru поменял вёрстку. Скопируйте отчёт и приложите его к issue на GitHub.' },
+    APPLY_BUTTON_NOT_FOUND: { icon: 'layout', title: 'На вакансиях нет кнопки отклика', text: 'Похоже, hh.ru поменял вёрстку. Эти вакансии следующий запуск откроет снова. Скопируйте отчёт и приложите его к issue на GitHub.' },
+    TAB_LOCK_LOST: { icon: 'tabs', title: 'Скрипт работает в другой вкладке', text: 'Остановите его там или закройте ту вкладку, затем нажмите Продолжить.' },
+    TAB_BUSY: { icon: 'tabs', title: 'Скрипт работает в другой вкладке', text: 'Остановите его там или закройте ту вкладку, затем нажмите Продолжить.' },
+    STORAGE_BLOCKED: { icon: 'storage', title: 'Браузер не даёт сохранять данные', text: 'Разрешите сайту hh.ru хранить данные (cookies и данные сайтов) и обновите страницу.' },
+    STORAGE_FULL: { icon: 'storage', title: 'Хранилище браузера переполнено', text: 'Очистите лог кнопкой Очистить внизу панели и нажмите Продолжить. Если не помогло, удалите в браузере данные других сайтов.' },
+    ATTACH_BTN_NOT_FOUND: { icon: 'letter', title: 'Отклик ушёл без письма', text: 'Не нашлась кнопка, которая прикрепляет письмо. Отклики идут дальше. ' + REPORT_TEXT },
+    LETTER_FORM_TIMEOUT: { icon: 'letter', title: 'Отклик ушёл без письма', text: 'Поле для письма не появилось за 5 секунд. Отклики идут дальше. ' + REPORT_TEXT },
+    SUBMIT_BTN_NOT_FOUND: { icon: 'letter', title: 'Отклик ушёл без письма', text: 'Не нашлась кнопка отправки письма. Отклики идут дальше. ' + REPORT_TEXT },
+    VACANCY_PAGE_ERROR: { icon: 'alert', title: 'Сбой на странице вакансии', text: 'Скрипт вернулся в поиск и идёт дальше. ' + REPORT_TEXT, message: true },
+    RESPONSE_PAGE_ERROR: { icon: 'alert', title: 'Сбой на странице отклика', text: 'Скрипт вернулся в поиск и идёт дальше. ' + REPORT_TEXT, message: true },
+    GLOBAL_UNCAUGHT_ERROR: { icon: 'alert', title: 'Внутренний сбой скрипта', text: REPORT_TEXT, message: true },
+    GLOBAL_UNHANDLED_REJECTION: { icon: 'alert', title: 'Внутренний сбой скрипта', text: REPORT_TEXT, message: true },
+    SKIP_RATE_ALERT: {
+      icon: 'filter',
+      title: 'Много пропущенных вакансий',
+      text: (d) => `${Number(d.skipped) > 0 && Number(d.total) > 0 ? `Пропущено ${d.skipped} из ${d.total}. ` : ''}Проверьте фильтры поиска. Если вакансии пропускаются зря, скопируйте отчёт и приложите его к issue на GitHub.`
+    },
   };
-
-  const REPORT_HINT = 'Если ошибка повторяется, скопируйте отчёт и приложите его к issue на GitHub.';
-  const LETTER_HINT = 'Отклики продолжают отправляться, но без письма. ' + REPORT_HINT;
-  const ERROR_HINTS = {
-    CAPTCHA_DETECTED: 'Решите капчу на странице, затем нажмите кнопку Продолжить.',
-    RATE_LIMITED: 'Подождите 10-15 минут, затем нажмите кнопку Продолжить.',
-    TAB_BUSY: 'Остановите скрипт в другой вкладке или закройте её.',
-    TAB_LOCK_LOST: 'Проверьте, что скрипт не запущен в другой вкладке, затем нажмите кнопку Продолжить.',
-    STORAGE_BLOCKED: 'Разрешите сайту hh.ru сохранять данные (cookies и данные сайтов) и обновите страницу.',
-    WATCHDOG_GIVEUP: 'Обновите страницу и нажмите кнопку Продолжить. ' + REPORT_HINT,
-    DOM_SELECTOR_NOT_FOUND: 'Скорее всего, hh.ru поменял вёрстку. Скопируйте отчёт и приложите его к issue на GitHub.',
-    RESUME_VISIBILITY: 'В окне отклика hh.ru пишет, что для отклика резюме должно быть видно всем работодателям, зарегистрированным на hh.ru. Скрипт сам видимость не меняет. Поменяйте её в настройках резюме или выберите в окне отклика другое резюме, затем нажмите Продолжить.',
-    APPLY_BUTTON_NOT_FOUND: 'Скорее всего, hh.ru поменял вёрстку страницы вакансии. Эти вакансии не остались в очереди, следующий запуск откроет их снова. Скопируйте отчёт и приложите его к issue на GitHub.',
-    STORAGE_FULL: 'Освободите место: очистите лог кнопкой Очистить внизу панели и нажмите Продолжить. Если не помогло, удалите в браузере данные других сайтов.',
-    ATTACH_BTN_NOT_FOUND: LETTER_HINT,
-    LETTER_FORM_TIMEOUT: LETTER_HINT,
-    SUBMIT_BTN_NOT_FOUND: LETTER_HINT,
-    SKIP_RATE_ALERT: 'Проверьте фильтры поиска. Если вакансии пропускаются зря, скопируйте отчёт и приложите его к issue на GitHub.',
-  };
+  const ERROR_VIEW_STOP = { icon: 'alert', title: 'Скрипт остановился из-за сбоя', text: 'Нажмите Продолжить. ' + REPORT_TEXT, message: true };
+  const ERROR_VIEW_NOTICE = { icon: 'alert', title: 'Что-то пошло не так', text: 'Скрипт продолжает работу. ' + REPORT_TEXT, message: true };
 
   // Why a run stopped with an error: one word for the pill and the tab title,
   // a short phrase for the panel header. Codes not listed here get the default.
@@ -4404,30 +4384,13 @@ function cleanVacancyTitle(raw) {
     break: 'Отдых',
   };
 
-  function parseErrorDetails(code, rawMessage) {
-    const defaultTitle = ERROR_TITLES[code] || 'Произошла ошибка при выполнении';
-    let cleanMsg = String(rawMessage || '').trim();
-    cleanMsg = cleanMsg.replace(/^\[(?:Глобальная ошибка|Необработанный Promise rejection)\]\s*/i, '');
-    cleanMsg = cleanMsg.replace(/\s*\([^)]*(?:userscript\.html|chrome-extension:)[^)]*\)\s*$/i, '');
-    cleanMsg = cleanMsg.replace(/^Uncaught\s+/i, '');
-    cleanMsg = cleanMsg.replace(/^ReferenceError:\s*/i, 'Сбой выполнения: ');
-    cleanMsg = cleanMsg.replace(/^TypeError:\s*/i, 'Ошибка типа данных: ');
-    cleanMsg = collapseSpaces(cleanMsg);
-
-    let title = defaultTitle;
-    let desc = '';
-
-    if (!cleanMsg || cleanMsg === defaultTitle || cleanMsg.toUpperCase() === String(code || '').toUpperCase()) {
-      return { title, desc: '' };
-    }
-
-    if (cleanMsg.toLowerCase().startsWith(defaultTitle.toLowerCase())) {
-      desc = cleanMsg.slice(defaultTitle.length).replace(/^[\s:\u2013\u2014-]+/, '').trim();
-    } else {
-      desc = cleanMsg;
-    }
-
-    return { title, desc };
+  // The technical text of an error, without the noise of where it came from.
+  function cleanErrorMessage(rawMessage) {
+    let msg = String(rawMessage || '').trim();
+    msg = msg.replace(/^\[(?:Глобальная ошибка|Необработанный Promise rejection)\]\s*/i, '');
+    msg = msg.replace(/\s*\([^)]*(?:userscript\.html|chrome-extension:)[^)]*\)\s*$/i, '');
+    msg = msg.replace(/^Uncaught\s+/i, '');
+    return collapseSpaces(msg);
   }
 
   function formatQueueReasonInfo(reason) {
@@ -4483,6 +4446,24 @@ function cleanVacancyTitle(raw) {
     trash: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5-1-1h-5l-1 1H5v2h14V4z"/></svg>`,
     inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`
   };
+
+  // The icons of the error card: 1.8 px lines on a 24 px grid, drawn at 22 px.
+  const lineIcon = (body, size = 22) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
+  const ERROR_ICONS = {
+    alert: lineIcon('<path d="M12 5.8v8.2" stroke-width="2.4"/><circle cx="12" cy="18" r="1.45" fill="currentColor" stroke="none"/>'),
+    captcha: lineIcon('<path d="M12 3.5 19 6v5.6c0 4.3-2.9 7.6-7 8.9-4.1-1.3-7-4.6-7-8.9V6z"/><path d="m9 12.2 2.1 2.1 4-4.1"/>'),
+    clock: lineIcon('<circle cx="12" cy="12" r="8"/><path d="M12 7.8v4.4l2.9 1.8"/>'),
+    eyeOff: lineIcon('<path d="M10.2 5.2A9.6 9.6 0 0 1 12 5c4.6 0 7.9 3.6 9 7a12 12 0 0 1-2.2 3.6"/><path d="M6.6 6.7C4.8 7.9 3.6 9.8 3 12c1.1 3.4 4.4 7 9 7a9 9 0 0 0 4.9-1.4"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="m4 4 16 16"/>'),
+    reload: lineIcon('<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.6 4.6v3.7h-3.7"/>'),
+    layout: lineIcon('<rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="m9.6 9.6 4.8 4.8"/><path d="m14.4 9.6-4.8 4.8"/>'),
+    tabs: lineIcon('<rect x="3.5" y="8" width="12.5" height="11" rx="2.2"/><path d="M8 8V6.7c0-1.2 1-2.2 2.2-2.2h8.1c1.2 0 2.2 1 2.2 2.2v6.6c0 1.2-1 2.2-2.2 2.2H16"/>'),
+    storage: lineIcon('<ellipse cx="12" cy="6.2" rx="7" ry="2.7"/><path d="M5 6.2v11.6c0 1.5 3.1 2.7 7 2.7s7-1.2 7-2.7V6.2"/><path d="M5 12c0 1.5 3.1 2.7 7 2.7s7-1.2 7-2.7"/>'),
+    letter: lineIcon('<rect x="3.5" y="5.5" width="17" height="13" rx="2.4"/><path d="m4.3 7.4 7.7 5.8 7.7-5.8"/>'),
+    filter: lineIcon('<path d="M4.5 5.5h15l-5.8 7v5.6l-3.4-1.7v-3.9z"/>'),
+  };
+  const COPY_REPORT_LABEL = 'Скопировать отчёт';
+  const COPY_ICON = lineIcon('<rect x="8.5" y="8.5" width="11" height="11" rx="2.2"/><path d="M15.5 8.5V6.7c0-1.2-1-2.2-2.2-2.2H6.7c-1.2 0-2.2 1-2.2 2.2v6.6c0 1.2 1 2.2 2.2 2.2h1.8"/>', 14);
+  const DONE_ICON = lineIcon('<path d="m5.5 12.5 4.2 4.2 8.8-9"/>', 14);
 
   // The ring of the round Стоп (see .hha-btn-sweep in the stylesheet).
   const BTN_SWEEP = '<svg class="hha-btn-sweep" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><circle class="hha-ring-track" cx="16" cy="16" r="15"></circle><circle class="hha-ring-arc" cx="16" cy="16" r="15" pathLength="100" transform="rotate(-90 16 16)"></circle></svg>';
@@ -5806,14 +5787,15 @@ function cleanVacancyTitle(raw) {
     .hha-tab-btn:focus-visible,
     .hha-btn-quick:focus-visible,
     .hha-queue-title-link:focus-visible,
-    .hha-btn-dismiss-error:focus-visible {
+    .hha-btn-dismiss-error:focus-visible,
+    .hha-btn-copy-error:focus-visible,
+    .hha-card-error-link:focus-visible {
       outline: none;
       box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary);
     }
 
     .hha-log-item-delete:focus-visible,
-    .hha-btn-clear-all:focus-visible,
-    .hha-btn-copy-error:focus-visible {
+    .hha-btn-clear-all:focus-visible {
       outline: none;
       box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-error);
     }
@@ -6304,7 +6286,9 @@ function cleanVacancyTitle(raw) {
       transform: scale(0.92);
     }
 
-    /* 9. Error Card */
+    /* 9. Error Card: centred. A tinted icon, a title in plain words, what to do and one wide
+       button; the report and the code sit small under it, they are for an issue. A stop (the
+       run waits for Продолжить) is red, a notice the run gets past by itself is blue. */
     .hha-error-slot {
       flex-shrink: 0;
       padding: 10px var(--hha-content-padding-x, 12px) 0;
@@ -6316,39 +6300,47 @@ function cleanVacancyTitle(raw) {
     }
 
     .hha-card-error {
-      max-height: 230px;
+      --hha-err-tint: var(--md-sys-color-error-container);
+      --hha-err-ink: var(--md-sys-color-error);
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
-      gap: 8px;
+      gap: 14px;
       box-sizing: border-box;
-      padding: 12px 14px;
+      padding: 12px 16px 10px;
       margin-bottom: 0 !important;
-      background: var(--md-sys-color-error-container);
-      border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent);
-      border-radius: var(--md-sys-shape-corner-medium);
-      box-shadow: none;
+      text-align: center;
+      background:
+        radial-gradient(120% 72% at 50% 0%, color-mix(in srgb, var(--hha-err-tint) 62%, transparent) 0%, transparent 72%),
+        var(--md-sys-color-surface-container-lowest);
+      border: 1px solid color-mix(in srgb, var(--hha-err-ink) 14%, var(--md-sys-color-outline-variant));
+      border-radius: 16px;
       overflow: hidden;
-      animation: hhaErrorCardFadeIn var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-decelerate);
+      animation: hhaErrorCardIn 260ms var(--md-sys-motion-easing-emphasized-decelerate) both;
     }
 
-    @keyframes hhaErrorCardFadeIn {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
+    .hha-card-error[data-tone="notice"] {
+      --hha-err-tint: var(--md-sys-color-tertiary-container);
+      --hha-err-ink: #2B5A84;
+    }
+
+    @keyframes hhaErrorCardIn {
+      from { opacity: 0; transform: translateY(6px) scale(0.985); }
+      to { opacity: 1; transform: none; }
     }
 
     .hha-card-error-body {
       display: flex;
       flex-direction: column;
-      align-items: flex-start;
+      align-items: center;
       gap: 6px;
       min-height: 0;
-      flex: 1 1 auto;
+      max-height: 220px;
+      /* The scroll box clips shadows: the room for the halo of the icon is inside it. */
+      padding-top: 6px;
       overflow-y: auto;
       overflow-x: hidden;
       scrollbar-width: thin;
-      scrollbar-color: color-mix(in srgb, var(--md-sys-color-error) 30%, transparent) transparent;
-      padding-right: 4px;
+      scrollbar-color: color-mix(in srgb, var(--hha-err-ink) 30%, transparent) transparent;
     }
 
     .hha-card-error-body::-webkit-scrollbar {
@@ -6360,115 +6352,112 @@ function cleanVacancyTitle(raw) {
     }
 
     .hha-card-error-body::-webkit-scrollbar-thumb {
-      background: color-mix(in srgb, var(--md-sys-color-error) 30%, transparent);
+      background: color-mix(in srgb, var(--hha-err-ink) 30%, transparent);
       border-radius: var(--md-sys-shape-corner-full);
     }
 
-    .hha-card-error-body::-webkit-scrollbar-thumb:hover {
-      background: color-mix(in srgb, var(--md-sys-color-error) 50%, transparent);
+    .hha-card-error-icon {
+      flex: none;
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      margin: 0 0 6px;
+      border-radius: 50%;
+      color: var(--hha-err-ink);
+      background: var(--hha-err-tint);
+      box-shadow: 0 0 0 6px color-mix(in srgb, var(--hha-err-tint) 38%, transparent);
+      animation: hhaErrorIconIn 420ms cubic-bezier(0.34, 1.4, 0.64, 1) 80ms both;
+    }
+
+    .hha-card-error-icon svg {
+      display: block;
+    }
+
+    @keyframes hhaErrorIconIn {
+      from { opacity: 0; transform: scale(0.6); }
+      to { opacity: 1; transform: none; }
     }
 
     .hha-card-error-title {
-      font-size: var(--md-sys-typescale-body-medium-size);
-      font-weight: 700;
-      line-height: 1.35;
-      color: var(--md-sys-color-on-error-container);
+      max-width: 320px;
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1.3;
+      letter-spacing: -0.1px;
+      color: var(--md-sys-color-on-surface);
+      text-wrap: balance;
       word-break: break-word;
       user-select: text;
-      flex-shrink: 0;
-    }
-
-    .hha-card-error-desc {
-      font-size: var(--md-sys-typescale-body-small-size);
-      font-weight: 400;
-      line-height: 1.45;
-      color: color-mix(in srgb, var(--md-sys-color-on-error-container) 90%, transparent);
-      word-break: break-word;
-      user-select: text;
-      white-space: pre-wrap;
     }
 
     .hha-card-error-hint {
-      font-size: var(--md-sys-typescale-body-small-size);
-      font-weight: 600;
+      max-width: 332px;
+      font-size: var(--md-sys-typescale-body-medium-size);
       line-height: 1.45;
-      color: var(--md-sys-color-on-error-container);
+      color: var(--md-sys-color-on-surface-variant);
+      text-wrap: pretty;
       word-break: break-word;
       user-select: text;
     }
 
-    .hha-card-error-code {
-      display: inline-block;
-      align-self: flex-start;
+    .hha-card-error-link {
+      color: var(--md-sys-color-primary);
+      font-weight: 600;
+      text-decoration: underline;
+      text-decoration-color: color-mix(in srgb, var(--md-sys-color-primary) 35%, transparent);
+      text-underline-offset: 2px;
+      border-radius: 4px;
+      transition: text-decoration-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-card-error-link:hover {
+      text-decoration-color: currentColor;
+    }
+
+    /* The technical text of an internal error: three lines at most, the rest is in the report.
+       The room round the text is a transparent border, not padding: the clamp cuts at the
+       padding edge, and a fourth line used to show through the padding. */
+    .hha-card-error-desc {
+      box-sizing: border-box;
+      max-width: 100%;
+      margin-top: 4px;
+      padding: 0;
+      border: solid transparent;
+      border-width: 6px 10px;
+      border-radius: var(--md-sys-shape-corner-small);
+      background: var(--md-sys-color-surface-container);
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       font-size: var(--md-sys-typescale-label-small-size);
-      font-weight: 500;
-      line-height: 1.4;
-      color: color-mix(in srgb, var(--md-sys-color-on-error-container) 85%, transparent);
-      background: color-mix(in srgb, var(--md-sys-color-error) 12%, transparent);
-      padding: 4px 8px;
-      border-radius: var(--md-sys-shape-corner-small);
-      word-break: break-all;
+      line-height: 1.45;
+      color: var(--md-sys-color-on-surface-variant);
+      text-align: left;
+      word-break: break-word;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+      overflow: hidden;
       user-select: text;
-      margin-top: 2px;
-      flex-shrink: 0;
+    }
+
+    .hha-card-error-desc[hidden] {
+      display: none;
     }
 
     .hha-card-error-actions {
       display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-top: 4px;
-      padding-top: 8px;
-      border-top: 1px solid color-mix(in srgb, var(--md-sys-color-error) 15%, transparent);
+      flex-direction: column;
+      align-items: stretch;
+      gap: 4px;
       flex-shrink: 0;
     }
 
-    .hha-card-error-actions .hha-btn-copy-error {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      height: 32px;
-      padding: 0 14px;
-      border-radius: var(--md-sys-shape-corner-full);
-      /* White on the tinted banner: a transparent button read as plain text there. */
-      background: var(--md-sys-color-surface-container-lowest);
-      color: var(--md-sys-color-on-surface-variant);
-      border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent);
-      font-family: var(--md-sys-typescale-font-family);
-      font-size: var(--md-sys-typescale-label-medium-size);
-      font-weight: 500;
-      line-height: 1;
-      cursor: pointer;
-      box-sizing: border-box;
-      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
-                  border-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
-                  color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
-                  transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
-    }
-
-    .hha-card-error-actions .hha-btn-copy-error:hover {
-      background: var(--md-sys-color-surface-container-high);
-      border-color: var(--md-sys-color-outline);
-      color: var(--md-sys-color-on-surface);
-    }
-
-    .hha-card-error-actions .hha-btn-copy-error:active {
-      transform: scale(0.96);
-    }
-
-    .hha-card-error-actions .hha-btn-copy-error.is-copied {
-      background: var(--md-sys-color-primary-container);
-      color: var(--md-sys-color-on-primary-container);
-      border-color: transparent;
-    }
-
     .hha-card-error-actions .hha-btn-dismiss-error {
-      display: inline-flex;
+      display: flex;
       align-items: center;
       justify-content: center;
-      height: 32px;
+      width: 100%;
+      height: 36px;
       padding: 0 18px;
       border-radius: var(--md-sys-shape-corner-full);
       /* The same role as Старт: it starts the run again. */
@@ -6477,7 +6466,7 @@ function cleanVacancyTitle(raw) {
       box-shadow: var(--md-sys-elevation-level1);
       border: none;
       font-family: var(--md-sys-typescale-font-family);
-      font-size: var(--md-sys-typescale-label-medium-size);
+      font-size: var(--md-sys-typescale-body-medium-size);
       font-weight: 600;
       line-height: 1;
       cursor: pointer;
@@ -6493,7 +6482,108 @@ function cleanVacancyTitle(raw) {
     }
 
     .hha-card-error-actions .hha-btn-dismiss-error:active {
-      transform: scale(0.96);
+      transform: scale(0.98);
+    }
+
+    /* The button's own shadow outranks the shared focus ring: the ring is set here again. */
+    .hha-card-error-actions .hha-btn-dismiss-error:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px var(--md-sys-color-surface-container-lowest), 0 0 0 4px var(--md-sys-color-primary);
+    }
+
+    /* Понятно only closes the card: a quiet grey button, not the teal of a restart. */
+    .hha-card-error[data-tone="notice"] .hha-btn-dismiss-error {
+      background: var(--md-sys-color-surface-container-high);
+      color: var(--md-sys-color-on-surface);
+      box-shadow: none;
+    }
+
+    .hha-card-error[data-tone="notice"] .hha-btn-dismiss-error:hover {
+      background: var(--md-sys-color-surface-container-highest);
+      box-shadow: none;
+    }
+
+    .hha-card-error-meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 2px 8px;
+      min-height: 28px;
+    }
+
+    .hha-card-error-actions .hha-btn-copy-error {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 28px;
+      padding: 0 8px;
+      border: none;
+      border-radius: var(--md-sys-shape-corner-full);
+      background: transparent;
+      color: var(--md-sys-color-on-surface-variant);
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-label-medium-size);
+      font-weight: 500;
+      line-height: 1;
+      white-space: nowrap;
+      cursor: pointer;
+      box-sizing: border-box;
+      transition: background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+                  color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-card-error-actions .hha-btn-copy-error:hover {
+      background: var(--md-sys-color-surface-container-high);
+      color: var(--md-sys-color-on-surface);
+    }
+
+    .hha-card-error-actions .hha-btn-copy-error.is-copied {
+      color: var(--md-sys-color-primary);
+    }
+
+    .hha-card-error-actions .hha-btn-copy-error.is-copy-failed {
+      color: var(--md-sys-color-error);
+    }
+
+    /* The copy icon turns into a tick once the report is in the clipboard. */
+    .hha-copy-icons {
+      position: relative;
+      flex: none;
+      width: 14px;
+      height: 14px;
+    }
+
+    .hha-copy-icon,
+    .hha-copy-done {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      transition: opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+                  transform var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-copy-done,
+    .hha-btn-copy-error.is-copied .hha-copy-icon {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+
+    .hha-btn-copy-error.is-copied .hha-copy-done {
+      opacity: 1;
+      transform: none;
+    }
+
+    .hha-card-error-code {
+      padding-left: 9px;
+      border-left: 1px solid var(--md-sys-color-outline-variant);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: var(--md-sys-typescale-label-small-size);
+      line-height: 14px;
+      color: var(--md-sys-color-outline);
+      word-break: break-all;
+      user-select: text;
     }
 
     /* Clear all in queue: Text Button (Error role) */
@@ -7641,16 +7731,19 @@ function cleanVacancyTitle(raw) {
 
             <!-- Error banner: above both tabs, it does not hide the letter or switch the tab -->
             <div class="hha-error-slot" data-el="error-slot" hidden>
-              <div class="hha-card-error" data-el="error-card">
+              <div class="hha-card-error" data-el="error-card" data-tone="stop">
                 <div class="hha-card-error-body" data-el="error-card-body">
+                  <span class="hha-card-error-icon" data-el="error-card-icon" aria-hidden="true"></span>
                   <div class="hha-card-error-title" data-el="error-card-title"></div>
-                  <div class="hha-card-error-desc" data-el="error-card-desc"></div>
                   <div class="hha-card-error-hint" data-el="error-card-hint"></div>
-                  <div class="hha-card-error-code" data-el="error-card-code"></div>
+                  <div class="hha-card-error-desc" data-el="error-card-desc"></div>
                 </div>
                 <div class="hha-card-error-actions">
-                  <button type="button" class="hha-btn-copy-error" data-action="copy-last-error" data-el="error-copy-btn" data-tooltip="Скопировать отчёт об ошибке для issue на GitHub">Скопировать</button>
                   <button type="button" class="hha-btn-dismiss-error" data-action="resolve-error" data-el="error-resolve-btn">Понятно</button>
+                  <div class="hha-card-error-meta">
+                    <button type="button" class="hha-btn-copy-error" data-action="copy-last-error" data-el="error-copy-btn" data-tooltip="Отчёт для issue на GitHub: код, адрес страницы, браузер"><span class="hha-copy-icons" aria-hidden="true"><span class="hha-copy-icon">${COPY_ICON}</span><span class="hha-copy-done">${DONE_ICON}</span></span><span data-el="error-copy-label">Скопировать отчёт</span></button>
+                    <span class="hha-card-error-code" data-el="error-card-code"></span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -8184,15 +8277,32 @@ function cleanVacancyTitle(raw) {
         return;
       }
 
-      const { title, desc } = parseErrorDetails(err.code, err.message);
-      const hint = ERROR_HINTS[err.code] || REPORT_HINT;
-      el('error-card-title').textContent = title;
-      el('error-card-desc').textContent = desc;
-      el('error-card-desc').style.display = desc ? '' : 'none';
-      el('error-card-hint').textContent = hint;
-      el('error-card-code').textContent = `Код: ${err.code}` + (err.details?.vid ? ` [вакансия #${err.details.vid}]` : '');
+      const isStop = this._status.status === 'error';
+      const view = ERROR_VIEWS[err.code] || (isStop ? ERROR_VIEW_STOP : ERROR_VIEW_NOTICE);
+      const card = el('error-card');
+      if (card) card.dataset.tone = isStop ? 'stop' : 'notice';
+      const icon = el('error-card-icon');
+      if (icon) icon.innerHTML = ERROR_ICONS[view.icon] || ERROR_ICONS.alert;
+      el('error-card-title').textContent = view.title;
+      const hint = el('error-card-hint');
+      const text = typeof view.text === 'function' ? view.text(err.details || {}) : view.text;
+      hint.replaceChildren(...(Array.isArray(text) ? text : [text]).map((part) => {
+        if (typeof part === 'string') return document.createTextNode(part);
+        const a = document.createElement('a');
+        a.className = 'hha-card-error-link';
+        a.href = part.href;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = part.link;
+        return a;
+      }));
+      const tech = view.message ? cleanErrorMessage(err.message) : '';
+      el('error-card-desc').textContent = tech;
+      el('error-card-desc').hidden = !tech;
+      // The code only: the vacancy and the rest of the context are in the report.
+      el('error-card-code').textContent = err.code;
       // A stopped run is restarted from the card in one click; otherwise the card only closes.
-      el('error-resolve-btn').textContent = this._status.status === 'error' ? 'Продолжить' : 'Понятно';
+      el('error-resolve-btn').textContent = isStop ? 'Продолжить' : 'Понятно';
       // The panel grows by the banner, so the letter and the queue keep their room.
       const h = slot ? slot.offsetHeight : 0;
       if (h !== this._errorSlotHeight || !wasShown) {
@@ -8239,13 +8349,9 @@ function cleanVacancyTitle(raw) {
 
       const copyBtn = this.#shadow.querySelector('[data-el="error-copy-btn"]');
       if (copyBtn) {
-        copyBtn.classList.remove('is-copied');
-        if (copyBtn.dataset && copyBtn.dataset.origText) {
-          copyBtn.textContent = copyBtn.dataset.origText;
-          delete copyBtn.dataset.origText;
-        } else {
-          copyBtn.textContent = 'Скопировать';
-        }
+        copyBtn.classList.remove('is-copied', 'is-copy-failed');
+        const label = copyBtn.querySelector('[data-el="error-copy-label"]');
+        if (label) label.textContent = COPY_REPORT_LABEL;
       }
     }
 
@@ -8474,18 +8580,15 @@ function cleanVacancyTitle(raw) {
           clearTimeout(this._copyErrorTimer);
           this._copyErrorTimer = null;
         }
-        if (!btnEl.dataset || !btnEl.dataset.origText) {
-          if (!btnEl.dataset) btnEl.dataset = {};
-          btnEl.dataset.origText = btnEl.textContent || 'Скопировать';
-        }
+        const label = btnEl.querySelector?.('[data-el="error-copy-label"]') || btnEl;
         btnEl.classList.toggle('is-copied', copied);
-        btnEl.textContent = copied ? 'Скопировано' : 'Не вышло, отчёт в консоли';
+        btnEl.classList.toggle('is-copy-failed', !copied);
+        label.textContent = copied ? 'Скопировано' : 'Не вышло, отчёт в консоли';
         this._copyErrorTimer = setTimeout(() => {
-          btnEl.classList.remove('is-copied');
-          btnEl.textContent = (btnEl.dataset && btnEl.dataset.origText) || 'Скопировать';
-          if (btnEl.dataset) delete btnEl.dataset.origText;
+          btnEl.classList.remove('is-copied', 'is-copy-failed');
+          label.textContent = COPY_REPORT_LABEL;
           this._copyErrorTimer = null;
-        }, 1800);
+        }, copied ? 1800 : 3200);
       });
     }
 
@@ -9197,7 +9300,7 @@ function cleanVacancyTitle(raw) {
       if (line) {
         line.textContent = text;
         if (this._status.status === 'error') {
-          line.dataset.tooltip = ERROR_TITLES[this._status.code] || text;
+          line.dataset.tooltip = ERROR_VIEWS[this._status.code]?.title || text;
         } else {
           line.dataset.tooltip = text === this._runSummaryText() ? `${this._runStopReason()}. ${text}` : text;
         }
