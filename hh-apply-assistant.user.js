@@ -2500,16 +2500,53 @@ function cleanVacancyTitle(raw) {
     return Boolean((allowDocumentStrongText || Page.isVacancy()) && doc && TEXT_RULES.sentOnPage.test((doc.body?.innerText || textOf(doc.body)).slice(0, 4000)));
   }
 
+  // Whether the user can see the element: no hidden or zero-size box up to the scope. The
+  // text of a node includes its hidden parts, and hh.ru keeps the resume visibility notice in
+  // the response dialog after the visibility was changed, where the user does not see it.
+  function isShownIn(el, scope) {
+    const win = el.ownerDocument?.defaultView || globalThis;
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+      let cs = null;
+      try { cs = win.getComputedStyle(n); } catch (_) {}
+      if (n.getAttribute('aria-hidden') === 'true' || n.hidden) return false;
+      if (cs && (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse')) return false;
+      if (!cs || cs.display !== 'contents') {
+        const r = n.getBoundingClientRect?.();
+        if (r && (r.width < 2 || r.height < 2)) return false;
+      }
+      if (n === scope) break;
+    }
+    return true;
+  }
+
+  // The smallest elements with the text of the rule, and whether any of them is shown.
+  // Hidden matches go to the log once per page, so a live log says where they were.
+  const loggedHiddenNotices = new Set();
+  const RESUME_NOTICE_SETTLE_MS = 800;
+  function findShownText(scope, regex) {
+    if (!scope || !regex.test(textOf(scope))) return null;
+    let found = qa('*', scope).filter((el) => regex.test(textOf(el)) && !Array.from(el.children).some((c) => regex.test(textOf(c))));
+    if (!found.length) found = [scope];
+    const shown = found.find((el) => isShownIn(el, scope));
+    if (shown) return shown;
+    const where = found.map(describeElement).join(' | ').slice(0, 300);
+    if (!loggedHiddenNotices.has(where)) {
+      loggedHiddenNotices.add(where);
+      hhaLog('info', 'notice_hidden', { rule: String(regex.source).slice(0, 40), where });
+    }
+    return null;
+  }
+
   function detectModalBlockReason(modalScope = null) {
     const modal = modalScope || getVisibleModals()[0] || null;
     if (!modal) return null;
     if (detectDailyLimit(modal) || detectDailyLimit()) return 'DAILY_LIMIT';
     const text = (textOf(modal) || modal.innerText || '').slice(0, 3000);
-    if (TEXT_RULES.resumeVisibility.test(text)) {
+    if (findShownText(modal, TEXT_RULES.resumeVisibility)) {
       noteEvidence('modal_resume_visibility', text, TEXT_RULES.resumeVisibility);
       return 'RESUME_VISIBILITY';
     }
-    if (TEXT_RULES.resumeHidden.test(text)) {
+    if (findShownText(modal, TEXT_RULES.resumeHidden)) {
       noteEvidence('modal_resume_hidden', text, TEXT_RULES.resumeHidden);
       return 'RESUME_HIDDEN';
     }
@@ -3008,6 +3045,15 @@ function cleanVacancyTitle(raw) {
 
   async function handleScenarioB(modal, runId = currentRunId) {
     if (detectDailyLimit(modal) || detectDailyLimit()) { haltForDailyLimit(); return 'BLOCKED'; }
+    // Live hh.ru keeps the visibility notice in every response dialog, in a collapsible block
+    // (data-qa="hidden-resume-warning"): open when the resume needs it, at max-height 0 when
+    // it does not. Only a shown notice counts, and the block may still be opening or closing,
+    // so with the text in the dialog its state is read once it has settled.
+    const modalText = textOf(modal);
+    if (TEXT_RULES.resumeVisibility.test(modalText) || TEXT_RULES.resumeHidden.test(modalText)) {
+      await wait(RESUME_NOTICE_SETTLE_MS);
+      if (!isRunCurrent(runId)) return 'STOPPED';
+    }
     const blockReason = detectModalBlockReason(modal);
     if (blockReason === 'DAILY_LIMIT') { haltForDailyLimit(); return 'BLOCKED'; }
     if (blockReason === 'CAPTCHA') { haltForCaptcha(); return 'CAPTCHA'; }
@@ -3029,6 +3075,11 @@ function cleanVacancyTitle(raw) {
       if (!isRunCurrent(runId)) return 'STOPPED';
     }
 
+    // Once more before the submit, in case the block opened after the first look.
+    if (findShownText(modal, TEXT_RULES.resumeVisibility)) {
+      noteEvidence('modal_resume_visibility', textOf(modal).slice(0, 3000), TEXT_RULES.resumeVisibility);
+      return 'RESUME_VISIBILITY';
+    }
     const submitted = await submitCoverLetterForm(modal, runId, letter);
     if (!submitted) {
       if (!isRunCurrent(runId)) return 'STOPPED';
@@ -3433,7 +3484,7 @@ function cleanVacancyTitle(raw) {
       // The response page can ask to change the resume visibility too, and its submit used
       // to be pressed anyway. Now it is the same skip as in the response window.
       const pageText = textOf(globalThis.document?.body).slice(0, 6000);
-      if (TEXT_RULES.resumeVisibility.test(pageText)) {
+      if (findShownText(globalThis.document?.body, TEXT_RULES.resumeVisibility)) {
         noteEvidence('page_resume_visibility', pageText, TEXT_RULES.resumeVisibility);
         logDecision(vid, 'skip_resume_visibility');
         if (vid) skipVacancy(vid, 'skip_resume_visibility', runId);
