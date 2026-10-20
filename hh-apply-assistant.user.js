@@ -280,7 +280,7 @@ function toLogUrl(rawUrl) {
     lastCommittedVid: STORAGE_PREFIX + 'last_committed_vid',
     captchas: STORAGE_PREFIX + 'captchas_v1',
     schema: STORAGE_PREFIX + 'schema',
-    // The flag of the first migration in 0.2.26-0.2.29, read once and removed.
+    // The flag of the first migration in 0.2.26-0.2.29. Kept and set: those versions read it.
     skipsReset0226: STORAGE_PREFIX + 'skips_reset_0226',
     logBuffer: 'hha:log_buffer',
     watchdogStallCount: 'hha:watchdog_stall_count',
@@ -1440,7 +1440,11 @@ function toLogUrl(rawUrl) {
       }
       done++;
     }
-    if (done !== stored && storage.localSet(KEYS.schema, String(done))) storage.localRemove(KEYS.skipsReset0226);
+    if (done !== stored) storage.localSet(KEYS.schema, String(done));
+    // 0.2.26-0.2.29 know the first step only by this flag. Without it an older version (a
+    // rollback, or the release script beside a dev copy, which share this storage) would
+    // run it again and forget the skips of the days since 0.2.23 came out.
+    if (done >= 1 && !storage.localGet(KEYS.skipsReset0226)) storage.localSet(KEYS.skipsReset0226, '1');
   })();
   const LASTING_SKIP_REASONS = new Set(['skip_reject_warning', 'skip_reject_regex', 'resume_hidden', 'access_denied', 'skip_inaccessible']);
 
