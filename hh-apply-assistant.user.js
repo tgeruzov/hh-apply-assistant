@@ -440,6 +440,20 @@ function cleanVacancyTitle(raw) {
     return safe && new URL(safe).pathname.startsWith('/search/vacancy') ? safe : '';
   }
 
+  // The results page as hh.ru shows it, from 1 (the address counts from 0: page=1 is the
+  // second page). Null away from the search. The log gets this number, never the address
+  // with the search filters.
+  function searchPageNumber(rawUrl) {
+    try {
+      const u = new URL(rawUrl);
+      if (!u.pathname.startsWith('/search/vacancy')) return null;
+      const n = Number(u.searchParams.get('page') || 0);
+      return Number.isInteger(n) && n >= 0 ? n + 1 : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   // --- 5. Error Reporting, Logging & Telemetry ---
   const SENSITIVE_KEYS = new Set(['covertext', 'letter', 'text', 'cover', 'name', 'phone', 'email', 'fio', 'resume', 'applicant', 'applicantname', 'covermessage', 'chatmessage', 'usermessage']);
 
@@ -3553,6 +3567,13 @@ function cleanVacancyTitle(raw) {
     await actionPause();
     if (!isRunCurrent(runId)) return;
     const href = toSearchListUrl(nextBtn.getAttribute?.('href') || nextBtn.href);
+    const passed = parseJson(storage.sessionGet(KEYS.runPages), []);
+    hhaLog('info', 'page_next', {
+      from: searchPageNumber(globalThis.location?.href || ''),
+      to: href ? searchPageNumber(href) : null,
+      pages: Array.isArray(passed) ? passed.length : null,
+      by: href ? 'link' : 'click'
+    });
     if (href && globalThis.location) {
       setReturnUrl(href);
       leavePage(href);
@@ -4142,6 +4163,7 @@ function cleanVacancyTitle(raw) {
     hhaLog('info', 'page_start', {
       version: VERSION,
       path: (globalThis.location && globalThis.location.pathname) || '',
+      page: searchPageNumber(globalThis.location?.href || ''),
       state: isRunning() ? 'running' : 'idle',
       applied: daily.applied,
       queued: daily.queued,
