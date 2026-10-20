@@ -1072,6 +1072,51 @@ function toLogUrl(rawUrl) {
     }
   };
 
+  // The vacancy of this page when it was in the queue as the page loaded. It stays after a
+  // response by hand takes it off the queue: that is when the next one is wanted. `closed`
+  // is the entry taken off because hh.ru says the vacancy is closed, for the HUD to offer back.
+  let queuePage = null;
+
+  // The next queued vacancy for "Следующая": one not opened yet, newest first, the order
+  // of the queue tab.
+  function nextManualItem(exceptVid) {
+    const except = cleanVid(exceptVid);
+    return ManualQueue.get()
+      .filter((it) => !it.viewed && cleanVid(it.vid) !== except)
+      .sort((a, b) => (Number(b.addedAt) || 0) - (Number(a.addedAt) || 0))[0] || null;
+  }
+
+  function manualItemUrl(item) {
+    const vid = cleanVid(item.vid);
+    const origin = globalThis.location?.origin || 'https://hh.ru';
+    return toSafeHhUrl(/^\d+$/.test(vid) ? `${origin}/vacancy/${vid}` : item.url);
+  }
+
+  // In this tab, as a link would: the vacancy page marks itself viewed when it loads.
+  function openNextManualItem() {
+    if (isRunning() || !queuePage) return false;
+    const item = nextManualItem(queuePage.vid);
+    const url = item && manualItemUrl(item);
+    if (!url) return false;
+    hhaLog('info', 'queue_next', { from: queuePage.vid, to: cleanVid(item.vid) });
+    leavePage(url);
+    return true;
+  }
+
+  // hh.ru says the queued vacancy is closed or gone: there is nothing to answer, so it
+  // leaves the queue by itself. It stays in the queued history, so a run does not bring
+  // it back; the HUD offers it back in case the page was misread.
+  function closeQueuedVacancy(vid) {
+    const clean = cleanVid(vid);
+    const item = ManualQueue.get().find((it) => cleanVid(it.vid) === clean);
+    if (!item) return false;
+    ManualQueue.remove(clean);
+    if (queuePage && queuePage.vid === clean) queuePage.closed = item;
+    hhaLog('info', 'queue_closed', { vid: clean });
+    events.emit('queueClosed', item);
+    return true;
+  }
+
   // --- E8. State Accessors ---
   const TAB_ID = (() => {
     const win = globalThis.window;
@@ -2842,6 +2887,10 @@ function toLogUrl(rawUrl) {
     const startedAt = Date.now();
     const check = () => {
       if (isRunning() || !ManualQueue.has(vid) || Date.now() - startedAt > MANUAL_WATCH_MS) return stopManualWatch();
+      if (detectInaccessibleVacancy()) {
+        closeQueuedVacancy(vid);
+        return stopManualWatch();
+      }
       if (isManualResponseDone()) {
         markManualApplied(vid, 'page');
         stopManualWatch();
@@ -4215,6 +4264,10 @@ function toLogUrl(rawUrl) {
     markManualItemViewed: (vid, viewed) => ManualQueue.markViewed(vid, viewed),
     removeManualItem: (vid) => ManualQueue.remove(vid),
     restoreManualItem: (item) => ManualQueue.add(item),
+    // The vacancy of this page if it came from the queue, the next one to open, and the
+    // entry taken off the queue because the vacancy is closed.
+    getQueuePage: () => (queuePage ? { vid: queuePage.vid, closed: queuePage.closed, next: isRunning() ? null : nextManualItem(queuePage.vid) } : null),
+    openNextManualItem: () => openNextManualItem(),
     clearManualQueue: () => ManualQueue.clear(),
     on: (evt, fn) => events.on(evt, fn),
     off: (evt, fn) => events.off(evt, fn),
@@ -4316,6 +4369,7 @@ function toLogUrl(rawUrl) {
     if (Page.isVacancy() || Page.isResponseForm()) {
       const currentVid = getStableVacancyId() || getLastAttemptID();
       if (currentVid && ManualQueue.has(currentVid)) {
+        queuePage = { vid: cleanVid(currentVid), closed: null };
         ManualQueue.markViewed(currentVid, true);
         if (!isRunning()) watchManualResponse(currentVid);
       }
@@ -4599,6 +4653,7 @@ function toLogUrl(rawUrl) {
     // exactly two device pixels, so they stay sharp on a Full HD monitor.
     send: `<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M1 1.5 13.5 7 1 12.5 3 7z"/></svg>`,
     list: `<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" shape-rendering="crispEdges" aria-hidden="true"><rect x="1" y="2" width="2" height="2"/><rect x="5" y="2" width="8" height="2"/><rect x="1" y="6" width="2" height="2"/><rect x="5" y="6" width="8" height="2"/><rect x="1" y="10" width="2" height="2"/><rect x="5" y="10" width="8" height="2"/></svg>`,
+    chevronRight: `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.3 6.3 7.9 7.7l4.3 4.3-4.3 4.3 1.4 1.4 5.7-5.7z"/></svg>`,
     copy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>`,
     trash: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5-1-1h-5l-1 1H5v2h14V4z"/></svg>`,
     inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`
@@ -4887,6 +4942,45 @@ function toLogUrl(rawUrl) {
     .hha-root.is-dragging .hha-pill-status-group {
       background: var(--md-sys-color-surface-container-highest);
       cursor: grabbing;
+    }
+
+    /* "Следующая" on a vacancy opened from the queue: the next one not opened yet, in this
+       tab. A quiet tonal button, Старт stays the main action. */
+    .hha-btn-next {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      flex: 0 0 auto;
+      height: var(--md-comp-control-height);
+      padding: 0 6px 0 12px;
+      border: none;
+      border-radius: var(--md-sys-shape-corner-full);
+      background: var(--md-sys-color-surface-container-high);
+      color: var(--md-sys-color-primary);
+      font-family: var(--md-sys-typescale-font-family);
+      font-size: var(--md-sys-typescale-label-medium-size);
+      font-weight: 600;
+      letter-spacing: var(--md-sys-typescale-label-medium-tracking);
+      line-height: 1;
+      white-space: nowrap;
+      cursor: pointer;
+      outline: none;
+      transition:
+        background-color var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard),
+        transform var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
+    }
+
+    .hha-btn-next[hidden],
+    .hha-root.is-running .hha-btn-next {
+      display: none;
+    }
+
+    .hha-btn-next:hover {
+      background: var(--md-sys-color-surface-container-highest);
+    }
+
+    .hha-btn-next:active {
+      transform: scale(0.97);
     }
 
     /* Sized to the text; _setPillStepText() animates between measured widths.
@@ -5941,6 +6035,7 @@ function toLogUrl(rawUrl) {
     }
 
     .hha-pill-status-group:focus-visible,
+    .hha-btn-next:focus-visible,
     .hha-tab-btn:focus-visible,
     .hha-btn-quick:focus-visible,
     .hha-queue-title-link:focus-visible,
@@ -7509,6 +7604,7 @@ function toLogUrl(rawUrl) {
         if (Array.isArray(q)) this._queue = q;
       }
 
+
       if (typeof assistant.on === 'function') {
         this._unsubscribers.push(
           // The log row is read when the panel opens; with the panel open during a run it
@@ -7532,6 +7628,9 @@ function toLogUrl(rawUrl) {
             const q = payload && Array.isArray(payload.queue) ? payload.queue : payload;
             this.updateQueue(q);
           }),
+          assistant.on('queueClosed', (item) => {
+            if (item) this.#offerUndo([item], 'Вакансия закрыта, убрана из очереди');
+          }),
           assistant.on('config', (payload) => {
             const current = payload?.current || payload;
             this.#updateConfig(current);
@@ -7545,6 +7644,10 @@ function toLogUrl(rawUrl) {
 
       this._syncAll();
       this._countsReady = true;
+
+      // Taken off the queue before the HUD was there, on the first look at the page.
+      const closed = typeof assistant.getQueuePage === 'function' ? assistant.getQueuePage()?.closed : null;
+      if (closed) this.#offerUndo([closed], 'Вакансия закрыта, убрана из очереди');
     }
 
     unbindAssistant() {
@@ -7599,6 +7702,7 @@ function toLogUrl(rawUrl) {
       this._isExpanded = next;
       this._isAnimating = true;
       if (next) this._syncLogRow();
+      if (next) this._armUndoTimer();
 
       try {
         localStorage.setItem('hha_hud_expanded_v2', String(this._isExpanded));
@@ -7708,6 +7812,7 @@ function toLogUrl(rawUrl) {
       this._activeTab = tabName;
       this._resetClearQueueBtn();
       this._hideTooltip();
+      this._armUndoTimer();
 
       try {
         localStorage.setItem('hha_hud_active_tab_v2', this._activeTab);
@@ -7875,6 +7980,9 @@ function toLogUrl(rawUrl) {
               </div>
             </div>
             <div class="hha-pill-step" data-el="pill-step" aria-hidden="true"></div>
+            <button type="button" class="hha-btn-next" data-action="queue-next" data-el="pill-next-btn" hidden>
+              <span>Следующая</span>${ICONS.chevronRight}
+            </button>
             <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="pill-quick-btn">
               ${BTN_SWEEP}
               <span class="hha-btn-label" data-el="pill-quick-label">Старт</span>
@@ -8547,12 +8655,12 @@ function toLogUrl(rawUrl) {
     // "Убрано из очереди. Вернуть" for a few seconds after a removal. A vacancy with a
     // questionnaire is remembered for 30 days once queued, so the script would not bring
     // it back by itself: a misclick on the cross would lose it. Removals in a row add up.
-    #offerUndo(items) {
+    #offerUndo(items, text = '') {
       const bar = this.#shadow?.querySelector('[data-el="undo-bar"]');
       if (!bar || !items.length) return;
-      this.#undoItems = (this._undoTimer ? this.#undoItems : []).concat(items);
+      this.#undoItems = (this._undoTimer || !bar.hidden ? this.#undoItems : []).concat(items);
       const n = this.#undoItems.length;
-      bar.querySelector('[data-el="undo-text"]').textContent = n === 1 ? 'Убрано из очереди' : `Убрано из очереди: ${n}`;
+      bar.querySelector('[data-el="undo-text"]').textContent = (n === 1 && text) || (n === 1 ? 'Убрано из очереди' : `Убрано из очереди: ${n}`);
       bar.hidden = false;
       this._armUndoTimer();
       if (!bar.dataset.bound) {
@@ -8567,6 +8675,13 @@ function toLogUrl(rawUrl) {
 
     _armUndoTimer() {
       if (this.#shadow?.querySelector('[data-el="undo-bar"]')?.hidden) return;
+      // The few seconds start once the bar can be seen: a vacancy taken off the queue by
+      // itself waits for the panel and its queue tab.
+      if (!this._isExpanded || this._activeTab !== 'queue') {
+        if (this._undoTimer) clearTimeout(this._undoTimer);
+        this._undoTimer = null;
+        return;
+      }
       if (this._undoTimer) clearTimeout(this._undoTimer);
       this._undoTimer = setTimeout(() => this._hideUndo(), 6000);
     }
@@ -8675,6 +8790,7 @@ function toLogUrl(rawUrl) {
         'open-vacancy': (tgt, ev) => { this.#handleOpenVacancyAction(tgt, ev); },
         'delete-queue-item': (tgt, ev) => { ev.stopPropagation(); this.#handleDeleteQueueItemAction(tgt); },
         'undo-remove': (_, ev) => { ev.stopPropagation(); this.#undoRemove(); },
+        'queue-next': (_, ev) => { ev.stopPropagation(); this.#assistant?.openNextManualItem?.(); },
         'insert-letter-var': (tgt, ev) => { ev.stopPropagation(); this.#insertLetterVar(tgt.dataset.var); },
         'copy-log': (tgt, ev) => { ev.stopPropagation(); this._copyLog(tgt); },
         'clear-log': (tgt, ev) => { ev.stopPropagation(); this.#handleClearLogAction(tgt); }
@@ -9239,6 +9355,7 @@ function toLogUrl(rawUrl) {
         this._updatePosition();
       }
 
+      this._syncQueueNext();
       const quickBtns = this.#shadow.querySelectorAll('.hha-btn-quick');
       if (quickBtns.length > 0) {
         let targetClass = 'hha-btn-start';
@@ -9575,10 +9692,32 @@ function toLogUrl(rawUrl) {
       `;
     }
 
+    // "Следующая" in the pill: on a vacancy from the queue, while no run goes, when a
+    // queued vacancy not opened yet is left.
+    _syncQueueNext() {
+      const btn = this.#shadow?.querySelector('[data-el="pill-next-btn"]');
+      if (!btn) return;
+      let page = null;
+      try { page = this.#assistant?.getQueuePage?.() || null; } catch (_) {}
+      const next = page && (this._status?.status || 'idle') !== 'running' ? page.next : null;
+      const vid = next ? cleanVid(next.vid) : '';
+      if (btn.hidden === !next && btn.dataset.vid === vid) return;
+      btn.hidden = !next;
+      btn.dataset.vid = vid;
+      if (next) {
+        const title = collapseSpaces(next.title || '').replace(/\s*#\d+\b/g, '').trim() || 'Вакансия';
+        // A native title, as on the other pill buttons: the HUD tooltip lives in the panel.
+        btn.title = `Открыть здесь следующую из очереди: ${title}`;
+        btn.setAttribute('aria-label', `Следующая вакансия из очереди: ${title}`);
+      }
+      this._updatePosition();
+    }
+
     _syncQueue() {
       if (!this.#shadow) return;
       this._hideTooltip();
       this._syncQueueActions();
+      this._syncQueueNext();
       const count = this._queue ? this._queue.length : 0;
 
       this._setCount(this.#shadow.querySelectorAll('.hha-queue-count'), count);
