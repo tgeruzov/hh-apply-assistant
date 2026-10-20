@@ -5842,6 +5842,12 @@ function cleanVacancyTitle(raw) {
       box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-error);
     }
 
+    /* The active tab drops every shadow of its own (the indicator under it is the look), and
+       Tab lands on the active one: the ring has to win over that, or focus is not seen. */
+    .hha-tab-btn.active:focus-visible {
+      box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary) !important;
+    }
+
     /* 7. Tab Panels */
     .hha-panels {
       flex: 1;
