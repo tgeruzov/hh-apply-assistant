@@ -3583,6 +3583,19 @@ function cleanVacancyTitle(raw) {
     }
   }
 
+  // A run started away from the search needs the results page to come back to. It is kept
+  // per tab when the run leaves the search for a vacancy; a vacancy opened from the search
+  // in a new tab has none, but its referrer is that page. Without either the way back was
+  // /search/vacancy with no filters, and the run went through vacancies nobody chose.
+  function ensureSearchReturnUrl() {
+    if (toSearchListUrl(getReturnUrl())) return true;
+    const fromReferrer = toSearchListUrl(globalThis.document?.referrer || '');
+    if (!fromReferrer) return false;
+    setReturnUrl(fromReferrer);
+    hhaLog('info', 'return_url_from_referrer', { page: searchPageNumber(fromReferrer) });
+    return true;
+  }
+
   // --- 14. Main Execution Loop ---
   async function initLoopSession() {
     if (isLoopActive || isNavigating) return null;
@@ -3615,6 +3628,11 @@ function cleanVacancyTitle(raw) {
     // cannot get past one page; it used to hang at "Запуск" with no reason shown.
     if (!isRunning()) {
       terminateRun('STORAGE_BLOCKED', 'Браузер не даёт сайту хранить данные, запуск невозможен.', {}, true);
+      return null;
+    }
+    // Only a new start: the pages of a run under way and Продолжить keep the stored address.
+    if (!isResume && !Page.isSearchList() && !ensureSearchReturnUrl()) {
+      terminateRun('NO_SEARCH_URL', 'Запуск не из поиска: неизвестно, в какую выдачу возвращаться.', {}, true);
       return null;
     }
     markProgress();
@@ -4340,6 +4358,7 @@ function cleanVacancyTitle(raw) {
     TAB_LOCK_LOST: { icon: 'tabs', title: 'Скрипт работает в другой вкладке', text: 'Остановите его там или закройте ту вкладку, затем нажмите Продолжить.' },
     TAB_BUSY: { icon: 'tabs', title: 'Скрипт работает в другой вкладке', text: 'Остановите его там или закройте ту вкладку, затем нажмите Продолжить.' },
     STORAGE_BLOCKED: { icon: 'storage', title: 'Браузер не даёт сохранять данные', text: 'Разрешите сайту hh.ru хранить данные (cookies и данные сайтов) и обновите страницу.' },
+    NO_SEARCH_URL: { icon: 'filter', title: 'Запустите скрипт из поиска', text: 'Откройте поиск вакансий на hh.ru со своими фильтрами и нажмите Старт там. С этой страницы непонятно, в какую выдачу возвращаться.' },
     STORAGE_FULL: { icon: 'storage', title: 'Хранилище браузера переполнено', text: 'Очистите лог кнопкой Очистить внизу панели и нажмите Продолжить. Если не помогло, удалите в браузере данные других сайтов.' },
     ATTACH_BTN_NOT_FOUND: { icon: 'letter', title: 'Отклик ушёл без письма', text: 'Не нашлась кнопка, которая прикрепляет письмо. Отклики идут дальше. ' + REPORT_TEXT },
     LETTER_FORM_TIMEOUT: { icon: 'letter', title: 'Отклик ушёл без письма', text: 'Поле для письма не появилось за 5 секунд. Отклики идут дальше. ' + REPORT_TEXT },
@@ -4370,6 +4389,7 @@ function cleanVacancyTitle(raw) {
     TAB_BUSY: { short: 'Вкладка', line: 'Остановлено: работает другая вкладка' },
     STORAGE_BLOCKED: { short: 'Хранилище', line: 'Остановлено: хранилище недоступно' },
     STORAGE_FULL: { short: 'Хранилище', line: 'Остановлено: хранилище переполнено' },
+    NO_SEARCH_URL: { short: 'Поиск', line: 'Остановлено: запуск не из поиска' },
   };
   const STOP_REASON_DEFAULT = { short: 'Сбой', line: 'Остановлено из-за ошибки' };
 
