@@ -4565,6 +4565,32 @@ function toLogUrl(rawUrl) {
     return /^\d+$/.test(clean) ? `${origin}/vacancy/${clean}` : (url || '');
   }
 
+  // The last entries of the log that tell what the run decided, one line each, for the
+  // error report: with them an issue can be read without the whole log. No addresses: a
+  // value with a link in it is left out, long texts are cut.
+  const REPORT_LOG_EVENTS = new Set(['decision', 'outcome', 'page_next', 'stop']);
+  const REPORT_LOG_ENTRIES = 20;
+  function reportLogLines(dump) {
+    const entries = [];
+    for (const line of String(dump || '').split('\n')) {
+      try {
+        const e = JSON.parse(line);
+        if (e && REPORT_LOG_EVENTS.has(e.event)) entries.push(e);
+      } catch (_) {}
+    }
+    return entries.slice(-REPORT_LOG_ENTRIES).map((e) => {
+      const parts = [formatTime(e.ts), e.event];
+      for (const [k, v] of Object.entries(e)) {
+        if (k === 'ts' || k === 'level' || k === 'event' || v === null || v === undefined) continue;
+        let text = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        if (/url|href/i.test(k) || /https?:\/\/|\bhh\.ru\//i.test(text)) continue;
+        if (text.length > 80) text = text.slice(0, 79) + '...';
+        parts.push(`${k}=${/[\s"]/.test(text) ? JSON.stringify(text) : text}`);
+      }
+      return `  ${parts.join(' ')}`;
+    });
+  }
+
   // --- H2. SVG Icons ---
 
   const ICONS = {
@@ -7878,7 +7904,7 @@ function toLogUrl(rawUrl) {
                 <div class="hha-card-error-actions">
                   <button type="button" class="hha-btn-dismiss-error" data-action="resolve-error" data-el="error-resolve-btn">Понятно</button>
                   <div class="hha-card-error-meta">
-                    <button type="button" class="hha-btn-copy-error" data-action="copy-last-error" data-el="error-copy-btn" data-tooltip="Отчёт для issue на GitHub: код, адрес страницы, браузер"><span class="hha-copy-icons" aria-hidden="true"><span class="hha-copy-icon">${COPY_ICON}</span><span class="hha-copy-done">${DONE_ICON}</span></span><span data-el="error-copy-label">Скопировать отчёт</span></button>
+                    <button type="button" class="hha-btn-copy-error" data-action="copy-last-error" data-el="error-copy-btn" data-tooltip="Отчёт для issue на GitHub: версия, код, последние шаги"><span class="hha-copy-icons" aria-hidden="true"><span class="hha-copy-icon">${COPY_ICON}</span><span class="hha-copy-done">${DONE_ICON}</span></span><span data-el="error-copy-label">Скопировать отчёт</span></button>
                     <span class="hha-card-error-code" data-el="error-card-code"></span>
                   </div>
                 </div>
@@ -8691,21 +8717,31 @@ function toLogUrl(rawUrl) {
     _copyLastErrorToClipboard(btnEl) {
       if (!this._lastErrorPayload) return;
       const err = this._lastErrorPayload;
+      let state = null;
+      try { state = this.#assistant?.getState?.() || null; } catch (_) {}
+      // The report goes into a public issue: addresses keep the page, not the search text.
       const lines = [
         `=== HH Apply Assistant Error Report ===`,
+        `Version: ${state?.version || 'unknown'}`,
         `Time: ${err.time || formatTime()}`,
         `Code: ${err.code || 'UNKNOWN'}`,
         `Message: ${err.message || ''}`,
-        `URL: ${err.url || (window.location ? window.location.href : (typeof location !== 'undefined' ? location.href : ''))}`,
+        `URL: ${toLogUrl(err.url || window.location?.href || '')}`,
+        // 1 is the usual pace; 1.5 and 2 are the longer pauses after captchas of the last 12 h.
+        `Pace: x${state?.pace?.cooldown ?? 1}`,
         `User-Agent: ${typeof navigator !== 'undefined' ? navigator.userAgent : ''}`
       ];
       if (err.details && Object.keys(err.details).length > 0) {
+        const noQuery = (k, v) => (typeof v === 'string' && /^https?:\/\//i.test(v) ? toLogUrl(v) : v);
         try {
-          lines.push(`Context: ${JSON.stringify(err.details, null, 2)}`);
+          lines.push(`Context: ${JSON.stringify(err.details, noQuery, 2)}`);
         } catch (_) {
           lines.push(`Context: ${String(err.details)}`);
         }
       }
+      let recent = [];
+      try { recent = reportLogLines(this.#assistant?.dumpLog?.()); } catch (_) {}
+      if (recent.length) lines.push(`Recent (${REPORT_LOG_ENTRIES} last of: ${[...REPORT_LOG_EVENTS].join(', ')}):`, ...recent);
       const text = lines.join('\n');
       // As with the log: when the browser refuses the clipboard, the report goes to the
       // console and the button says so. It used to say "Скопировано" over an empty clipboard.
