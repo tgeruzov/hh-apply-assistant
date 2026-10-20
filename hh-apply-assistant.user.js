@@ -993,13 +993,15 @@ function toLogUrl(rawUrl) {
     if (!PACE.on) return;
     const st = readPaceState();
     if (!st.nextBreak) st.nextBreak = nextBreakAfter(st.opened);
-    if (!readRest().every) {
-      const r = readRest();
-      r.every = Math.max(1, Math.round(randIn(PACE.responseBreakEvery)));
-      writeRest(r);
+    // The number is used as chosen, not read back: if the storage refused it, every response
+    // would read as due, and the run would rest before each vacancy.
+    const restState = readRest();
+    if (!restState.every) {
+      restState.every = Math.max(1, Math.round(randIn(PACE.responseBreakEvery)));
+      writeRest(restState);
     }
     const responses = responsesSinceRest();
-    const byResponses = responses >= readRest().every;
+    const byResponses = responses >= restState.every;
     if (byResponses || st.opened >= st.nextBreak) {
       // Both are due at times: the longer rest by responses covers the other.
       const ms = Math.round(randIn(byResponses ? PACE.responseBreakMs : PACE.breakMs) * paceFactor());
