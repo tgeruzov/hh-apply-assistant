@@ -297,6 +297,7 @@ function toLogUrl(rawUrl) {
     inflight: 'hha:inflight',
     lateApplied: 'hha:late_applied',
     paceState: 'hha:pace_state',
+    responseRest: 'hha:response_rest',
     paceTest: 'hha:pace_test',
     lastRun: 'hha:last_run'
   };
@@ -837,6 +838,8 @@ function toLogUrl(rawUrl) {
       if (finalReason !== 'skip_resume_visibility') storage.sessionRemove(KEYS.visibilityStreak);
     }
 
+    if (finalOutcome === 'applied') noteResponse();
+
     const logLevel = finalOutcome === 'error' ? 'error' : (finalOutcome === 'skipped' ? 'warn' : 'info');
     const logData = {
       vid: clean || undefined,
@@ -885,7 +888,8 @@ function toLogUrl(rawUrl) {
 
   // --- E6.1. Pace ---
   // A person does not keep one rhythm for an hour. On top of the pauses above: now and then a
-  // longer pause before a vacancy, a break every few dozen vacancies, the letter pasted and
+  // longer pause before a vacancy, a break every few dozen vacancies and a longer rest every
+  // 10-12 responses, the letter pasted and
   // read before the submit, and all pauses longer for 12 hours after a captcha. Together about
   // a fifth slower than a steady run. On a local page (the dev mocks) this is off, so their
   // timed scenarios keep the old pace, unless a test turns it on with its own numbers in
@@ -895,6 +899,9 @@ function toLogUrl(rawUrl) {
     tailMs: [10000, 30000],
     breakEvery: [25, 40],
     breakMs: [40000, 100000],
+    responseBreakEvery: [10, 12],
+    responseBreakMs: [180000, 300000],
+    responseWindowMs: 30 * 60 * 1000,
     resumeMs: [1000, 2200],
     letterBeforeMs: [400, 1000],
     letterAfterMs: [1000, 2500],
@@ -915,6 +922,8 @@ function toLogUrl(rawUrl) {
   }
   function noteCaptcha() {
     storage.localSet(KEYS.captchas, JSON.stringify(recentCaptchas().concat(Date.now()).slice(-10)));
+    // Solving it was a rest: the responses count from here.
+    startRestCount();
   }
   const paceFactor = () => (PACE.on ? 1 + 0.5 * Math.min(2, recentCaptchas().length) : 1);
 
@@ -938,6 +947,41 @@ function toLogUrl(rawUrl) {
     }
   }
 
+  // A rest every 10-12 responses. On live hh.ru (2026-10-20) a captcha came at about the 15th
+  // response after each start, at x1 and at x1.5 alike, and the break by opened vacancies
+  // below never came: each start began that count again. These responses are counted in
+  // local storage, shared by the tabs, so a stop and a start keep them. One older than half an
+  // hour does not count (a pause that long was a rest), and a captcha starts the count over.
+  // Only new responses: a vacancy found "already applied" is not one.
+  function readRest() {
+    const st = parseJson(storage.localGet(KEYS.responseRest), null) || {};
+    return {
+      since: Number(st.since) || 0,
+      every: Number(st.every) || 0,
+      times: Array.isArray(st.times) ? st.times.map(Number).filter(Number.isFinite) : []
+    };
+  }
+  const writeRest = (st) => storage.localSet(KEYS.responseRest, JSON.stringify(st));
+
+  function noteResponse(now = Date.now()) {
+    const st = readRest();
+    st.times = st.times.filter((ts) => ts <= now && now - ts < PACE.responseWindowMs).concat(now).slice(-60);
+    writeRest(st);
+  }
+
+  function responsesSinceRest(now = Date.now()) {
+    const st = readRest();
+    const from = Math.max(st.since, now - PACE.responseWindowMs);
+    return st.times.filter((ts) => ts > from && ts <= now).length;
+  }
+
+  function startRestCount(now = Date.now()) {
+    const st = readRest();
+    st.since = now;
+    st.every = Math.max(1, Math.round(randIn(PACE.responseBreakEvery)));
+    writeRest(st);
+  }
+
   // The vacancies opened in this run and the count at which the next break comes.
   function readPaceState() {
     const st = parseJson(storage.sessionGet(KEYS.paceState), null);
@@ -949,12 +993,24 @@ function toLogUrl(rawUrl) {
     if (!PACE.on) return;
     const st = readPaceState();
     if (!st.nextBreak) st.nextBreak = nextBreakAfter(st.opened);
-    if (st.opened >= st.nextBreak) {
-      const ms = Math.round(randIn(PACE.breakMs) * paceFactor());
-      hhaLog('info', 'pace_break', { opened: st.opened, ms });
+    if (!readRest().every) {
+      const r = readRest();
+      r.every = Math.max(1, Math.round(randIn(PACE.responseBreakEvery)));
+      writeRest(r);
+    }
+    const responses = responsesSinceRest();
+    const byResponses = responses >= readRest().every;
+    if (byResponses || st.opened >= st.nextBreak) {
+      // Both are due at times: the longer rest by responses covers the other.
+      const ms = Math.round(randIn(byResponses ? PACE.responseBreakMs : PACE.breakMs) * paceFactor());
+      hhaLog('info', 'pace_break', { kind: byResponses ? 'responses' : 'opened', opened: st.opened, responses, ms });
       setActivity('break', { durationMs: ms });
       await rest(ms);
-      st.nextBreak = nextBreakAfter(st.opened);
+      // A rest cut short by Стоп is no rest: the next start takes it again.
+      if (!stopSignal) {
+        startRestCount();
+        st.nextBreak = nextBreakAfter(st.opened);
+      }
     }
     storage.sessionSet(KEYS.paceState, JSON.stringify(st));
   }
@@ -2854,6 +2910,7 @@ function toLogUrl(rawUrl) {
     if (!clean || !ManualQueue.has(clean)) return false;
     ManualQueue.remove(clean);
     rememberApplied(clean);
+    noteResponse();
     const counters = getDailyCounters();
     counters.applied++;
     saveDailyCounters(counters);
