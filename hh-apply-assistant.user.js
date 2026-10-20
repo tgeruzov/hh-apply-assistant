@@ -4983,6 +4983,13 @@ function toLogUrl(rawUrl) {
       transform: scale(0.97);
     }
 
+    /* The chevron is centred on the button box, the eye centres the word on its lowercase
+       letters: measured, the chevron sat 1.9 px above them. 0.15em puts the middle of the
+       chevron on the middle of the lowercase, as a typeset "›" sits, at any font size. */
+    .hha-btn-next svg {
+      transform: translateY(0.15em);
+    }
+
     /* Sized to the text; _setPillStepText() animates between measured widths.
        The countdown keeps the width thanks to tabular digits. */
     .hha-pill-step {
