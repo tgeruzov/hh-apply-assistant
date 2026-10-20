@@ -211,6 +211,8 @@ function cleanVacancyTitle(raw) {
     dailyCounters: STORAGE_PREFIX + 'daily_counters',
     lastCommittedVid: STORAGE_PREFIX + 'last_committed_vid',
     captchas: STORAGE_PREFIX + 'captchas_v1',
+    schema: STORAGE_PREFIX + 'schema',
+    // The flag of the first migration in 0.2.26-0.2.29, read once and removed.
     skipsReset0226: STORAGE_PREFIX + 'skips_reset_0226',
     logBuffer: 'hha:log_buffer',
     watchdogStallCount: 'hha:watchdog_stall_count',
@@ -1238,18 +1240,39 @@ function cleanVacancyTitle(raw) {
   // apply button again. A week, not 30 days: a reworked resume may fit next time.
   const SKIPPED_HISTORY_TTL = 7 * 24 * 60 * 60 * 1000;
   const skippedHistory = createVidHistory(KEYS.skippedHistory, SKIPPED_HISTORY_TTL);
-  // 0.2.23-0.2.25 skipped every vacancy whose dialog asked to change the resume visibility
-  // and remembered it for a week. Once, the skips written since the 0.2.23 release are
-  // forgotten, so those vacancies are opened again; a real rejection is found again.
-  const BAD_SKIPS_SINCE = 1792325543000;
-  if (!storage.localGet(KEYS.skipsReset0226)) {
-    const map = parseJson(storage.localGet(KEYS.skippedHistory), null);
-    if (map && typeof map === 'object' && !Array.isArray(map)) {
-      const kept = Object.fromEntries(Object.entries(map).filter(([, ts]) => Number(ts) < BAD_SKIPS_SINCE));
-      storage.localSet(KEYS.skippedHistory, JSON.stringify(kept));
+  // Stored data of older versions is put right here, once per browser and in order. The
+  // store keeps how many steps are done, so a new step goes at the end of the list, never
+  // in between. (The pill place moved from window coordinates to edge anchors in the HUD,
+  // _restorePosition: it needs the window size.)
+  const MIGRATIONS = [
+    // 0.2.26: 0.2.23-0.2.25 skipped every vacancy whose dialog asked to change the resume
+    // visibility and remembered it for a week. The skips written since the 0.2.23 release
+    // are forgotten, so those vacancies are opened again; a real rejection is found again.
+    function forgetVisibilitySkips() {
+      const since = 1792325543000;
+      const map = parseJson(storage.localGet(KEYS.skippedHistory), null);
+      if (map && typeof map === 'object' && !Array.isArray(map)) {
+        storage.localSet(KEYS.skippedHistory, JSON.stringify(Object.fromEntries(Object.entries(map).filter(([, ts]) => Number(ts) < since))));
+      }
+    },
+  ];
+  (function migrateStorage() {
+    const stored = Number(storage.localGet(KEYS.schema));
+    // 0.2.26-0.2.29 marked the first step with a flag of its own. A number above the list
+    // is data of a newer version (the script was rolled back): it is left as it is.
+    let done = Number.isInteger(stored) && stored > 0 ? stored : (storage.localGet(KEYS.skipsReset0226) ? 1 : 0);
+    while (done < MIGRATIONS.length) {
+      try {
+        MIGRATIONS[done]();
+      } catch (e) {
+        // Tried again on the next page; the later steps wait for it.
+        console.warn('[HHA] Storage migration failed:', MIGRATIONS[done].name, e);
+        break;
+      }
+      done++;
     }
-    storage.localSet(KEYS.skipsReset0226, '1');
-  }
+    if (done !== stored && storage.localSet(KEYS.schema, String(done))) storage.localRemove(KEYS.skipsReset0226);
+  })();
   const LASTING_SKIP_REASONS = new Set(['skip_reject_warning', 'skip_reject_regex', 'resume_hidden', 'access_denied', 'skip_inaccessible']);
 
   // A response the script started: the apply button or a submit was pressed and hh.ru has
