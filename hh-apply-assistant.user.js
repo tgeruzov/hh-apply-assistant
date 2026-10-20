@@ -19,7 +19,60 @@
 // @run-at       document-idle
 // ==/UserScript==
 
-// --- Global Shared Configuration Constants ---
+// Contents. Every section header carries its number: search for "E14." to get to the main
+// loop. G: shared top of the file, E: part 1, the engine, H: part 2, the HUD (H3.x are
+// sections of its stylesheet). A new section gets a number here and in its header.
+//   G1     Global Shared Configuration Constants
+//   G2     Global Shared Utilities
+//   Part 1: Automation Engine
+//   E1     Constants, Selectors & Defaults
+//   E2     Event Bus
+//   E3     Storage Layer
+//   E4     Utilities
+//   E5     Error Reporting, Logging & Telemetry
+//   E5.1   Watchdog Progress Tracking
+//   E5.2   Daily Counters Domain
+//   E6     Configuration
+//   E6.1   Pace
+//   E7     Manual Queue Domain
+//   E8     State Accessors
+//   E8.1   Attempts & Blacklist Tracking (Circuit Breaker)
+//   E9     Concurrency & Instance Locks
+//   E10    Run Lifecycle & Guards
+//   E11    DOM Queries & Form Automation
+//   E11.1  Form Input Dispatch
+//   E11.2  Direct element click
+//   E12    Page Classification & Security Anomalies
+//   E13    Application Flow & Scenarios
+//   E14    Main Execution Loop
+//   E15    Watchdog & Recovery
+//   E16    Engine API
+//   E17    Bootstrap & Global Binding
+//   Part 2: Floating HUD
+//   H1     Utilities & Pure Functions
+//   H2     SVG Icons
+//   H3     Shadow DOM Stylesheet
+//   H3.1   Design Tokens
+//   H3.2   Root Positioning
+//   H3.3   Pill
+//   H3.4   Quick Action Button
+//   H3.5   Flyout Panel
+//   H3.5.1 Island Header
+//   H3.6   Bottom Navigation & Action Dock
+//   H3.7   Tab Panels
+//   H3.8   Queue & Log Containers
+//   H3.9   Error Card
+//   H3.10  Tooltip
+//   H3.11  Settings Controls
+//   H3.12  Switch & Cover Letter
+//   H4     Web Component Implementation (Closed Shadow DOM)
+//   H4.1   Public API
+//   H4.2   DOM Assembly
+//   H4.3   Drag & Drop with Pointer Capture API
+//   H4.4   State Synchronizers
+//   H5     Custom Element Registration & Mounting Helper
+
+// --- G1. Global Shared Configuration Constants ---
 const MAX_DAILY_LIMIT = 200;
 const MAX_COVER_LENGTH = 5000;
 
@@ -27,7 +80,7 @@ const MAX_COVER_LENGTH = 5000;
 // the file in a function, so it is not visible to the page.
 let hhaEngine = null;
 
-// --- Global Shared Utilities ---
+// --- G2. Global Shared Utilities ---
 function clamp(val, min, max) {
   const num = Number(val);
   if (isNaN(num)) return min;
@@ -142,7 +195,7 @@ function cleanVacancyTitle(raw) {
 (function () {
   'use strict';
 
-  // --- 1. Constants, Selectors & Defaults ---
+  // --- E1. Constants, Selectors & Defaults ---
   // GM_info is available to every userscript, including @grant none; 'dev' is for runs outside a manager.
   const VERSION = (typeof GM_info !== 'undefined' && GM_info.script?.version) || 'dev';
   // This file's address as stack traces show it (Tampermonkey's userscript.html?name=...,
@@ -295,7 +348,7 @@ function cleanVacancyTitle(raw) {
     skipHidden: true,
   };
 
-  // --- 2. Event Bus ---
+  // --- E2. Event Bus ---
   class EventEmitter {
     constructor() { this._e = Object.create(null); }
     on(event, fn) {
@@ -323,7 +376,7 @@ function cleanVacancyTitle(raw) {
   }
   const events = new EventEmitter();
 
-  // --- 3. Storage Layer ---
+  // --- E3. Storage Layer ---
   function getNativeStore(type) {
     try {
       return globalThis[type === 'local' ? 'localStorage' : 'sessionStorage'] || null;
@@ -412,7 +465,7 @@ function cleanVacancyTitle(raw) {
     isLocalBlocked
   };
 
-  // --- 4. Utilities ---
+  // --- E4. Utilities ---
   const toNum = (v, fallback) => { const n = Number(v); return Number.isNaN(n) ? fallback : n; };
   const randBetween = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
   const parseJson = (raw, fallback) => {
@@ -456,7 +509,7 @@ function cleanVacancyTitle(raw) {
     }
   }
 
-  // --- 5. Error Reporting, Logging & Telemetry ---
+  // --- E5. Error Reporting, Logging & Telemetry ---
   const SENSITIVE_KEYS = new Set(['covertext', 'letter', 'text', 'cover', 'name', 'phone', 'email', 'fio', 'resume', 'applicant', 'applicantname', 'covermessage', 'chatmessage', 'usermessage']);
 
   function sanitizeLogData(data) {
@@ -603,7 +656,7 @@ function cleanVacancyTitle(raw) {
     });
   }
 
-  // --- Watchdog Progress Tracking ---
+  // --- E5.1. Watchdog Progress Tracking ---
   let lastProgressTs = Date.now();
   let lastCommittedVid = null;
   // The vacancy whose letter field the script filled last, so a response sent from a
@@ -613,7 +666,7 @@ function cleanVacancyTitle(raw) {
     lastProgressTs = Date.now();
   }
 
-  // --- Daily Counters Domain ---
+  // --- E5.2. Daily Counters Domain ---
   function getLocalDateKey(d = new Date()) {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -791,7 +844,7 @@ function cleanVacancyTitle(raw) {
     });
   }
 
-  // --- 6. Configuration ---
+  // --- E6. Configuration ---
   function normalizeConfig(raw) {
     const m = { ...DEFAULTS, ...(raw && typeof raw === 'object' ? raw : {}) };
     // Booleans written as strings ("false") by hand or by another script mean what they say.
@@ -815,7 +868,7 @@ function cleanVacancyTitle(raw) {
 
   const actionPause = () => wait(randBetween(ACTION_TIMINGS.action[0], ACTION_TIMINGS.action[1]));
 
-  // --- Pace ---
+  // --- E6.1. Pace ---
   // A person does not keep one rhythm for an hour. On top of the pauses above: now and then a
   // longer pause before a vacancy, a break every few dozen vacancies, the letter pasted and
   // read before the submit, and all pauses longer for 12 hours after a captcha. Together about
@@ -912,7 +965,7 @@ function cleanVacancyTitle(raw) {
     timer = setTimeout(() => { cleanup(); markProgress(); resolve(); }, ms);
   });
 
-  // --- 7. Manual Queue Domain ---
+  // --- E7. Manual Queue Domain ---
 
   function normalizeManualEntry(entry) {
     if (!entry || typeof entry !== 'object') return null;
@@ -1006,7 +1059,7 @@ function cleanVacancyTitle(raw) {
     }
   };
 
-  // --- 8. State Accessors ---
+  // --- E8. State Accessors ---
   const TAB_ID = (() => {
     const win = globalThis.window;
     const sessionTabId = storage.sessionGet(KEYS.tabId);
@@ -1091,7 +1144,7 @@ function cleanVacancyTitle(raw) {
     storage.sessionSet(KEYS.runVisits, JSON.stringify(map));
   }
 
-  // --- Attempts & Blacklist Tracking (Circuit Breaker) ---
+  // --- E8.1. Attempts & Blacklist Tracking (Circuit Breaker) ---
   let memVacancyAttempts = null;
   let memVacancyAttemptsDirty = false;
 
@@ -1439,7 +1492,7 @@ function cleanVacancyTitle(raw) {
     events.emit('activity', currentActivity);
   }
 
-  // --- 9. Concurrency & Instance Locks ---
+  // --- E9. Concurrency & Instance Locks ---
   const INSTANCE_LOCK_TTL = 30000;
   // After a navigation the previous page can hold the lock for another 1-1.6 s on live
   // hh.ru. A timeout means "another tab runs the script" and stops the run, so it has to
@@ -1602,7 +1655,7 @@ function cleanVacancyTitle(raw) {
     return 'OWNED';
   }
 
-  // --- 10. Run Lifecycle & Guards ---
+  // --- E10. Run Lifecycle & Guards ---
   let isLoopActive = false;
   let stopSignal = false;
   let currentRunId = 0;
@@ -1729,7 +1782,7 @@ function cleanVacancyTitle(raw) {
     haltEngine(isBlocked ? 'STORAGE_BLOCKED' : 'TAB_LOCK_LOST', isBlocked ? 'Браузер запретил сайту хранить данные, скрипт потерял блокировку вкладки.' : 'Блокировку вкладки перехватила другая вкладка.');
   };
 
-  // --- 11. DOM Queries & Form Automation ---
+  // --- E11. DOM Queries & Form Automation ---
   function q(sel, root) {
     try { return (root || globalThis.document)?.querySelector(sel) || null; } catch (_) { return null; }
   }
@@ -2032,7 +2085,7 @@ function cleanVacancyTitle(raw) {
     return 'v_' + hashString(cardId);
   }
 
-  // --- Form Input Dispatch ---
+  // --- E11.1. Form Input Dispatch ---
   // inputType says how the text came: insertText for typing, insertFromPaste for a paste,
   // which has no data of its own (the text is in the clipboard).
   function fillTextarea(el, value, inputType = 'insertText') {
@@ -2073,7 +2126,7 @@ function cleanVacancyTitle(raw) {
     }
   }
 
-  // --- Direct element click ---
+  // --- E11.2. Direct element click ---
   function clickElement(el) {
     if (!el || stopSignal) return false;
     // The script does not run outside hh.ru, so following such a link would leave
@@ -2210,7 +2263,7 @@ function cleanVacancyTitle(raw) {
     return waitForCondition(() => query(keyOrSelector), timeout, signal);
   }
 
-  // --- 12. Page Classification & Security Anomalies ---
+  // --- E12. Page Classification & Security Anomalies ---
   const Page = {
     isVacancy: () => Boolean(globalThis.location?.pathname?.startsWith('/vacancy/')),
     isResponseForm: () => Boolean(globalThis.location?.pathname?.startsWith('/applicant/vacancy_response')),
@@ -2689,7 +2742,7 @@ function cleanVacancyTitle(raw) {
     return null;
   }
 
-  // --- 13. Application Flow & Scenarios ---
+  // --- E13. Application Flow & Scenarios ---
   function markVacancyProcessed(vid, runId = currentRunId) {
     if (runId !== undefined && runId !== null && !guardOwnedCommit(runId)) return false;
     return vid ? addProcessedID(vid) : true;
@@ -3619,7 +3672,7 @@ function cleanVacancyTitle(raw) {
     return true;
   }
 
-  // --- 14. Main Execution Loop ---
+  // --- E14. Main Execution Loop ---
   async function initLoopSession() {
     if (isLoopActive || isNavigating) return null;
     if (Page.isResponseForm() && handlingResponsePage) return null;
@@ -3934,7 +3987,7 @@ function cleanVacancyTitle(raw) {
       finalizeRun(runId, 'error', `Сбой основного цикла: ${(e && e.message) || e}`);
     }
   }
-  // --- 15. Watchdog & Recovery ---
+  // --- E15. Watchdog & Recovery ---
   function checkRateLimitAnomaly(doc, bodyText) {
     if (detectInaccessibleVacancy(doc, bodyText)) {
       // Already leaving the page: without this the skip is recorded on every tick.
@@ -4093,7 +4146,7 @@ function cleanVacancyTitle(raw) {
     storage.sessionRemove(KEYS.skipAlertShown);
   }
 
-  // --- 16. Engine API ---
+  // --- E16. Engine API ---
   // The full interface is for the HUD only and stays inside the script. Page scripts of
   // hh.ru share the window with this one (@grant none), so the global object below gets
   // only what is needed from the console.
@@ -4172,7 +4225,7 @@ function cleanVacancyTitle(raw) {
     hhaClearLog: () => hhaClearLog()
   });
 
-  // --- 17. Bootstrap & Global Binding ---
+  // --- E17. Bootstrap & Global Binding ---
   function bootstrap() {
     if (watchdogIntervalId === null) {
       let lastTickTs = Date.now();
@@ -4353,7 +4406,7 @@ function cleanVacancyTitle(raw) {
 (function () {
   'use strict';
 
-  // --- 1. Utilities & Pure Functions ---
+  // --- H1. Utilities & Pure Functions ---
 
   function escapeHtml(str) {
     if (str === null || str === undefined) return '';
@@ -4499,7 +4552,7 @@ function cleanVacancyTitle(raw) {
     return /^\d+$/.test(clean) ? `${origin}/vacancy/${clean}` : (url || '');
   }
 
-  // --- 2. SVG Icons ---
+  // --- H2. SVG Icons ---
 
   const ICONS = {
     close: (size) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`,
@@ -4533,10 +4586,10 @@ function cleanVacancyTitle(raw) {
   // The ring of the round Стоп (see .hha-btn-sweep in the stylesheet).
   const BTN_SWEEP = '<svg class="hha-btn-sweep" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><circle class="hha-ring-track" cx="16" cy="16" r="15"></circle><circle class="hha-ring-arc" cx="16" cy="16" r="15" pathLength="100" transform="rotate(-90 16 16)"></circle></svg>';
 
-  // --- 3. Shadow DOM Stylesheet ---
+  // --- H3. Shadow DOM Stylesheet ---
 
   const STYLES = `
-    /* Design Tokens */
+    /* H3.1 Design Tokens */
     :host {
       all: initial;
       position: fixed;
@@ -4663,7 +4716,7 @@ function cleanVacancyTitle(raw) {
       padding: 0;
     }
 
-    /* 2. Root Positioning */
+    /* H3.2 Root Positioning */
     .hha-root {
       position: fixed;
       left: 0;
@@ -4698,7 +4751,7 @@ function cleanVacancyTitle(raw) {
       place-items: end center;
     }
 
-    /* 3. Pill */
+    /* H3.3 Pill */
     .hha-pill {
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-body-small-size);
@@ -4911,7 +4964,7 @@ function cleanVacancyTitle(raw) {
       color: var(--md-sys-color-error);
     }
 
-    /* 4. Quick Action Button */
+    /* H3.4 Quick Action Button */
     .hha-btn-start,
     .hha-btn-stop,
     .hha-btn-done,
@@ -5228,7 +5281,7 @@ function cleanVacancyTitle(raw) {
       color: var(--md-sys-color-on-error);
     }
 
-    /* 5. Flyout Panel */
+    /* H3.5 Flyout Panel */
     .hha-flyout {
       font-family: var(--md-sys-typescale-font-family);
       font-size: var(--md-sys-typescale-body-small-size);
@@ -5362,7 +5415,7 @@ function cleanVacancyTitle(raw) {
       transition: opacity 240ms ease-out 40ms, transform 420ms var(--hha-motion-spring-easing, cubic-bezier(0.34, 1.15, 0.64, 1)) 40ms;
     }
 
-    /* 5.1 Island Header */
+    /* H3.5.1 Island Header */
     .hha-island-header {
       display: flex;
       align-items: center;
@@ -5461,7 +5514,7 @@ function cleanVacancyTitle(raw) {
       background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
     }
 
-    /* 6. Bottom Navigation & Action Dock */
+    /* H3.6 Bottom Navigation & Action Dock */
     .hha-log-row {
       display: flex;
       align-items: center;
@@ -5871,7 +5924,7 @@ function cleanVacancyTitle(raw) {
       box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary) !important;
     }
 
-    /* 7. Tab Panels */
+    /* H3.7 Tab Panels */
     .hha-panels {
       flex: 1;
       display: grid;
@@ -5944,7 +5997,7 @@ function cleanVacancyTitle(raw) {
        the same width over each other with an offset while both faded: their edges doubled
        and the inner box looked wider for as long as the panel grew in height. */
 
-    /* 8. Queue & Log Containers */
+    /* H3.8 Queue & Log Containers */
     /* Tab 2: Queue Container */
     [data-panel="queue"] {
       overflow: hidden !important;
@@ -6357,7 +6410,7 @@ function cleanVacancyTitle(raw) {
       transform: scale(0.92);
     }
 
-    /* 9. Error Card: centred. A tinted icon, a title in plain words, what to do and one wide
+    /* H3.9 Error Card: centred. A tinted icon, a title in plain words, what to do and one wide
        button; the report and the code sit small under it, they are for an issue. A stop (the
        run waits for Продолжить) is red, a notice the run gets past by itself is blue. */
     .hha-error-slot {
@@ -6717,7 +6770,7 @@ function cleanVacancyTitle(raw) {
       line-height: 1;
     }
 
-    /* 10. Tooltip */
+    /* H3.10 Tooltip */
     .hha-tooltip {
       position: absolute;
       background: var(--md-sys-color-inverse-surface);
@@ -6832,7 +6885,7 @@ function cleanVacancyTitle(raw) {
       border: 0;
     }
 
-    /* 11. Settings Controls */
+    /* H3.11 Settings Controls */
     .hha-card {
       background: var(--md-sys-color-surface-container-lowest);
       border: 1px solid var(--md-sys-color-outline-variant);
@@ -6854,7 +6907,7 @@ function cleanVacancyTitle(raw) {
       letter-spacing: var(--md-sys-typescale-body-medium-tracking);
     }
 
-    /* 12. Switch & Cover Letter */
+    /* H3.12 Switch & Cover Letter */
     /* No shorter than the switch row, three lines of the letter and the row of variable
        buttons (44 + 58 + 28 px and the borders): in a short panel the panel scrolls, and
        the buttons are not cut off. */
@@ -7207,7 +7260,7 @@ function cleanVacancyTitle(raw) {
     }
   `;
 
-  // --- 4. Web Component Implementation (Closed Shadow DOM) ---
+  // --- H4. Web Component Implementation (Closed Shadow DOM) ---
 
   // Panel height per tab: header, content, the log row and the footer. The letter tab
   // shows about ten lines of the letter; an error banner adds its own height on top.
@@ -7387,7 +7440,7 @@ function cleanVacancyTitle(raw) {
       if (this._tabsResize) { this._tabsResize.disconnect(); this._tabsResize = null; }
     }
 
-    // --- Public API ---
+    // --- H4.1. Public API ---
 
     bindAssistant(assistant) {
       if (!assistant || this.#assistant === assistant) return;
@@ -7769,7 +7822,7 @@ function cleanVacancyTitle(raw) {
       };
     }
 
-    // --- DOM Assembly ---
+    // --- H4.2. DOM Assembly ---
 
     // The error card is filled in by _syncErrorCard().
     _render() {
@@ -8817,7 +8870,7 @@ function cleanVacancyTitle(raw) {
       }
     }
 
-    // --- Drag & Drop with Pointer Capture API ---
+    // --- H4.3. Drag & Drop with Pointer Capture API ---
 
     _onPointerDown(e) {
       if (e.target && typeof e.target.closest === 'function') {
@@ -9113,7 +9166,7 @@ function cleanVacancyTitle(raw) {
       } catch (_) {}
     }
 
-    // --- State Synchronizers ---
+    // --- H4.4. State Synchronizers ---
 
     _syncAll() {
       this._syncStatus();
@@ -9532,7 +9585,7 @@ function cleanVacancyTitle(raw) {
     }
   }
 
-  // --- 5. Custom Element Registration & Mounting Helper ---
+  // --- H5. Custom Element Registration & Mounting Helper ---
 
   if (typeof customElements !== 'undefined' && !customElements.get('hha-hud')) {
     customElements.define('hha-hud', HhaHudElement);
