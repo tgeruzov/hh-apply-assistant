@@ -238,7 +238,9 @@ function toLogUrl(rawUrl) {
     relocationBtn: '[data-qa="relocation-warning-confirm"]',
     rejectWarning: '[data-qa="response-reject-warning"]',
     vacancyLink: 'a[data-qa="serp-item__title"], a[data-qa="vacancy-serp__vacancy-title"]',
-    vacancyCard: 'div[data-qa="vacancy-serp__vacancy"], .vacancy-serp-item',
+    // No tag: live hh.ru made the search card an <article> (snapshot of 2026-10-20), and the
+    // old div[...] found no card at all there.
+    vacancyCard: '[data-qa="vacancy-serp__vacancy"], .vacancy-serp-item',
     pagerNext: '[data-qa="pager-next"]'
   };
 
