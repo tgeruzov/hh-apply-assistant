@@ -4653,7 +4653,8 @@ function toLogUrl(rawUrl) {
     // exactly two device pixels, so they stay sharp on a Full HD monitor.
     send: `<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M1 1.5 13.5 7 1 12.5 3 7z"/></svg>`,
     list: `<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" shape-rendering="crispEdges" aria-hidden="true"><rect x="1" y="2" width="2" height="2"/><rect x="5" y="2" width="8" height="2"/><rect x="1" y="6" width="2" height="2"/><rect x="5" y="6" width="8" height="2"/><rect x="1" y="10" width="2" height="2"/><rect x="5" y="10" width="8" height="2"/></svg>`,
-    chevronRight: `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.3 6.3 7.9 7.7l4.3 4.3-4.3 4.3 1.4 1.4 5.7-5.7z"/></svg>`,
+    // Stroked 2.6 on a 24 px grid: as heavy as the semibold labels next to it.
+    chevronRight: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 6 6 6-6 6"/></svg>`,
     copy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>`,
     trash: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5-1-1h-5l-1 1H5v2h14V4z"/></svg>`,
     inboxEmpty: `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1.04 1.63L3 20c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2l-.04-11.36c.61-.29 1.04-.91 1.04-1.63V4c0-1.1-.9-2-2-2zm-1 18H5l.04-11H19l-.04 11zM19 7H5V4h14v3zm-3 5H8v-2h8v2z"/></svg>`
@@ -4945,24 +4946,20 @@ function toLogUrl(rawUrl) {
     }
 
     /* "Следующая" on a vacancy opened from the queue: the next one not opened yet, in this
-       tab. A quiet tonal button, Старт stays the main action. */
+       tab. A round tonal button with a chevron, 32 px like the round Стоп (variant D of the
+       mockups); the title names the next vacancy. Старт stays the main action. */
     .hha-btn-next {
       display: inline-flex;
       align-items: center;
-      gap: 2px;
-      flex: 0 0 auto;
+      justify-content: center;
+      flex: 0 0 32px;
+      width: 32px;
       height: var(--md-comp-control-height);
-      padding: 0 6px 0 12px;
+      padding: 0;
       border: none;
       border-radius: var(--md-sys-shape-corner-full);
       background: var(--md-sys-color-surface-container-high);
       color: var(--md-sys-color-primary);
-      font-family: var(--md-sys-typescale-font-family);
-      font-size: var(--md-sys-typescale-label-medium-size);
-      font-weight: 600;
-      letter-spacing: var(--md-sys-typescale-label-medium-tracking);
-      line-height: 1;
-      white-space: nowrap;
       cursor: pointer;
       outline: none;
       transition:
@@ -4983,12 +4980,6 @@ function toLogUrl(rawUrl) {
       transform: scale(0.97);
     }
 
-    /* The chevron is centred on the button box, the eye centres the word on its lowercase
-       letters: measured, the chevron sat 1.9 px above them. 0.15em puts the middle of the
-       chevron on the middle of the lowercase, as a typeset "›" sits, at any font size. */
-    .hha-btn-next svg {
-      transform: translateY(0.15em);
-    }
 
     /* Sized to the text; _setPillStepText() animates between measured widths.
        The countdown keeps the width thanks to tabular digits. */
@@ -7987,9 +7978,7 @@ function toLogUrl(rawUrl) {
               </div>
             </div>
             <div class="hha-pill-step" data-el="pill-step" aria-hidden="true"></div>
-            <button type="button" class="hha-btn-next" data-action="queue-next" data-el="pill-next-btn" hidden>
-              <span>Следующая</span>${ICONS.chevronRight}
-            </button>
+            <button type="button" class="hha-btn-next" data-action="queue-next" data-el="pill-next-btn" aria-label="Следующая вакансия из очереди" hidden>${ICONS.chevronRight}</button>
             <button type="button" class="hha-btn-quick hha-btn-start" data-action="quick-toggle" data-el="pill-quick-btn">
               ${BTN_SWEEP}
               <span class="hha-btn-label" data-el="pill-quick-label">Старт</span>
