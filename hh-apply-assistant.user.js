@@ -3089,8 +3089,12 @@ function toLogUrl(rawUrl) {
     if (!isRunCurrent(runId)) return false;
     const ta = query('letterTextarea', scope);
     // A letter to send and no field for it here: never silent, the log says where it looked.
+    // In a dialog it is routine (hh.ru asks to pick a resume there, 11 of 15 dialogs of a
+    // live run): the letter goes after the response through the attach button, and only
+    // when that fails is it a warning, letter_not_attached. A response page has no such
+    // way, so there it stays a warning.
     if (!ta && letter !== null) {
-      hhaLog('warn', 'letter_field_missing', { vid: cleanVid(resolveCurrentVid()), scope: scope && scope.nodeType === 1 ? describeElement(scope) : 'document' });
+      hhaLog(Page.isResponseForm() ? 'warn' : 'info', 'letter_field_missing', { vid: cleanVid(resolveCurrentVid()), scope: scope && scope.nodeType === 1 ? describeElement(scope) : 'document' });
     }
     if (ta && letter !== null) {
       // Nobody types the same letter for every vacancy: it is pasted, a moment after the
