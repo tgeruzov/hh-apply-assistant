@@ -1886,7 +1886,12 @@ function toLogUrl(rawUrl) {
     noteCaptcha();
     recordOutcome(vid, 'error', 'error_captcha');
     if (pending && pending.vid === cleanVid(vid)) {
-      storage.sessionSet(KEYS.inflight, JSON.stringify({ ...pending, captcha: true, letterOwed: config.useCover && letterFilledVid !== pending.vid }));
+      // Once the captcha is solved hh.ru sends the response, but without the letter that was
+      // in the dialog: on live hh.ru (2026-10-20, both captchas of a run) the vacancy then
+      // offered "Приложить сопроводительное письмо", and the letter was never attached. So
+      // the letter is owed whenever it is on, filled in the dialog or not.
+      storage.sessionSet(KEYS.inflight, JSON.stringify({ ...pending, captcha: true, letterOwed: Boolean(config.useCover) }));
+      if (letterFilledVid === pending.vid) letterFilledVid = null;
     }
     haltEngine('CAPTCHA_DETECTED', 'hh.ru показал капчу, автоматизация остановлена.');
   };
