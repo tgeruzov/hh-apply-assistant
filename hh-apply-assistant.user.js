@@ -186,6 +186,19 @@ function cleanVacancyTitle(raw) {
   return collapseSpaces(raw).replace(/\s*(?:,\s*|\(\s*)г\.\s*[А-ЯЁ][^,()]*\)?$/, '').trim();
 }
 
+// An address for the log and the error report: the page, and the number of a results
+// page, never the query. Links from the search carry the user's search text
+// (/vacancy/1?query=...), and a log goes into public issues.
+function toLogUrl(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    const page = u.pathname.startsWith('/search/vacancy') ? u.searchParams.get('page') : null;
+    return `${u.origin}${u.pathname}${page ? `?page=${page}` : ''}`;
+  } catch (_) {
+    return '';
+  }
+}
+
 /**
  * ============================================================================
  * Part 1: Automation Engine (Headless Core)
@@ -2026,7 +2039,7 @@ function cleanVacancyTitle(raw) {
       selectorName: SELECTOR_METADATA[key]?.name || key,
       expectedCss: SELECTORS[key] || '',
       snippet,
-      url: globalThis.location?.href || '',
+      url: toLogUrl(globalThis.location?.href || ''),
       ...extra
     };
   }
@@ -2132,7 +2145,7 @@ function cleanVacancyTitle(raw) {
     // The script does not run outside hh.ru, so following such a link would leave
     // the run stuck on a foreign page.
     if (isExternalLink(el)) {
-      hhaLog('warn', 'click_external_blocked', { url: el.href });
+      hhaLog('warn', 'click_external_blocked', { url: toLogUrl(el.href) });
       return false;
     }
     if (el.tagName === 'A' && el.target && el.target.toLowerCase() === '_blank') {
@@ -3837,7 +3850,7 @@ function cleanVacancyTitle(raw) {
     setLastAttemptID(vid);
     if (globalThis.location) setReturnUrl(globalThis.location.href);
     const pauseMs = vacancyPauseMs();
-    hhaLog('info', 'navigate_vacancy', { vid, url: safeTargetUrl, pauseMs });
+    hhaLog('info', 'navigate_vacancy', { vid, url: toLogUrl(safeTargetUrl), pauseMs });
     setActivity('pause_before_vacancy', { vid, durationMs: pauseMs });
     // The list scrolls to the card, as it does for a person who is about to click it.
     if (PACE.on && card) {
@@ -3939,11 +3952,11 @@ function cleanVacancyTitle(raw) {
     const stored = parseJson(storage.sessionGet(KEYS.runPages), []);
     const pages = Array.isArray(stored) ? stored.filter((v) => typeof v === 'string') : [];
     if (pages.includes(sig)) {
-      hhaLog('warn', 'search_loop', { page: globalThis.location?.search || '', pages: pages.length });
+      hhaLog('warn', 'search_loop', { page: searchPageNumber(globalThis.location?.href || ''), pages: pages.length });
       return 'Выдача пошла по кругу: страница повторяет уже пройденную.';
     }
     if (pages.length >= MAX_RUN_PAGES) {
-      hhaLog('warn', 'search_loop', { page: globalThis.location?.search || '', pages: pages.length });
+      hhaLog('warn', 'search_loop', { page: searchPageNumber(globalThis.location?.href || ''), pages: pages.length });
       return `Пройдено ${MAX_RUN_PAGES} страниц выдачи, дальше hh.ru вакансий не показывает.`;
     }
     pages.push(sig);
@@ -4041,7 +4054,7 @@ function cleanVacancyTitle(raw) {
 
     if (!Page.isSearch() && !isNavigating && (now - lastProgressTs) > PAGE_WATCHDOG_TIMEOUT) {
       const vid = resolveCurrentVid();
-      reportWarning(`Страница не ответила за ${PAGE_WATCHDOG_TIMEOUT / 1000} секунд. Принудительный возврат к поиску.`, 'PAGE_HANG_TIMEOUT', { vid, url: globalThis.location?.href });
+      reportWarning(`Страница не ответила за ${PAGE_WATCHDOG_TIMEOUT / 1000} секунд. Принудительный возврат к поиску.`, 'PAGE_HANG_TIMEOUT', { vid, url: toLogUrl(globalThis.location?.href || '') });
       markProgress();
       handleVacancyFailure(vid, 'error_timeout', currentRunId);
       return true;
