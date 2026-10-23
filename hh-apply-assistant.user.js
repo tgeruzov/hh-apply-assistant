@@ -843,11 +843,10 @@ function toLogUrl(rawUrl) {
   // --- E6.1. Pace ---
   // A person does not keep one rhythm for an hour. On top of the pauses above: now and then a
   // longer pause before a vacancy, a break every few dozen vacancies and a longer rest every
-  // 10-12 responses, the letter pasted and
-  // read before the submit, and all pauses longer for 12 hours after a captcha. Together about
-  // a fifth slower than a steady run. On a local page (the dev mocks) this is off, so their
-  // timed scenarios keep the old pace, unless a test turns it on with its own numbers in
-  // hha:pace_test; on hh.ru that key is not read.
+  // 10-12 responses. The letter is pasted and read before the submit; pauses grow for 12
+  // hours after a captcha. The time depends on these rests and the slowdown after captchas.
+  // On local pages (the dev mocks) this is off unless hha:pace_test supplies test timings;
+  // on hh.ru that key is not read.
   const PACE_DEFAULTS = Object.freeze({
     tailChance: 0.06,
     tailMs: [10000, 30000],
@@ -1839,20 +1838,18 @@ function toLogUrl(rawUrl) {
     terminateRun(code, logMsg, details, true);
   }
 
-  // A captcha on the submit of a response: once the user solves it, hh.ru sends the response.
-  // The error outcome used to drop the mark of the response in flight, and after Продолжить
-  // the response counted as a skip "already applied", without the letter it was sent without.
-  // Now the mark stays, longer than usual, and says whether the letter is still owed.
+  // A captcha on submit can leave a response awaiting confirmation. Keep its mark longer
+  // so a response confirmed after the stop is counted once. The letter may survive the
+  // captcha or need attaching; its presence is not established by the response alone.
   const haltForCaptcha = () => {
     const vid = resolveCurrentVid();
     const pending = readInflightEntry();
     noteCaptcha();
     recordOutcome(vid, 'error', 'error_captcha');
     if (pending && pending.vid === cleanVid(vid)) {
-      // Once the captcha is solved hh.ru sends the response, but without the letter that was
-      // in the dialog: on live hh.ru (2026-10-20, both captchas of a run) the vacancy then
-      // offered "Приложить сопроводительное письмо", and the letter was never attached. So
-      // the letter is owed whenever it is on, filled in the dialog or not.
+      // Try the attach path after Продолжить if sending is on. A field filled before the
+      // captcha does not tell whether hh.ru kept its letter; no attach button is no proof
+      // that the letter was lost.
       storage.sessionSet(KEYS.inflight, JSON.stringify({ ...pending, captcha: true, letterOwed: Boolean(config.useCover) }));
       if (letterFilledVid === pending.vid) letterFilledVid = null;
     }
@@ -3278,15 +3275,19 @@ function toLogUrl(rawUrl) {
     return confirmed ? 'OK' : 'FAIL';
   }
 
-  // A response form with no letter field (hh.ru shows one, for example, to pick a resume)
-  // sends the response without the letter; the "Приложить сопроводительное письмо"
-  // button that comes after it is the only way to add one. The response counts either way.
-  async function attachLetterAfterResponse(vid, runId) {
+  // After a response, try the attach button if the letter could not be sent with it.
+  // After a captcha the original letter may already be there; no button leaves its
+  // delivery unknown. The response counts either way.
+  async function attachLetterAfterResponse(vid, runId, { afterCaptcha = false } = {}) {
     if (!config.useCover || letterFilledVid === cleanVid(vid) || Page.isResponseForm()) return;
     const btn = await waitForCondition(() => isAttachCoverAvailable() && queryExact('attachCoverBtn'), 3000, activeAbortController?.signal);
     if (!isRunCurrent(runId)) return;
     if (!btn) {
-      hhaLog('warn', 'letter_not_attached', { vid, reason: 'form_without_letter', ...describeLetterPage() });
+      if (afterCaptcha) {
+        hhaLog('info', 'letter_delivery_unconfirmed', { vid, reason: 'after_captcha_no_attach_button', ...describeLetterPage() });
+      } else {
+        hhaLog('warn', 'letter_not_attached', { vid, reason: 'form_without_letter', ...describeLetterPage() });
+      }
       return;
     }
     await handleScenarioA(btn, runId);
@@ -3578,7 +3579,7 @@ function toLogUrl(rawUrl) {
         }
         if (letterOwed) {
           setActivity('attaching_letter', { vid });
-          await attachLetterAfterResponse(vid, runId);
+          await attachLetterAfterResponse(vid, runId, { afterCaptcha: true });
           if (!isRunCurrent(runId)) return 'STOPPED';
         }
         returnToList(vid, { markProcessed: true, runId });
