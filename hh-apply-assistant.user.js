@@ -284,9 +284,9 @@ function toLogUrl(rawUrl) {
     // resume, not the vacancy: in a live run it was on every response dialog. 0.2.23 took it
     // for a vacancy to skip and skipped a whole run.
     resumeVisibility: /(?:поменяйте|измените)\s+видимость\s+резюме/i,
-    // Only a request to take a test counts: a bare "test" or "тестирование" also matched the
-    // vacancy and resume titles the modal shows, like "QA Test Engineer".
-    modalTest: /анкета|вопросы|questionnaire|(?:пройти|пройдите)\s+тест|take\s+(?:a|the)\s+test/i,
+    // A request to answer, not a job description like "Ответы на вопросы клиентов".
+    // Real question fields are checked separately, so their heading need not match.
+    modalTest: /анкета|questionnaire|(?:ответьте|ответить)\s+на\s+(?:(?:следующие|несколько)\s+)?вопрос[а-яё]*|(?:пройти|пройдите)\s+тест|take\s+(?:a|the)\s+test/i,
     modalCaptcha: /капч[аеы]|captcha|recaptcha|smartcaptcha/i,
     modalRateLimit: /слишком\s*много\s*запросов|доступ\s*ограничен|rate\s*limit|blocked/i,
     resumeChoice: /(?:выберите|выбор)\s+(?:подходящее\s+)?резюме|резюме\s+для\s+отклика/i,
@@ -2738,6 +2738,14 @@ function toLogUrl(rawUrl) {
     if (TEXT_RULES.reject.test(text)) {
       noteEvidence('modal_reject_regex', text, TEXT_RULES.reject);
       return 'REJECT_REGEX';
+    }
+    // Live response forms (2026-10-23) mark the employer's question explicitly. The
+    // same form can be in a dialog: do not depend on a broad word in its heading.
+    const question = qa('[data-qa="task-question"], [data-qa="employer-asking-for-test"]', modal)
+      .find((el) => isShownIn(el, modal));
+    if (question) {
+      noteEvidence('modal_test_selector', textOf(question), null, describeElement(question));
+      return 'TEST_REQUIRED';
     }
     if (TEXT_RULES.modalTest.test(text)) {
       noteEvidence('modal_test_regex', text, TEXT_RULES.modalTest);
