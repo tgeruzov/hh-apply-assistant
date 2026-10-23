@@ -3286,7 +3286,7 @@ function toLogUrl(rawUrl) {
     const btn = await waitForCondition(() => isAttachCoverAvailable() && queryExact('attachCoverBtn'), 3000, activeAbortController?.signal);
     if (!isRunCurrent(runId)) return;
     if (!btn) {
-      hhaLog('warn', 'letter_not_attached', { vid, reason: 'form_without_letter', seen: describeLetterControls() });
+      hhaLog('warn', 'letter_not_attached', { vid, reason: 'form_without_letter', ...describeLetterPage() });
       return;
     }
     await handleScenarioA(btn, runId);
@@ -3385,6 +3385,18 @@ function toLogUrl(rawUrl) {
     return found.join(' | ') || 'none';
   }
 
+  // No field values or page HTML: enough context to distinguish a missing selector
+  // from a page that offers no letter controls after the captcha.
+  function describeLetterPage() {
+    return {
+      seen: describeLetterControls(),
+      path: globalThis.location?.pathname || '',
+      chatLink: Boolean(queryExact('responseChat')),
+      attachMatches: qa(SELECTORS.attachCoverBtn).length,
+      visibleModals: getVisibleModals().length
+    };
+  }
+
   async function dispatchOutcome(outcome, vid, runId, relocAttempts = 0) {
     if (!outcome) return 'FAIL';
     if (outcome === 'DAILY_LIMIT') { haltForDailyLimit(); return 'BLOCKED'; }
@@ -3416,7 +3428,7 @@ function toLogUrl(rawUrl) {
         const late = await waitForCondition(() => isAttachCoverAvailable(), 3000, activeAbortController?.signal);
         if (!isRunCurrent(runId)) return 'STOPPED';
         if (late) return dispatchOutcome('ATTACH_COVER', vid, runId, relocAttempts);
-        hhaLog('warn', 'letter_not_attached', { vid, reason: 'no_attach_button', seen: describeLetterControls() });
+        hhaLog('warn', 'letter_not_attached', { vid, reason: 'no_attach_button', ...describeLetterPage() });
       }
       if (vid) {
         if (!Page.isResponseForm() && !pageLooksLikeTest()) {
