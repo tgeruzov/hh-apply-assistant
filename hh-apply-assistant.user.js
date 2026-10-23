@@ -136,56 +136,6 @@ function formatTime(dOrTs = new Date()) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-// Cover letter variables: {должность} is the vacancy title, {компания} the employer.
-// Text after a bar, {компания|вашей компании}, is used when the page has no such name.
-const LETTER_VARS = Object.freeze({ 'должность': 'title', 'компания': 'employer' });
-const LETTER_VAR_RE = /\{([^{}|]*)(?:\|([^{}]*))?\}/g;
-const letterVarKey = (rawName) => LETTER_VARS[collapseSpaces(rawName).toLowerCase().replace(/ё/g, 'е')] || null;
-
-// Fills the variables in a letter. A variable with no value and no fallback stays as
-// written and is listed in `missing`; unknown names like {React} are left alone.
-function renderLetter(template, values = {}) {
-  const missing = [];
-  const text = String(template || '').replace(LETTER_VAR_RE, (whole, rawName, fallback) => {
-    const key = letterVarKey(rawName);
-    if (!key) return whole;
-    if (values[key]) return values[key];
-    if (fallback !== undefined && fallback.trim()) return fallback.trim();
-    missing.push(collapseSpaces(rawName).toLowerCase());
-    return whole;
-  });
-  return { text, missing };
-}
-
-// Names in braces that are not letter variables, e.g. a typo like {компанiя}.
-function unknownLetterVars(template) {
-  const names = [];
-  for (const m of String(template || '').matchAll(LETTER_VAR_RE)) {
-    if (!letterVarKey(m[1]) && !names.includes(m[0])) names.push(m[0]);
-  }
-  return names;
-}
-
-// "ООО HeadHunter::Analytics" becomes "HeadHunter" and "Сбер. Начало карьеры" becomes
-// "Сбер": the legal form and the department read badly in a letter, and so do quotes
-// around the whole name. hh.ru writes a department either after "::" or after a one-word
-// brand and a dot; "Иванов И. И." or "2ГИС.Коммерция" do not match the second form.
-function cleanEmployerName(raw) {
-  let name = collapseSpaces(raw).split('::')[0].trim();
-  name = name.replace(/^(?:ООО|ОАО|ЗАО|ПАО|НАО|АО|ИП|АНО|НКО|ФГУП|ГУП|МУП|LLC)\s+/, '');
-  const dept = /^([^\s.]{3,})\.\s+[А-ЯЁA-Z]/.exec(name);
-  if (dept) name = dept[1];
-  const quoted = /^["'\u00ab\u201e\u201c](.+)["'\u00bb\u201c\u201d]$/.exec(name);
-  if (quoted && !/["'\u00ab\u00bb\u201e\u201c\u201d]/.test(quoted[1])) name = quoted[1].trim();
-  return name;
-}
-
-// "Специалист поддержки, г.Ставрополь" becomes "Специалист поддержки": a city at the end
-// of the title is for the search, in a letter it reads as a typo.
-function cleanVacancyTitle(raw) {
-  return collapseSpaces(raw).replace(/\s*(?:,\s*|\(\s*)г\.\s*[А-ЯЁ][^,()]*\)?$/, '').trim();
-}
-
 // An address for the log and the error report: the page, and the number of a results
 // page, never the query. Links from the search carry the user's search text
 // (/vacancy/1?query=...), and a log goes into public issues.
@@ -361,6 +311,7 @@ function toLogUrl(rawUrl) {
   const DEFAULTS = {
     coverText: DEFAULT_COVER_TEXT,
     useCover: false,
+    coverNeedsReview: false,
     skipHidden: true,
   };
 
@@ -868,7 +819,8 @@ function toLogUrl(rawUrl) {
     // Booleans written as strings ("false") by hand or by another script mean what they say.
     return {
       coverText: sliceSafe(typeof m.coverText === 'string' ? m.coverText : (asText(m.coverText) || DEFAULT_COVER_TEXT), MAX_COVER_LENGTH),
-      useCover: m.useCover === true || m.useCover === 'true',
+      useCover: m.coverNeedsReview !== true && (m.useCover === true || m.useCover === 'true'),
+      coverNeedsReview: m.coverNeedsReview === true,
       skipHidden: !(m.skipHidden === false || m.skipHidden === 'false'),
     };
   }
@@ -877,7 +829,9 @@ function toLogUrl(rawUrl) {
 
   function persistSettings(nextPartial) {
     const prev = { ...config };
-    const nextConfig = normalizeConfig({ ...config, ...(nextPartial || {}) });
+    // Turning sending back on is the user's acknowledgement of the old template notice.
+    const reviewed = nextPartial?.useCover === true ? { coverNeedsReview: false } : {};
+    const nextConfig = normalizeConfig({ ...config, ...(nextPartial || {}), ...reviewed });
     const success = storage.localSet(KEYS.settings, JSON.stringify(nextConfig));
     config = nextConfig;
     events.emit('config', { current: config, previous: prev });
@@ -1424,6 +1378,15 @@ function toLogUrl(rawUrl) {
       const map = parseJson(storage.localGet(KEYS.skippedHistory), null);
       if (map && typeof map === 'object' && !Array.isArray(map)) {
         storage.localSet(KEYS.skippedHistory, JSON.stringify(Object.fromEntries(Object.entries(map).filter(([, ts]) => Number(ts) < since))));
+      }
+    },
+    // 0.2.30: variable substitution is gone. Keep the old text, but do not send its
+    // placeholders literally until the user has reviewed it and turns sending back on.
+    function reviewOldCoverText() {
+      if (!/\{\s*(?:должность|компания)\s*(?:\|[^{}]*)?\}/i.test(config.coverText)) return;
+      config = { ...config, useCover: false, coverNeedsReview: true };
+      if (!storage.localSet(KEYS.settings, JSON.stringify(config))) {
+        throw new Error('Could not save the cover letter review state');
       }
     },
   ];
@@ -3126,33 +3089,9 @@ function toLogUrl(rawUrl) {
     return true;
   }
 
-  // The vacancy title and employer for the letter variables. The vacancy page saved them
-  // in the pending meta before the click; the response form page only links back to it.
-  function letterValues(vid) {
-    const meta = getPendingVacancyMeta(vid) || {};
-    let title = collapseSpaces(meta.title);
-    if (!title || isGenericVacancyTitle(title)) title = parseVacancyTitle(vid);
-    title = (isGenericVacancyTitle(title) || /^Вакансия #/.test(title)) ? '' : cleanVacancyTitle(title);
-    const employerEl = q('[data-qa="vacancy-company-name"], [data-qa="vacancy-response-company-name"]');
-    const employer = cleanEmployerName((employerEl && (employerEl.innerText || employerEl.textContent)) || meta.employer || '');
-    return { title, employer };
-  }
-
-  // The letter for this vacancy, or null when none should go: sending is off, or a
-  // variable has neither a value on the page nor a fallback. A letter with a bare
-  // {компания} in it would be worse than no letter.
-  function coverLetterFor(vid) {
-    if (!config.useCover) return null;
-    const { text, missing } = renderLetter(config.coverText, letterValues(vid));
-    if (missing.length) {
-      hhaLog('warn', 'letter_skipped', { vid: cleanVid(vid), missing: missing.join(',') });
-      return null;
-    }
-    if (text.length > MAX_COVER_LENGTH) {
-      // The template fits, the names made it longer. Cut whole: no half of an emoji at the end.
-      hhaLog('warn', 'letter_truncated', { vid: cleanVid(vid), length: text.length, limit: MAX_COVER_LENGTH });
-    }
-    return sliceSafe(text, MAX_COVER_LENGTH);
+  // The saved letter is sent as plain text, the same on every vacancy.
+  function coverLetterFor() {
+    return config.useCover ? config.coverText : null;
   }
 
   async function submitCoverLetterForm(scope = null, runId = currentRunId, letter = null) {
@@ -3215,7 +3154,7 @@ function toLogUrl(rawUrl) {
   }
 
   async function handleScenarioA(btn, runId = currentRunId) {
-    const letter = coverLetterFor(resolveCurrentVid());
+    const letter = coverLetterFor();
     if (letter === null) return 'OK';
     setActivity('attaching_letter');
     await actionPause();
@@ -3292,7 +3231,7 @@ function toLogUrl(rawUrl) {
     const resumeOk = await selectResumeIfRequired(modal, runId);
     if (!resumeOk || !isRunCurrent(runId)) return 'STOPPED';
 
-    const letter = coverLetterFor(resolveCurrentVid());
+    const letter = coverLetterFor();
     const attachCoverToggle = query('attachCoverInModal', modal)
       || findPatternElement(modal, 'button, [role="button"], a', /добавить\s+сопроводительное|написать\s+письмо/i, 35);
     if (attachCoverToggle && letter !== null) {
@@ -3336,8 +3275,6 @@ function toLogUrl(rawUrl) {
   // button that comes after it is the only way to add one. The response counts either way.
   async function attachLetterAfterResponse(vid, runId) {
     if (!config.useCover || letterFilledVid === cleanVid(vid) || Page.isResponseForm()) return;
-    // A variable with no value: letter_skipped is already in the log, there is nothing to attach.
-    if (renderLetter(config.coverText, letterValues(vid)).missing.length) return;
     const btn = await waitForCondition(() => isAttachCoverAvailable() && queryExact('attachCoverBtn'), 3000, activeAbortController?.signal);
     if (!isRunCurrent(runId)) return;
     if (!btn) {
@@ -3467,8 +3404,7 @@ function toLogUrl(rawUrl) {
       // hh.ru sent the response at once, with no form. A letter can then go only through
       // the attach button, which may show up a moment after the confirmation; without it
       // the response stays without a letter, and the log names what the page offered.
-      // A letter with a variable that has no value would not go anyway: no wait for it.
-      if (config.useCover && !Page.isResponseForm() && !renderLetter(config.coverText, letterValues(vid)).missing.length) {
+      if (config.useCover && !Page.isResponseForm()) {
         const late = await waitForCondition(() => isAttachCoverAvailable(), 3000, activeAbortController?.signal);
         if (!isRunCurrent(runId)) return 'STOPPED';
         if (late) return dispatchOutcome('ATTACH_COVER', vid, runId, relocAttempts);
@@ -3692,7 +3628,7 @@ function toLogUrl(rawUrl) {
       if (!resumeOk || !isRunCurrent(runId)) return;
 
       // Cover letter toggle support
-      const letter = coverLetterFor(vid);
+      const letter = coverLetterFor();
       const coverToggle = query('attachCoverInModal')
         || findPatternElement(globalThis.document?.body, 'button, [role="button"], a', /добавить\s+сопроводительное|написать\s+письмо/i, 35);
       if (coverToggle && letter !== null) {
@@ -4309,9 +4245,6 @@ function toLogUrl(rawUrl) {
     }),
     getConfig: () => ({ ...config }),
     setConfig: (p) => persistSettings(p),
-    // What the letter variables would get now: on a vacancy page its own names, on the
-    // search page the last vacancy this tab opened.
-    getLetterValues: () => letterValues((Page.isVacancy() && getStableVacancyId()) || resolveCurrentVid()),
     async resetState() {
       if (isLoopActive) terminateRun('STOPPED_BY_USER', 'Stopped for reset', {}, false);
       stopSignal = true;
@@ -6100,12 +6033,6 @@ function toLogUrl(rawUrl) {
     }
 
     /* Focus Rings (Dual Focus Indicators) */
-    /* Drawn inside: the insert buttons sit flush with the card edge, an outer ring would be cut. */
-    .hha-btn-letter-var:focus-visible {
-      outline: none;
-      box-shadow: inset 0 0 0 2px var(--md-sys-color-primary);
-    }
-
     .hha-pill-status-group:focus-visible,
     .hha-btn-next:focus-visible,
     .hha-tab-btn:focus-visible,
@@ -7243,8 +7170,7 @@ function toLogUrl(rawUrl) {
       box-shadow: 0 0 0 2px var(--md-sys-color-surface), 0 0 0 4px var(--md-sys-color-primary);
     }
 
-    /* Three lines of the letter at least; a shorter panel (a 175-200 % zoom on a laptop)
-       scrolls instead of laying the field over the variable buttons below it. */
+    /* Three lines of the letter at least; a shorter panel scrolls to keep the field usable. */
     .hha-cover-container {
       flex: 1;
       min-height: 58px;
@@ -7331,8 +7257,7 @@ function toLogUrl(rawUrl) {
     }
 
     /* Sending is off: the letter stays editable, but reads as inactive until focused. */
-    .hha-card-cover.is-off .hha-cover-textarea:not(:focus),
-    .hha-card-cover.is-off .hha-btn-letter-var {
+    .hha-card-cover.is-off .hha-cover-textarea:not(:focus) {
       color: var(--md-sys-color-outline);
     }
 
@@ -7342,91 +7267,6 @@ function toLogUrl(rawUrl) {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-    }
-
-    /* The two insert buttons as one strip: no outline or rounding, a hairline between
-       them and one after the second, setting them apart from the status text. */
-    .hha-cover-vars {
-      display: inline-flex;
-      align-items: stretch;
-      align-self: stretch;
-      flex-shrink: 0;
-      /* Flush with the card's left edge and the full row height, so the hover tint fills
-         the cell; the card's rounded corner clips it. */
-      margin-left: -12px;
-    }
-
-    .hha-btn-letter-var {
-      height: auto;
-      min-height: 28px;
-      padding: 0 10px;
-      border: none;
-      border-right: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: 0;
-      background: transparent;
-      color: var(--md-sys-color-primary);
-      font-family: var(--md-sys-typescale-font-family);
-      font-size: var(--md-sys-typescale-label-small-size);
-      line-height: 22px;
-      white-space: nowrap;
-      cursor: pointer;
-      transition:
-        background-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
-        color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
-    }
-
-    .hha-btn-letter-var:hover {
-      background: color-mix(in srgb, var(--md-sys-color-primary) 8%, transparent);
-    }
-
-    .hha-btn-letter-var:active {
-      background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent);
-    }
-
-    /* The first label lines up with the letter text above it. */
-    .hha-btn-letter-var:first-child {
-      padding-left: 12px;
-    }
-
-    /* Variables in the letter: a layer under the transparent textarea repeats its text with
-       the same metrics and paints a tint behind each {variable}. The marks have no padding,
-       which would shift the lines; a sideways box-shadow widens the tint without moving
-       text, and not up or down, where marks on next lines would overlap. */
-    .hha-cover-backdrop {
-      position: absolute;
-      inset: 0;
-      overflow: hidden;
-      pointer-events: none;
-    }
-
-    .hha-cover-highlights {
-      box-sizing: border-box;
-      padding: 10px 12px;
-      font-family: var(--md-sys-typescale-font-family);
-      font-size: 13px;
-      line-height: 19px;
-      letter-spacing: -0.05px;
-      white-space: pre-wrap;
-      overflow-wrap: break-word;
-      word-break: normal;
-      color: transparent;
-    }
-
-    .hha-cover-highlights mark {
-      color: transparent;
-      background: color-mix(in srgb, var(--md-sys-color-primary) 14%, transparent);
-      box-shadow: 2px 0 0 color-mix(in srgb, var(--md-sys-color-primary) 14%, transparent), -2px 0 0 color-mix(in srgb, var(--md-sys-color-primary) 14%, transparent);
-      border-radius: 3px;
-    }
-
-    .hha-cover-highlights mark.is-unknown {
-      background: color-mix(in srgb, var(--md-sys-color-error) 16%, transparent);
-      box-shadow: 2px 0 0 color-mix(in srgb, var(--md-sys-color-error) 16%, transparent), -2px 0 0 color-mix(in srgb, var(--md-sys-color-error) 16%, transparent);
-    }
-
-    .hha-card-cover.is-off .hha-cover-highlights mark:not(.is-unknown) {
-      background: color-mix(in srgb, var(--md-sys-color-outline) 12%, transparent);
-      box-shadow: 2px 0 0 color-mix(in srgb, var(--md-sys-color-outline) 12%, transparent), -2px 0 0 color-mix(in srgb, var(--md-sys-color-outline) 12%, transparent);
     }
 
     .hha-cover-counter {
@@ -8110,14 +7950,9 @@ function toLogUrl(rawUrl) {
                     </label>
                   </div>
                   <div class="hha-cover-container" data-el="setting-cover-container">
-                    <div class="hha-cover-backdrop" aria-hidden="true"><div class="hha-cover-highlights" data-el="cover-highlights"></div></div>
                     <textarea class="hha-cover-textarea" data-el="setting-cover-text" maxlength="${MAX_COVER_LENGTH}" placeholder="Текст сопроводительного письма..."></textarea>
                   </div>
                   <div class="hha-cover-meta">
-                    <span class="hha-cover-vars" role="group" aria-label="Вставить в письмо">
-                      <button type="button" class="hha-btn-letter-var" data-action="insert-letter-var" data-var="должность" data-tooltip="Название вакансии">{должность}</button>
-                      <button type="button" class="hha-btn-letter-var" data-action="insert-letter-var" data-var="компания" data-tooltip="Название компании">{компания}</button>
-                    </span>
                     <span class="hha-cover-status" data-el="cover-status" aria-live="polite"></span>
                     <span class="hha-cover-counter" data-el="cover-counter"></span>
                   </div>
@@ -8205,11 +8040,8 @@ function toLogUrl(rawUrl) {
           const saved = this.#applyConfig({ coverText: coverTextarea.value });
           this._showCoverStatus(saved ? 'Сохранено' : 'Не удалось сохранить', !saved);
         };
-        coverTextarea.addEventListener('scroll', () => this._syncCoverHighlights());
         coverTextarea.addEventListener('input', () => {
           this._updateCoverCounter(coverTextarea.value.length);
-          this._syncCoverHighlights();
-          this._syncCoverWarning(coverTextarea.value);
           if (this._coverDebounceTimer) clearTimeout(this._coverDebounceTimer);
           this._coverDebounceTimer = setTimeout(flushCoverText, 300);
         });
@@ -8234,89 +8066,26 @@ function toLogUrl(rawUrl) {
       status.classList.toggle('is-error', isError);
       status.removeAttribute('data-tooltip');
       // A save error stays until the next save; "saved" fades out and gives the place
-      // back to a warning about the text, if there is one.
+      // back to the sending state or the old template notice.
       if (!isError) {
         this._coverStatusTimer = setTimeout(() => {
           this._coverStatusTimer = null;
-          this._renderCoverWarning();
+          this._renderCoverStatus();
         }, 2000);
       }
     }
 
-    // A name in braces that is not a variable, e.g. a typo, goes into the letter as
-    // written; the status line says so while the text has one.
-    _syncCoverWarning(text) {
-      const unknown = unknownLetterVars(text);
-      this._coverWarning = unknown.length ? unknown[0] : '';
-      if (!this._coverStatusTimer) this._renderCoverWarning();
-    }
-
-    _renderCoverWarning() {
+    _renderCoverStatus() {
       const status = this.#shadow?.querySelector('[data-el="cover-status"]');
       if (!status || (status.classList.contains('is-error') && !status.hasAttribute('data-tooltip') && status.textContent)) return;
-      const name = this._coverWarning || '';
-      // With sending off the text is greyed out, and the free status slot says why.
-      status.textContent = name ? `${name} не подставится` : (this._config.useCover ? '' : 'Не отправляется');
-      status.classList.toggle('is-error', Boolean(name));
-      if (name) {
-        status.setAttribute('data-tooltip', `${name} уйдёт в письме как есть: такой переменной нет. Есть {должность} и {компания}`);
+      const review = this._config.coverNeedsReview;
+      status.textContent = review ? 'Проверьте текст письма' : (this._config.useCover ? '' : 'Не отправляется');
+      status.classList.remove('is-error');
+      if (review) {
+        status.setAttribute('data-tooltip', 'Подстановки названий больше не работают. Замените их в сохранённом письме обычным текстом, затем включите отправку.');
       } else {
         status.removeAttribute('data-tooltip');
       }
-    }
-
-    // The tint layer under the letter: the same text with each {variable} in a mark, as
-    // wide as the textarea's text area (without its scrollbar) and scrolled with it.
-    _syncCoverHighlights() {
-      const ta = this.#shadow?.querySelector('[data-el="setting-cover-text"]');
-      const layer = this.#shadow?.querySelector('[data-el="cover-highlights"]');
-      if (!ta || !layer) return;
-      const text = ta.value;
-      let html = '';
-      let last = 0;
-      for (const m of text.matchAll(LETTER_VAR_RE)) {
-        html += escapeHtml(text.slice(last, m.index));
-        html += `<mark${letterVarKey(m[1]) ? '' : ' class="is-unknown"'}>${escapeHtml(m[0])}</mark>`;
-        last = m.index + m[0].length;
-      }
-      // A trailing line break needs a character after it to take its line.
-      html += escapeHtml(text.slice(last)) + '\u200B';
-      if (layer.innerHTML !== html) layer.innerHTML = html;
-      if (ta.clientWidth) layer.style.width = `${ta.clientWidth}px`;
-      layer.style.transform = `translate3d(0, ${-ta.scrollTop}px, 0)`;
-    }
-
-    #insertLetterVar(name) {
-      const ta = this.#shadow?.querySelector('[data-el="setting-cover-text"]');
-      if (!ta || !letterVarKey(name)) return;
-      const token = `{${name}}`;
-      const start = Number.isInteger(ta.selectionStart) ? ta.selectionStart : ta.value.length;
-      const end = Number.isInteger(ta.selectionEnd) ? ta.selectionEnd : start;
-      if (ta.value.length - (end - start) + token.length > MAX_COVER_LENGTH) return;
-      ta.focus();
-      ta.setSelectionRange(start, end);
-      // insertText goes through the browser's edit history, so Ctrl+Z takes the variable
-      // back like typed text; setRangeText bypassed it and left Ctrl+Z doing nothing.
-      let done = false;
-      try { done = document.execCommand('insertText', false, token); } catch (_) {}
-      if (!done) {
-        ta.setRangeText(token, start, end, 'end');
-        ta.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-    }
-
-    // The tooltip of a variable button shows what it would get right now.
-    _letterVarHint(name) {
-      const key = letterVarKey(name);
-      const values = this.#assistant && typeof this.#assistant.getLetterValues === 'function'
-        ? this.#assistant.getLetterValues() || {}
-        : {};
-      // What goes in, with a real example when there is one, and what happens when the
-      // page has no such name.
-      const what = key === 'title' ? 'Название вакансии' : 'Название компании';
-      const first = values[key] ? `${what}, например:\n${values[key]}` : `${what} со страницы hh.ru`;
-      const fallback = key === 'title' ? 'вашу вакансию' : 'вашей компании';
-      return `${first}\n\nЕсли названия нет, письмо не уйдёт.\nЧтобы уходило всегда, допишите запасные слова после черты: {${name}|${fallback}}`;
     }
 
     _bindDocumentEvents() {
@@ -8861,7 +8630,6 @@ function toLogUrl(rawUrl) {
         'delete-queue-item': (tgt, ev) => { ev.stopPropagation(); this.#handleDeleteQueueItemAction(tgt); },
         'undo-remove': (_, ev) => { ev.stopPropagation(); this.#undoRemove(); },
         'queue-next': (_, ev) => { ev.stopPropagation(); this.#assistant?.openNextManualItem?.(); },
-        'insert-letter-var': (tgt, ev) => { ev.stopPropagation(); this.#insertLetterVar(tgt.dataset.var); },
         'copy-log': (tgt, ev) => { ev.stopPropagation(); this._copyLog(tgt); },
         'clear-log': (tgt, ev) => { ev.stopPropagation(); this.#handleClearLogAction(tgt); }
       };
@@ -9063,7 +8831,7 @@ function toLogUrl(rawUrl) {
 
     _showTooltip(target) {
       if (!this.#shadow || !target || !this._isExpanded) return;
-      const text = target.dataset.var ? this._letterVarHint(target.dataset.var) : target.getAttribute('data-tooltip');
+      const text = target.getAttribute('data-tooltip');
       if (!text) return;
       const tooltip = this.#shadow.querySelector('[data-el="tooltip"]');
       const flyout = this.#shadow.querySelector('[data-el="flyout"]');
@@ -9301,7 +9069,6 @@ function toLogUrl(rawUrl) {
     _onResize() {
       this._pillPos = this._placePill();
       this._updatePosition();
-      this._syncCoverHighlights();
     }
 
     // Where the pill should be in the current window: the stored distances to the nearer
@@ -9837,8 +9604,7 @@ function toLogUrl(rawUrl) {
           coverTextarea.value = c.coverText || '';
         }
         this._updateCoverCounter(coverTextarea.value.length);
-        this._syncCoverWarning(coverTextarea.value);
-        this._syncCoverHighlights();
+        if (!this._coverStatusTimer) this._renderCoverStatus();
       }
     }
   }
