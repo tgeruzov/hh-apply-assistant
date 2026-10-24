@@ -269,7 +269,7 @@ function toLogUrl(rawUrl) {
   const TEXT_RULES = Object.freeze({
     // Access and page state.
     inaccessible: /(?:вам\s+недоступна\s+эта\s+вакансия|войдите\s+как\s+пользователь[,\s]+у\s+которого\s+есть\s+доступ|вакансия\s+(?:закрыта|в\s+архиве|удалена|не\s+найдена)|эта\s+вакансия\s+была\s+удалена|похоже[,\s]+этой\s+вакансии\s+больше\s+нет)/i,
-    captcha: /(?:подтвердите,?\s*что\s*вы\s*не\s*робот|введите\s*символы\s*с\s*картинки|вы\s+не\s+робот|not\s+a\s+robot|необычн\w*\s+активн|unusual\s+(?:activity|traffic))/i,
+    captcha: /(?:подтвердите,?\s*что\s*вы\s*не\s*робот|введите\s*символы\s*с\s*картинки|вы\s+не\s+робот|not\s+a\s+robot|необычн[а-яё]*\s+активн|unusual\s+(?:activity|traffic))/i,
     dailyLimit: /(?:исчерпали\s+лимит\s+откликов|не\s+более\s+200\s+откликов|в\s+течение\s+24\s+часов\s+можно\s+совершить\s+не\s+более|лимит\s+откликов[,\s]+попробуйте\s+отправить\s+отклик\s+позднее|лимит\s+откликов.*попробуйте|24\s+часов?\s+можно\s+совершить\s+не\s+более|вы\s+исчерпали\s+лимит|daily\s+application\s+limit|reached\s+(?:the\s+)?limit\s+of\s+(?:200\s+)?applications)/i,
     // Document title; a bare 429/503 would also match a salary like "смена 4290".
     rateLimitTitle: /(?:^\s*(?:429|503)\b|(?:error|ошибка)\s*(?:429|503)\b|доступ\s+ограничен|too\s+many\s+requests|service\s+(?:temporarily\s+)?unavailable)/i,
@@ -1047,7 +1047,7 @@ function toLogUrl(rawUrl) {
         if (isChange) {
           queue[idx].viewed = Boolean(viewed);
           queue[idx].viewedAt = viewed ? Date.now() : null;
-          storage.localSet(KEYS.manualList, JSON.stringify(queue));
+          if (!storage.localSet(KEYS.manualList, JSON.stringify(queue))) return false;
           events.emit('manualQueue', { action: 'update', item: queue[idx], queue });
         }
         return true;
@@ -1073,13 +1073,13 @@ function toLogUrl(rawUrl) {
       const targetVid = cleanVid(vid);
       const filtered = queue.filter(it => cleanVid(it.vid) !== targetVid);
       if (filtered.length !== queue.length) {
-        storage.localSet(KEYS.manualList, JSON.stringify(filtered));
+        if (!storage.localSet(KEYS.manualList, JSON.stringify(filtered))) return false;
         events.emit('manualQueue', { action: 'remove', item: { vid }, queue: filtered });
       }
       return true;
     },
     clear() {
-      storage.localRemove(KEYS.manualList);
+      if (!storage.localRemove(KEYS.manualList)) return false;
       events.emit('manualQueue', { action: 'clear', queue: [] });
       return true;
     }
@@ -1123,7 +1123,7 @@ function toLogUrl(rawUrl) {
     const clean = cleanVid(vid);
     const item = ManualQueue.get().find((it) => cleanVid(it.vid) === clean);
     if (!item) return false;
-    ManualQueue.remove(clean);
+    if (!ManualQueue.remove(clean)) return false;
     if (queuePage && queuePage.vid === clean) queuePage.closed = item;
     hhaLog('info', 'queue_closed', { vid: clean });
     events.emit('queueClosed', item);
@@ -2014,8 +2014,8 @@ function toLogUrl(rawUrl) {
     relocationBtn: (r) => detectRelocationWarning(r),
     rejectWarning: (r) => {
       const scope = (r && r !== globalThis.document && r !== globalThis.document?.body) ? r : q(SELECTORS.modal + ', [role="alert"]');
-      if (!scope) return null;
-      return findPatternElement(scope, 'div, p, span, section', TEXT_RULES.reject, 250);
+      if (!scope || findEmployerQuestion(scope)) return null;
+      return findShownText(scope, TEXT_RULES.reject);
     },
     // The last results page has no pager-next, so a loose match here would pick
     // any link like "Читать дальше" or a vacancy titled "Next.js".
@@ -2491,6 +2491,10 @@ function toLogUrl(rawUrl) {
     if (qa('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="captcha" i], iframe[src*="smartcaptcha" i], [data-qa*="captcha" i], .g-recaptcha, .h-captcha, .smart-captcha, [class*="captcha" i], [id*="captcha" i]', doc).some(isVisible)) {
       return true;
     }
+    if (qa(SELECTORS.modal + ', [role="alert"]', doc).some(el => isVisible(el) && findShownText(el, TEXT_RULES.captcha))) return true;
+    // Text in a vacancy or search card belongs to the employer. A challenge can still
+    // appear over it, so the visible widgets and notices above take precedence.
+    if (q('[data-qa="vacancy-title"], [data-qa="vacancy-description"], [data-qa="vacancy-serp__vacancy"], [data-qa="serp-item__title"]', doc)) return false;
     const bodyText = (text !== null ? text : (textOf(doc.body) || textOf(doc.documentElement))).slice(0, 3000);
     return TEXT_RULES.captcha.test(bodyText);
   }
@@ -2654,11 +2658,13 @@ function toLogUrl(rawUrl) {
   };
 
   const getResponseDetectionScope = () => q(SELECTORS.modal) || globalThis.document?.body || globalThis.document?.documentElement;
+  const findEmployerQuestion = (scope) => qa('[data-qa="task-question"], [data-qa="employer-asking-for-test"]', scope)
+    .find(el => isShownIn(el, scope));
   const hasReliableRejectWarning = (root) => {
     const scope = (root && root !== globalThis.document && root !== globalThis.document?.body) ? root : q(SELECTORS.modal + ', [role="alert"]');
     if (!scope) return false;
-    const el = query('rejectWarning', scope);
-    if (!el || !isVisible(el)) return false;
+    const el = qa(SELECTORS.rejectWarning, scope).find(el => isShownIn(el, scope)) || HEURISTIC_RESOLVERS.rejectWarning(scope);
+    if (!el) return false;
     noteEvidence(el.matches(SELECTORS.rejectWarning) ? 'reject_selector' : 'reject_heuristic', textOf(el), TEXT_RULES.reject);
     return true;
   };
@@ -2727,22 +2733,22 @@ function toLogUrl(rawUrl) {
       noteEvidence('modal_resume_hidden', text, TEXT_RULES.resumeHidden);
       return 'RESUME_HIDDEN';
     }
-    const warning = q(SELECTORS.rejectWarning, modal);
+    const warning = qa(SELECTORS.rejectWarning, modal).find(el => isShownIn(el, modal));
     if (warning) {
       noteEvidence('modal_reject_selector', textOf(warning));
       return 'REJECT_WARNING';
     }
-    if (TEXT_RULES.reject.test(text)) {
-      noteEvidence('modal_reject_regex', text, TEXT_RULES.reject);
-      return 'REJECT_REGEX';
-    }
     // Live response forms (2026-10-23) mark the employer's question explicitly. The
     // same form can be in a dialog: do not depend on a broad word in its heading.
-    const question = qa('[data-qa="task-question"], [data-qa="employer-asking-for-test"]', modal)
-      .find((el) => isShownIn(el, modal));
+    const question = findEmployerQuestion(modal);
     if (question) {
       noteEvidence('modal_test_selector', textOf(question), null, describeElement(question));
       return 'TEST_REQUIRED';
+    }
+    const rejection = findShownText(modal, TEXT_RULES.reject);
+    if (rejection) {
+      noteEvidence('modal_reject_regex', textOf(rejection), TEXT_RULES.reject);
+      return 'REJECT_REGEX';
     }
     if (TEXT_RULES.modalTest.test(text)) {
       noteEvidence('modal_test_regex', text, TEXT_RULES.modalTest);
@@ -2764,8 +2770,8 @@ function toLogUrl(rawUrl) {
   function detectResponseOutcomeInRoot(root, includeExactSelectors) {
     if (!root || isReviewOrFeedbackElement(root)) return null;
     if (detectDailyLimit(root)) return 'DAILY_LIMIT';
-    const warningEl = q(SELECTORS.rejectWarning, root);
-    if (warningEl && isVisible(warningEl)) {
+    const warningEl = qa(SELECTORS.rejectWarning, root).find(el => isShownIn(el, root));
+    if (warningEl) {
       noteEvidence('reject_selector', textOf(warningEl));
       return 'REJECT_WARNING';
     }
@@ -2887,7 +2893,7 @@ function toLogUrl(rawUrl) {
   function markManualApplied(vid, source) {
     const clean = cleanVid(vid);
     if (!clean || !ManualQueue.has(clean)) return false;
-    ManualQueue.remove(clean);
+    if (!ManualQueue.remove(clean)) return false;
     rememberApplied(clean);
     noteResponse();
     const counters = getDailyCounters();
@@ -2960,10 +2966,12 @@ function toLogUrl(rawUrl) {
       return false;
     }
     storage.sessionRemove(KEYS.noButtonStreak);
-    const inQueue = streak.filter((v) => ManualQueue.has(v));
+    const inQueue = [];
     for (const v of streak) {
+      const queued = ManualQueue.has(v);
+      if (!ManualQueue.remove(v)) continue;
       queuedHistory.forget(v);
-      ManualQueue.remove(v);
+      if (queued) inQueue.push(v);
     }
     if (inQueue.length) {
       const counters = getDailyCounters();
@@ -8496,8 +8504,7 @@ function toLogUrl(rawUrl) {
         this._resetClearQueueBtn();
         const removed = [...(this._queue || [])];
         if (this.#assistant && typeof this.#assistant.clearManualQueue === 'function') {
-          this.#assistant.clearManualQueue();
-          this.#offerUndo(removed);
+          if (this.#assistant.clearManualQueue()) this.#offerUndo(removed);
         } else {
           this._queue = [];
           this._syncQueue();
@@ -8596,13 +8603,16 @@ function toLogUrl(rawUrl) {
       const card = target.closest('.hha-queue-card');
       const removed = (this._queue || []).find(it => cleanVid(it.vid) === cVid);
       const executeRemove = () => {
+        this._removingVids.delete(cVid);
         if (this.#assistant && typeof this.#assistant.removeManualItem === 'function') {
-          this.#assistant.removeManualItem(vid);
+          if (!this.#assistant.removeManualItem(vid)) {
+            this._syncQueue();
+            return;
+          }
         } else {
           this._queue = this._queue.filter(it => cleanVid(it.vid) !== cVid);
           this._syncQueue();
         }
-        this._removingVids.delete(cVid);
         if (removed) this.#offerUndo([removed]);
       };
       if (card && !card.classList.contains('is-removing')) {
