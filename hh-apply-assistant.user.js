@@ -8864,6 +8864,7 @@ function toLogUrl(rawUrl) {
       if (!this.#shadow || !target || !this._isExpanded) return;
       const text = target.getAttribute('data-tooltip');
       if (!text) return;
+      if (target.matches('.hha-queue-employer, .hha-queue-question') && target.scrollWidth <= target.clientWidth) return;
       const tooltip = this.#shadow.querySelector('[data-el="tooltip"]');
       const flyout = this.#shadow.querySelector('[data-el="flyout"]');
       if (!tooltip || !flyout) return;
@@ -9228,12 +9229,11 @@ function toLogUrl(rawUrl) {
       if (quickBtns.length > 0) {
         let targetClass = 'hha-btn-start';
         let targetLabel = 'Старт';
-        let targetTitle = 'Запустить автоматизацию';
+        let targetTitle = '';
 
         if (isRunning) {
           targetClass = 'hha-btn-stop';
           targetLabel = 'Стоп';
-          targetTitle = 'Остановить автоматизацию';
         } else if (status === 'done' || (this._status && this._status.code === 'DAILY_LIMIT_REACHED')) {
           // Both limits get the grey button: there is nothing to start until the limit frees.
           const code = this._status && this._status.code;
@@ -9257,7 +9257,10 @@ function toLogUrl(rawUrl) {
         this._lastBtnLabel = targetLabel;
 
         quickBtns.forEach(quickBtn => {
-          if (quickBtn.dataset.el === 'pill-quick-btn') quickBtn.title = targetTitle;
+          if (!targetTitle) {
+            quickBtn.removeAttribute('title');
+            quickBtn.removeAttribute('data-tooltip');
+          } else if (quickBtn.dataset.el === 'pill-quick-btn') quickBtn.title = targetTitle;
           else quickBtn.dataset.tooltip = targetTitle;
           const desiredClassName = `hha-btn-quick ${targetClass}`;
           let labelEl = quickBtn.querySelector('.hha-btn-label');
@@ -9543,7 +9546,7 @@ function toLogUrl(rawUrl) {
             <a href="${escapeHtml(targetUrl || '#')}" target="_blank" rel="noopener noreferrer" class="hha-queue-title-link" data-action="open-vacancy" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="${escapeHtml(displayTitle)}. Откроется в новой вкладке">
               <span class="hha-queue-title-text">${escapeHtml(displayTitle)}</span>
             </a>
-            <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" data-tooltip="Убрать из очереди" aria-label="Убрать из очереди: ${escapeHtml(displayTitle)}">${ICONS.close(14)}</button>
+            <button type="button" class="hha-log-item-delete" data-action="delete-queue-item" data-vid="${escapeHtml(rawVid || cVid)}" data-clean-vid="${escapeHtml(cVid)}" aria-label="Убрать из очереди: ${escapeHtml(displayTitle)}">${ICONS.close(14)}</button>
           </div>
           ${displayEmployer ? `
           <div class="hha-queue-card-mid">
